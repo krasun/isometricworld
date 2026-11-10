@@ -34,6 +34,10 @@ interface Vehicle {
   holding: number;    // junction node this vehicle is inside (-1 none)
   next: { w: number; dir: 1 | -1 } | null; // way chosen for after this one
   len: number; wid: number; hei: number; color: [number, number, number]; bus: boolean;
+  lat: number;        // lateral offset drawn (m): eases to the lane centre when the road width changes
+  /** drawn pose, smoothed: position error (m) that decays, heading, sim time last drawn (-1: not drawn) */
+  ex: number; ey: number; hx: number; hy: number; cx: number; cy: number; seen: number;
+  alpha: number;      // fades in/out (~0.25 s) where the road passes behind trees / buildings instead of popping
 }
 
 const CLASS_WEIGHT = [3, 2.6, 2, 1.4, 0.35, 0.05];
@@ -155,8 +159,9 @@ export class Traffic {
       id: this.nextId++, w, dir, s, lane, bus, len, stuck: 0, through: false, holding: -1, next: null,
       cruise: 0.8 + this.rand() * 0.35, phase: this.rand() * Math.PI * 2, v: 0,
       wid: bus ? 2.55 : 1.8, hei: bus ? 3.1 : 1.5,
-      color: bus ? BUS_COLORS[Math.floor(this.rand() * BUS_COLORS.length)] : CAR_COLORS[Math.floor(this.rand() * CAR_COLORS.length)],
+      color: bus ? BUS_COLORS[Math.floor(this.rand() * BUS_COLORS.length)] : CAR_COLORS[Math.floor(this.rand() * CAR_COLORS.length)], lat: 0, ex: 0, ey: 0, hx: 1, hy: 0, cx: 0, cy: 0, seen: -1, alpha: 0,
     };
+    v.lat = this.offset(way, v);
     v.v = this.limit(v) * 0.8;
     this.vehicles.push(v);
     group.push(v);
@@ -272,21 +277,25 @@ export class Traffic {
         v.s += v.v * dt;
       }
     }
+    for (const v of this.vehicles) { const o = this.offset(this.ways[v.w], v); v.lat += Math.max(-1.5 * dt, Math.min(1.5 * dt, o - v.lat)); }
     // move vehicles that have driven past the end of their way onto the next one
     for (const v of this.vehicles) {
       let way = this.ways[v.w];
-      if (v.s + v.len / 2 < way.len) continue;
-      if (!v.next) { // dead end
+      if (!v.next || !v.through) {
+        if (v.s + v.len / 2 < way.len) continue;
+        if (v.next) { v.s = way.len - v.len / 2; v.v = 0; continue; } // not granted: hold at the end
+        // dead end
         if (way.r.o === 0) { v.dir = v.dir === 1 ? -1 : 1; v.s = v.len / 2; v.through = false; }
         else this.respawn(v);
         continue;
       }
-      if (!v.through) { v.s = way.len - v.len / 2; v.v = 0; continue; } // not granted: hold at the end
-      const over = v.s + v.len / 2 - way.len;
+      // hand over when the centre (the drawn position) crosses the node: the car moves on continuously
+      if (v.s < way.len) continue;
+      const over = v.s - way.len;
       v.w = v.next.w; v.dir = v.next.dir; v.next = null; v.through = false;
       way = this.ways[v.w];
       v.lane = v.bus ? 0 : Math.min(v.lane, way.r.l - 1);
-      v.s = Math.min(way.len - v.len / 2, v.len / 2 + over);
+      v.s = Math.min(way.len, over);
       v.phase += 0.7;
     }
   }
@@ -302,7 +311,8 @@ export class Traffic {
       if (way.r.c > 3 || way.len < start + v.len + 30 || (v.bus && way.r.c > 2)) continue;
       const g = this.lanes.get(`${w}:${dir}:0`);
       if (g?.some((o) => Math.abs(o.s - start) < v.len + 2 * GAP + o.len)) continue;
-      Object.assign(v, { w, dir, lane: 0, s: start, v: 0, next: null, stuck: 0, through: false });
+      Object.assign(v, { w, dir, lane: 0, s: start, v: 0, next: null, stuck: 0, through: false, seen: -1 });
+      v.lat = this.offset(way, v);
       return;
     }
   }
@@ -338,16 +348,38 @@ export class Traffic {
         while (i < way.n - 1 && way.cum[i] < s) i++;
         return { i, s };
       };
-      // hidden if any part of the vehicle is behind a building / tree
-      const front = at(v.s + v.len / 2), back = at(v.s - v.len / 2), mid = at(v.s);
-      if (!S[front.i * 4 + 3] || !S[(front.i - 1) * 4 + 3] || !S[back.i * 4 + 3] || !S[(back.i - 1) * 4 + 3]) continue;
+      const mid = at(v.s);
+      // hidden when the road under the car's centre is (the nearest sample), so it fades only once it is
+      // well into the cover; a lone hidden sample between visible ones (a crown's edge) doesn't count
+      const j = mid.s - way.cum[mid.i - 1] < way.cum[mid.i] - mid.s ? mid.i - 1 : mid.i;
+      const vis = !!S[j * 4 + 3] || (j > 0 && j < way.n - 1 && !!S[(j - 1) * 4 + 3] && !!S[(j + 1) * 4 + 3]);
       const { i, s } = mid, k0 = (i - 1) * 4, k1 = i * 4;
       const f = (s - way.cum[i - 1]) / Math.max(1e-3, way.cum[i] - way.cum[i - 1]);
       let dx = S[k1] - S[k0], dy = S[k1 + 1] - S[k0 + 1];
       const L = Math.hypot(dx, dy) || 1;
       dx = (dx / L) * v.dir; dy = (dy / L) * v.dir;
-      const off = this.offset(way, v);
+      const off = v.lat;
       const c: Vec3 = [S[k0] + (S[k1] - S[k0]) * f + dy * off, S[k0 + 1] + (S[k1 + 1] - S[k0 + 1]) * f - dx * off, S[k0 + 2] + (S[k1 + 2] - S[k0 + 2]) * f];
+      // The lane offset swings sideways where the road bends (polyline vertices, way handovers, U-turns).
+      // Keep motion continuous: the gap between where the car would be had it simply driven on and the
+      // new pose becomes an error that fades out in ~0.15 s; the heading turns the same way.
+      const dtf = this.t - v.seen;
+      if (v.seen >= 0 && dtf > 0 && dtf < 0.5) {
+        const k = Math.exp(-dtf / 0.15), step = v.v * dtf;
+        const px = v.cx + v.hx * step, py = v.cy + v.hy * step;
+        let gx = px - c[0], gy = py - c[1];
+        if (gx * gx + gy * gy > 100) gx = gy = 0; // > 10 m: a real teleport (respawn), don't slide
+        v.ex = gx * k; v.ey = gy * k;
+        let hx = v.hx + (dx - v.hx) * (1 - k), hy = v.hy + (dy - v.hy) * (1 - k);
+        const hl = Math.hypot(hx, hy);
+        if (hl < 0.3 || v.hx * dx + v.hy * dy < -0.5) { hx = dx; hy = dy; } else { hx /= hl; hy /= hl; }
+        v.hx = hx; v.hy = hy;
+      } else if (dtf !== 0) { v.ex = v.ey = 0; v.hx = dx; v.hy = dy; }
+      c[0] += v.ex; c[1] += v.ey;
+      v.alpha = v.seen < 0 ? (vis ? 1 : 0) : Math.max(0, Math.min(1, v.alpha + (vis ? 1 : -1) * Math.max(0, dtf) / 0.25));
+      v.cx = c[0]; v.cy = c[1]; v.seen = this.t;
+      if (v.alpha <= 0) continue;
+      dx = v.hx; dy = v.hy;
       const [sx, sy] = proj(c);
       if (sx < vx0 - 40 || sy < vy0 - 40 || sx > vx1 + 40 || sy > vy1 + 40) continue;
       items.push({ v, c, d: [dx, dy], depth: c[0] * this.camFwd[0] + c[1] * this.camFwd[1] });
@@ -372,9 +404,10 @@ export class Traffic {
       ctx.fill();
     };
     // soft contact shadow
-    ctx.globalAlpha = 0.25;
+    const a = v.alpha;
+    ctx.globalAlpha = 0.25 * a;
     fill(base.map((p) => [p[0] + 0.4, p[1] - 0.4, p[2] - 0.25] as Vec3), 0);
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = a;
     // sides facing the camera (outward normal · camera forward < 0), then roof
     for (let i = 0; i < 4; i++) {
       const a = base[i], b = base[(i + 1) % 4];
@@ -387,7 +420,7 @@ export class Traffic {
     // windscreen / bus window band on the roof
     const wb = v.bus ? [corner(hl - 0.3, hw - 0.15, v.hei + 0.26), corner(hl - 0.3, -hw + 0.15, v.hei + 0.26), corner(-hl + 0.3, -hw + 0.15, v.hei + 0.26), corner(-hl + 0.3, hw - 0.15, v.hei + 0.26)]
       : [corner(hl * 0.45, hw - 0.2, v.hei + 0.26), corner(hl * 0.45, -hw + 0.2, v.hei + 0.26), corner(-hl * 0.35, -hw + 0.2, v.hei + 0.26), corner(-hl * 0.35, hw - 0.2, v.hei + 0.26)];
-    ctx.globalAlpha = v.bus ? 0.25 : 0.55;
+    ctx.globalAlpha = (v.bus ? 0.25 : 0.55) * a;
     ctx.fillStyle = "#26303a";
     ctx.beginPath();
     wb.forEach((p, i) => { const [x, y] = proj(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
