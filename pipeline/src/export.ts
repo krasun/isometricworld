@@ -23,12 +23,12 @@
  */
 import { isOneway, roadLanes, roadWidth } from "./roadspec.ts";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import sharp from "sharp";
 import { AREAS, groundH, areaPolygon, insideDistance, openArea } from "./areas.ts";
 import { outlineEdgeDistance, outlinePixels } from "./outline.ts";
-import { CAMERA, activeRegion, axes, camera, ecefToEnu, enuToPixel, llhToEcef, llhToPixel } from "./camera.ts";
+import { CAMERA, activeRegion, axes, camera, ecefToEnu, enuHeight, enuToPixel, llhToEcef, llhToPixel } from "./camera.ts";
 import { HOSTING } from "./hosting.ts";
 import { DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
 import { CITIES, REGIONS } from "./places.ts";
@@ -40,6 +40,8 @@ const NATIVE_Z = 8;
 const MIN_Z = 2;
 /** AVIF q50 ≈ the old WebP q72 in PSNR at ~40% fewer bytes (measured on painted tiles). */
 const FORMAT = "avif", QUALITY = 50;
+/** version of the zoomed-out tile build, part of its stamp ("raw": composited from raw pixels, no lossy pass in between) */
+const PYRAMID = "raw";
 const MARGIN = 16; // neighbour pixels used when building each zoomed-out tile
 /** Soft map edge: tiles fade out toward the areas' true outline instead of ending in tile steps.
  *  Fully transparent within EDGE0 of the outline (half a render tile's diagonal: the staircase
@@ -77,7 +79,8 @@ const edgeDistance = (x: number, y: number) => {
   if (!outlines.some((o) => insideDistance([x, y], o) > 0)) return 0;
   let d = Infinity;
   for (const [a, b] of unionEdges) d = Math.min(d, segDist([x, y], a, b));
-  return shape ? Math.min(d, outlineEdgeDistance([x, y])) : d;
+  // every caller clamps at EDGE1: the outline search can stop there
+  return shape ? Math.min(d, outlineEdgeDistance([x, y], EDGE1)) : d;
 };
 
 /** Native web tile at global art px (x0, y0): edge distance on an 8 px lattice, clamped to the fade band
@@ -227,6 +230,31 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
     checkpoint();
   };
   const fresh = (id: string, stamp: string) => !!st.hashes[id] && st.sources[id] === stamp;
+  // decoded tiles (raw RGB) for building the next level up: each child feeds up to 9 parents, kept LRU
+  const cache = new Map<string, Promise<Buffer>>();
+  const decoded = (z: number, x: number, y: number) => {
+    const k = `${z}/${x}_${y}`;
+    let b = cache.get(k);
+    if (b) cache.delete(k);
+    else b = readTile(layer, z, x, y).then((f) => sharp(f).removeAlpha().raw().toBuffer());
+    cache.set(k, b);
+    if (cache.size > 600) cache.delete(cache.keys().next().value!); // ~470 MB
+    return b;
+  };
+  // a tile the map layer already encoded from the same inputs (unpainted tiles: photo = map) is cloned, not
+  // re-encoded (APFS clone: no extra space, and a later rewrite of either file leaves the other alone)
+  const twin = layer === "map" ? null : state.layers.map;
+  const reuse = (id: string, z: number, x: number, y: number, stamp: string) => {
+    if (!twin || twin.sources[id] !== stamp || !twin.hashes[id]) return false;
+    const from = join(OUT, "tiles", "map", `${z}`, `${x}`, `${y}.${FORMAT}`);
+    if (!existsSync(from)) return false;
+    mkdirSync(join(root, `${z}`, `${x}`), { recursive: true });
+    copyFileSync(from, join(root, `${z}`, `${x}`, `${y}.${FORMAT}`), constants.COPYFILE_FICLONE);
+    st.hashes[id] = twin.hashes[id];
+    st.sources[id] = stamp;
+    checkpoint();
+    return true;
+  };
   // native zoom: split each 1024 art tile into 512 web tiles
   let level = new Set<Key>();
   let jobs: Array<() => Promise<void>> = [];
@@ -242,6 +270,7 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
         level.add(key(x, y));
         produced.add(id);
         if (fresh(id, stamp)) continue;
+        if (reuse(id, NATIVE_Z, x, y, stamp)) continue;
         jobs.push(async () => {
           let img = sharp(file).extract({ left: i * TS, top: j * TS, width: TS, height: TS });
           const svg = painted ? deckSvg(x * TS, y * TS) : null;
@@ -265,31 +294,32 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
   for (let z = NATIVE_Z - 1; z >= MIN_Z; z--) {
     const parents = new Set<Key>();
     for (const k of level) { const [x, y] = parse(k); parents.add(key(Math.floor(x / 2), Math.floor(y / 2))); }
+    const rows = [...parents].map(parse).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
     jobs = [];
-    for (const p of parents) {
-      const [px, py] = parse(p), id = `${z}/${p}`;
+    for (const [px, py] of rows) {
+      const p = key(px, py), id = `${z}/${p}`;
       // the 2×2 children plus their neighbours (the MARGIN strip): their hashes are this tile's stamp
       const near: Array<[number, number]> = [];
       for (let y = py * 2 - 1; y <= py * 2 + 2; y++) for (let x = px * 2 - 1; x <= px * 2 + 2; x++) if (level.has(key(x, y))) near.push([x, y]);
-      const stamp = hash(near.map(([x, y]) => `${x}_${y}:${st.hashes[`${z + 1}/${x}_${y}`]}`).join(","));
+      const stamp = hash(`${PYRAMID}:` + near.map(([x, y]) => `${x}_${y}:${st.hashes[`${z + 1}/${x}_${y}`]}`).join(","));
       produced.add(id);
       if (fresh(id, stamp)) continue;
+      if (reuse(id, z, px, py, stamp)) continue;
       jobs.push(async () => {
-        // the downscale filter sees across tile edges (otherwise faint lines appear along tile borders at low zoom)
-        const composite = [];
+        // the downscale filter sees across tile edges (otherwise faint lines appear along tile borders at low zoom):
+        // the 2×2 children plus a MARGIN strip of their neighbours, copied as raw pixels (no intermediate encode)
+        const S = TS * 2 + 2 * MARGIN, merged = Buffer.alloc(S * S * 3, Buffer.from(BG));
         for (const [x, y] of near) {
           const left = (x - px * 2) * TS + MARGIN, top = (y - py * 2) * TS + MARGIN;
-          const cut = { left: Math.max(0, -left), top: Math.max(0, -top) };
-          const width = Math.min(TS - cut.left, TS * 2 + 2 * MARGIN - Math.max(0, left)), height = Math.min(TS - cut.top, TS * 2 + 2 * MARGIN - Math.max(0, top));
+          const cl = Math.max(0, -left), ct = Math.max(0, -top);
+          const width = Math.min(TS - cl, S - Math.max(0, left)), height = Math.min(TS - ct, S - Math.max(0, top));
           if (width <= 0 || height <= 0) continue;
-          const input = await sharp(await readTile(layer, z + 1, x, y)).extract({ ...cut, width, height }).toBuffer();
-          composite.push({ input, left: Math.max(0, left), top: Math.max(0, top) });
+          const child = await decoded(z + 1, x, y);
+          for (let r = 0; r < height; r++)
+            child.copy(merged, ((Math.max(0, top) + r) * S + Math.max(0, left)) * 3, ((ct + r) * TS + cl) * 3, ((ct + r) * TS + cl + width) * 3);
         }
-        const S = TS * 2 + 2 * MARGIN;
-        const merged = await sharp({ create: { width: S, height: S, channels: 3, background: { r: BG[0], g: BG[1], b: BG[2] } } })
-          .composite(composite).png().toBuffer();
-        const half = await sharp(merged).resize(S / 2, S / 2, { kernel: "lanczos3" }).png().toBuffer();
-        await save(sharp(half).extract({ left: MARGIN / 2, top: MARGIN / 2, width: TS, height: TS }), z, px, py, stamp);
+        const half = await sharp(merged, { raw: { width: S, height: S, channels: 3 } }).resize(S / 2, S / 2, { kernel: "lanczos3" }).raw().toBuffer();
+        await save(sharp(half, { raw: { width: S / 2, height: S / 2, channels: 3 } }).extract({ left: MARGIN / 2, top: MARGIN / 2, width: TS, height: TS }), z, px, py, stamp);
       });
     }
     built += jobs.length;
@@ -327,6 +357,7 @@ function checkpoint(force = false) {
 /** Surface ellipsoid height sampler from the renderer's height pass (256² per 1024² tile). */
 class Heights {
   private cache = new Map<string, Float32Array | null>();
+  private lx = NaN; private ly = NaN; private lh: Float32Array | null | undefined;
   constructor(private dirs: string[]) {}
   async ensure(x: number, y: number, r = 32) {
     for (let ty = Math.floor((y - r) / CAMERA.tile); ty <= Math.floor((y + r) / CAMERA.tile); ty++)
@@ -335,13 +366,16 @@ class Heights {
         if (this.cache.has(k)) continue;
         const file = this.dirs.map((d) => join(d, `${k}.png`)).find(existsSync);
         this.cache.set(k, file ? await readHeights(file) : null);
+        this.lx = NaN; // at() may have remembered this tile as not loaded
       }
   }
   /** Surface height at an art pixel (call ensure() first). */
   at(x: number, y: number): number | null {
     const T = CAMERA.tile, k = T / 256;
     const tx = Math.floor(x / T), ty = Math.floor(y / T);
-    const h = this.cache.get(`${tx}_${ty}`);
+    // ground() reads ~170 neighbouring pixels per call, nearly always from the same tile
+    if (tx !== this.lx || ty !== this.ly) { this.lx = tx; this.ly = ty; this.lh = this.cache.get(`${tx}_${ty}`); }
+    const h = this.lh;
     if (!h) return null;
     const v = h[Math.floor((y - ty * T) / k) * 256 + Math.floor((x - tx * T) / k)];
     return Number.isNaN(v) ? null : v;
@@ -399,7 +433,23 @@ async function exportRoads(areas: string[], heights: Heights) {
   const CLS: Record<string, number> = { motorway: 0, trunk: 0, primary: 1, secondary: 2, tertiary: 3, unclassified: 4, residential: 4, living_street: 5, service: 5 };
   const ways = [];
   const seen = new Set<number>(); // areas overlap (the pilot lies inside tlv-core): each OSM way once
-  let occluded = 0, total = 0;
+  let occluded = 0, total = 0, fallback = 0;
+  // the terrain grids the render drapes roads on (ground.ts): a road's height is the ground under it,
+  // not the lowest surface nearby (that is the track bed next to a cutting or below an embankment)
+  const grids = areas.map((a) => join(DERIVED, a, "ground")).filter((d) => existsSync(join(d, "meta.json"))).map((d) => {
+    const m = readJson(join(d, "meta.json")), b = readFileSync(join(d, "height.bin"));
+    return { ...m, h: new Float32Array(b.buffer, b.byteOffset, b.length / 4) } as { x0: number; y0: number; nx: number; ny: number; step: number; h: Float32Array };
+  });
+  const terrainU = (e: number, n: number) => {
+    for (const g of grids) {
+      const fx = (e - g.x0) / g.step, fy = (n - g.y0) / g.step;
+      if (fx < 0 || fy < 0 || fx > g.nx - 1 || fy > g.ny - 1) continue;
+      const ix = Math.min(g.nx - 2, Math.floor(fx)), iy = Math.min(g.ny - 2, Math.floor(fy)), tx = fx - ix, ty = fy - iy, k = iy * g.nx + ix;
+      const v = (g.h[k] * (1 - tx) + g.h[k + 1] * tx) * (1 - ty) + (g.h[k + g.nx] * (1 - tx) + g.h[k + g.nx + 1] * tx) * ty;
+      if (Number.isFinite(v)) return v;
+    }
+    return null;
+  };
   for (const a of areas) {
     const f = join(RAW, a, "roads.json");
     if (!existsSync(f)) continue;
@@ -426,7 +476,14 @@ async function exportRoads(areas: string[], heights: Heights) {
           const n = Math.max(1, Math.ceil(Math.hypot(b0.e[0] - a0.e[0], b0.e[1] - a0.e[1]) / 6));
           for (let k = 0; k < n + (i === pts.length - 2 ? 1 : 0); k++) {
             const f2 = k / n, lat = a0.lat + (b0.lat - a0.lat) * f2, lon = a0.lon + (b0.lon - a0.lon) * f2;
-            const g = await onGround(heights, lat, lon);
+            const e0 = ecefToEnu(llhToEcef(lat, lon, 0)), u = terrainU(e0[0], e0[1]);
+            let g: { x: number; y: number; h: number };
+            if (u === null) { g = await onGround(heights, lat, lon); fallback++; }
+            else {
+              const h = enuHeight([e0[0], e0[1], u]), [x, y] = llhToPixel(lat, lon, h);
+              await heights.ensure(x, y, 4);
+              g = { x, y, h };
+            }
             const surf = heights.at(g.x, g.y);
             const vis = surf === null || surf <= g.h + 2.5 ? 1 : 0; // bridges are drawn at ground level
             total++; occluded += 1 - vis;
@@ -452,7 +509,7 @@ async function exportRoads(areas: string[], heights: Heights) {
   }
   bridgeDecks(ways);
   writeData("roads", JSON.stringify(encodeRoads(ways)));
-  console.log(`  roads: ${ways.length} ways, ${total} samples, ${((occluded / Math.max(1, total)) * 100).toFixed(1)}% occluded`);
+  console.log(`  roads: ${ways.length} ways, ${total} samples, ${((occluded / Math.max(1, total)) * 100).toFixed(1)}% occluded, ${fallback} off the terrain grids`);
 }
 
 /**

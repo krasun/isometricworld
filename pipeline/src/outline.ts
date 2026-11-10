@@ -60,25 +60,65 @@ export function outlinePixels(): Pt[][] | null {
  * Distance (art px) from a point to the outline's outer border, 0 outside. Border pieces shared by two
  * rings (town borders, the airport box inside them) are not edges of the union and don't count.
  */
-const edgeCache = new Map<string, Array<[Pt, Pt]>>();
-export function outlineEdgeDistance(p: Pt): number {
-  const rings = outlinePixels();
-  if (!rings) return Infinity;
-  if (!rings.some((r) => insideRing(p, r))) return 0;
+interface EdgeIndex {
+  /** outer border segments, bucketed by CELL² cells (each segment in every cell its bbox touches) */
+  cells: Map<string, Array<[Pt, Pt]>>;
+  all: Array<[Pt, Pt]>;
+  /** every ring segment by BAND-high horizontal band, for the inside test: [ring, a, b] */
+  bands: Map<number, Array<[number, Pt, Pt]>>;
+  rings: number;
+}
+const CELL = 1024, BAND = 256;
+const edgeCache = new Map<string, EdgeIndex>();
+function edgeIndex(rings: Pt[][]): EdgeIndex {
   const region = activeRegion();
   if (!edgeCache.has(region)) {
     const TOL = 160; // 40 m: simplified shared borders don't coincide exactly
     const near = (q: Pt, r: Pt[]) => insideRing(q, r) || r.some((a, i) => segDist(q, a, r[(i + 1) % r.length]) < TOL);
-    const out: Array<[Pt, Pt]> = [];
+    const all: Array<[Pt, Pt]> = [], cells = new Map<string, Array<[Pt, Pt]>>(), bands = new Map<number, Array<[number, Pt, Pt]>>();
     rings.forEach((r, k) => r.forEach((a, i) => {
-      const b = r[(i + 1) % r.length], m: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-      if (!rings.some((o, j) => j !== k && near(m, o))) out.push([a, b]);
+      const b = r[(i + 1) % r.length];
+      for (let y = Math.floor(Math.min(a[1], b[1]) / BAND); y <= Math.floor(Math.max(a[1], b[1]) / BAND); y++) {
+        if (!bands.has(y)) bands.set(y, []);
+        bands.get(y)!.push([k, a, b]);
+      }
+      const m: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (rings.some((o, j) => j !== k && near(m, o))) return; // shared border: not an edge of the union
+      all.push([a, b]);
+      for (let x = Math.floor(Math.min(a[0], b[0]) / CELL); x <= Math.floor(Math.max(a[0], b[0]) / CELL); x++)
+        for (let y = Math.floor(Math.min(a[1], b[1]) / CELL); y <= Math.floor(Math.max(a[1], b[1]) / CELL); y++) {
+          const c = `${x}_${y}`;
+          if (!cells.has(c)) cells.set(c, []);
+          cells.get(c)!.push([a, b]);
+        }
     }));
-    edgeCache.set(region, out);
+    edgeCache.set(region, { cells, all, bands, rings: rings.length });
   }
+  return edgeCache.get(region)!;
+}
+
+/**
+ * Distance to the outer border, exact below `cap`; at or beyond it, some value ≥ cap (callers that clamp
+ * at `cap` get the same result as an unbounded search, only without scanning every border segment).
+ */
+export function outlineEdgeDistance(p: Pt, cap = Infinity): number {
+  const rings = outlinePixels();
+  if (!rings) return Infinity;
+  const ix = edgeIndex(rings);
+  // inside any ring: ray cast to +x, only through the segments of p's band
+  const odd = new Uint8Array(ix.rings);
+  for (const [k, [xi, yi], [xj, yj]] of ix.bands.get(Math.floor(p[1] / BAND)) ?? [])
+    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) odd[k] ^= 1;
+  if (!odd.includes(1)) return 0;
   let d = Infinity;
-  for (const [a, b] of edgeCache.get(region)!) d = Math.min(d, segDist(p, a, b));
-  return d;
+  if (!Number.isFinite(cap)) {
+    for (const [a, b] of ix.all) d = Math.min(d, segDist(p, a, b));
+    return d;
+  }
+  const r = Math.ceil(cap / CELL), cx = Math.floor(p[0] / CELL), cy = Math.floor(p[1] / CELL);
+  for (let x = cx - r; x <= cx + r; x++) for (let y = cy - r; y <= cy + r; y++)
+    for (const [a, b] of ix.cells.get(`${x}_${y}`) ?? []) d = Math.min(d, segDist(p, a, b));
+  return Math.min(d, cap);
 }
 
 function segDist([x, y]: Pt, [ax, ay]: Pt, [bx, by]: Pt) {
