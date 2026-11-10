@@ -1,6 +1,6 @@
 /**
  * Life above the roofs: now and then an airliner comes in from the sea on the approach to
- * the region's airport (Ben Gurion, runway 12, in Israel Center; ~3° glide slope) and fades out inland, and a few small flocks of green
+ * the region's airport (Ben Gurion runway 12 in Israel Center, Stuttgart runway 25; ~3° glide slope) and fades out inland, and a few small flocks of green
  * rose-ringed parakeets (Tel Aviv's famous feral parrots) dart about over the streets.
  * Drawn on the overlay canvas in a local frame projected like the cars (x forward, y side, z up).
  */
@@ -10,8 +10,13 @@ type ToScreen = (x: number, y: number) => [number, number];
 import { ecefToEnu, llhToEcef } from "../../../pipeline/src/camera.ts";
 
 /** The region's airport: runway threshold and heading (places.ts, passed on in world.json). */
-export interface Airport { lat: number; lon: number; runwayHeadingDeg: number }
-const START = 22000, END = 7000;        // metres before the threshold: over the sea → over Ramat Gan
+export interface Airport {
+  lat: number; lon: number; runwayHeadingDeg: number;
+  /** threshold ellipsoid height (m, default 0: sea level) */
+  h?: number;
+  /** the stretch drawn, in metres before the threshold (negative: past it, on the runway) */
+  from?: number; to?: number;
+}
 const FADE = 2500, SPEED = 75, EVERY = 110, GLIDE = Math.tan((3 * Math.PI) / 180);
 
 /** projector + local frame (forward d, z up), scaled, as a canvas transform setter */
@@ -27,30 +32,36 @@ const inView = (o: [number, number], view: number[], m: number) => o[0] > view[0
 export class Planes {
   private t = EVERY - 6; // first one shortly after load
   private flights: number[] = []; // distance flown (m) per plane in the air
-  private threshold: [number, number]; // runway threshold in the region's ENU metres
+  private threshold: Vec3; // runway threshold in the region's ENU metres
   private dir: [number, number];
+  private START: number; private END: number;
   constructor(private M: number[][], airport: Airport) {
-    const p = ecefToEnu(llhToEcef(airport.lat, airport.lon, 0)), a = (airport.runwayHeadingDeg * Math.PI) / 180;
-    this.threshold = [p[0], p[1]];
+    const p = ecefToEnu(llhToEcef(airport.lat, airport.lon, airport.h ?? 0)), a = (airport.runwayHeadingDeg * Math.PI) / 180;
+    this.threshold = [p[0], p[1], airport.h === undefined ? 0 : p[2]];
     this.dir = [Math.sin(a), Math.cos(a)];
+    // default: Ben Gurion, over the sea → fading out over Ramat Gan
+    this.START = airport.from ?? 22000; this.END = airport.to ?? 7000;
   }
 
   step(dt: number) {
     dt = Math.min(dt, 0.1);
     this.t += dt;
     if (this.t >= EVERY) { this.t = 0; this.flights.push(0); }
-    this.flights = this.flights.map((s) => s + SPEED * dt).filter((s) => s < START - END);
+    this.flights = this.flights.map((s) => s + SPEED * dt).filter((s) => s < this.START - this.END);
   }
 
   draw(ctx: CanvasRenderingContext2D, toScreen: ToScreen, px: number, view: number[]) {
     for (const s of this.flights) {
+      const { START, END } = this;
       const left = START - s; // metres to the threshold
       const B = this.threshold, DIR = this.dir;
-      const p: Vec3 = [B[0] - DIR[0] * left, B[1] - DIR[1] * left, 30 + left * GLIDE];
+      // 3° glide slope, crossing the threshold at 30 m, then flaring onto the runway
+      const p: Vec3 = [B[0] - DIR[0] * left, B[1] - DIR[1] * left, B[2] + Math.max(0, 30 + left * GLIDE)];
       const alpha = Math.min(1, s / FADE, (START - END - s) / FADE);
       const scale = Math.max(1, 0.12 / px); // never smaller than ~20 screen px across
       // shadow on the ground (sun high in the south-west), then the plane itself
-      const sh = frame(ctx, this.M, toScreen, [p[0] + p[2] * 0.25, p[1] + p[2] * 0.35, 0], DIR, scale);
+      const above = p[2] - B[2];
+      const sh = frame(ctx, this.M, toScreen, [p[0] + above * 0.25, p[1] + above * 0.35, B[2]], DIR, scale);
       const pl = frame(ctx, this.M, toScreen, p, DIR, scale);
       if (!inView(pl.o, view, 400) && !inView(sh.o, view, 400)) continue;
       ctx.globalAlpha = alpha * 0.18; sh.set(); this.shape(ctx, "#000", "#000", "#000");

@@ -23,10 +23,11 @@
  */
 import { isOneway, roadLanes, roadWidth } from "./roadspec.ts";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import sharp from "sharp";
-import { AREAS, GROUND_H, areaPolygon, insideDistance, openArea } from "./areas.ts";
+import { AREAS, groundH, areaPolygon, insideDistance, openArea } from "./areas.ts";
+import { outlineEdgeDistance, outlinePixels } from "./outline.ts";
 import { CAMERA, activeRegion, axes, camera, ecefToEnu, enuToPixel, llhToEcef, llhToPixel } from "./camera.ts";
 import { HOSTING } from "./hosting.ts";
 import { DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
@@ -45,19 +46,60 @@ const MARGIN = 16; // neighbour pixels used when building each zoomed-out tile
  *  never shows), fully opaque from EDGE1 in. */
 const EDGE0 = 760, EDGE1 = EDGE0 + 1800;
 let outlines: Array<Array<[number, number]>> = [];
+/** the region's own shape (outline.ts), if it has one: the edge follows it inside the areas */
+let shape: Array<Array<[number, number]>> | null = null;
 /** web/src/pages/index.astro #map background (#0e0f12): the edge fades into it */
 const BG = [14, 15, 18];
-const edgeDistance = (x: number, y: number) => Math.max(0, ...outlines.map((o) => insideDistance([x, y], o)));
+/** the outer edge of the union of the areas: each area's sides minus the stretches inside another area (seams) */
+let unionEdges: Array<[[number, number], [number, number]]> = [];
+function buildUnionEdges() {
+  unionEdges = [];
+  const STEP = 512;
+  outlines.forEach((poly, i) => {
+    for (let k = 0; k < poly.length; k++) {
+      const a = poly[k], b = poly[(k + 1) % poly.length], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / STEP));
+      const at = (t: number): [number, number] => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      let start = -1;
+      for (let j = 0; j <= n; j++) {
+        const mid = at((j + 0.5) / n);
+        const open = j < n && !outlines.some((o, m) => m !== i && insideDistance(mid, o) > 1);
+        if (open && start < 0) start = j;
+        if (!open && start >= 0) { unionEdges.push([at(start / n), at(j / n)]); start = -1; }
+      }
+    }
+  });
+}
+const segDist = ([x, y]: [number, number], [ax, ay]: [number, number], [bx, by]: [number, number]) => {
+  const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy, t = L2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L2)) : 0;
+  return Math.hypot(x - ax - t * dx, y - ay - t * dy);
+};
+const edgeDistance = (x: number, y: number) => {
+  if (!outlines.some((o) => insideDistance([x, y], o) > 0)) return 0;
+  let d = Infinity;
+  for (const [a, b] of unionEdges) d = Math.min(d, segDist([x, y], a, b));
+  return shape ? Math.min(d, outlineEdgeDistance([x, y])) : d;
+};
 
-/** Native web tile at global art px (x0, y0): fade alpha near the map edge (null = fully inside). */
-function edgeAlpha(x0: number, y0: number): Buffer | null {
+/** Native web tile at global art px (x0, y0): edge distance on an 8 px lattice, clamped to the fade band
+ *  (so its hash is the tile's whole fade), or null when the tile is fully inside. */
+function edgeGrid(x0: number, y0: number): Float32Array | null {
   const corners = [[x0, y0], [x0 + TS, y0], [x0, y0 + TS], [x0 + TS, y0 + TS]];
   if (Math.min(...corners.map(([x, y]) => edgeDistance(x, y))) >= EDGE1) return null;
-  const a = Buffer.alloc(TS * TS), step = 8; // distance on an 8 px lattice, bilinear in between
-  const n = TS / step + 1, grid = new Float32Array(n * n);
-  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) grid[j * n + i] = edgeDistance(x0 + i * step, y0 + j * step);
+  const n = TS / GRID + 1, grid = new Float32Array(n * n);
+  let inside = true;
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const d = Math.min(EDGE1, Math.max(EDGE0, edgeDistance(x0 + i * GRID, y0 + j * GRID)));
+    grid[j * n + i] = Math.round(d * 10) / 10;
+    if (d < EDGE1) inside = false;
+  }
+  return inside ? null : grid;
+}
+const GRID = 8;
+/** fade alpha from an edge grid, bilinear between lattice points */
+function edgeAlpha(grid: Float32Array): Buffer {
+  const a = Buffer.alloc(TS * TS), n = TS / GRID + 1;
   for (let y = 0; y < TS; y++) for (let x = 0; x < TS; x++) {
-    const gx = x / step, gy = y / step, i = Math.floor(gx), j = Math.floor(gy), fx = gx - i, fy = gy - j;
+    const gx = x / GRID, gy = y / GRID, i = Math.floor(gx), j = Math.floor(gy), fx = gx - i, fy = gy - j;
     const d = (grid[j * n + i] * (1 - fx) + grid[j * n + i + 1] * fx) * (1 - fy) + (grid[(j + 1) * n + i] * (1 - fx) + grid[(j + 1) * n + i + 1] * fx) * fy;
     const t = Math.min(1, Math.max(0, (d - EDGE0) / (EDGE1 - EDGE0)));
     a[y * TS + x] = Math.round(t * t * (3 - 2 * t) * 255);
@@ -74,7 +116,13 @@ const index: Record<string, Record<number, Record<string, string>>> = {};
 
 /** Published state of a region: per layer the source stamp of each native tile and the content hash
  *  of every tile ("z/x_y"), plus the hash of each data file. */
-interface State { layers: Record<string, { sources: Record<string, string>; hashes: Record<string, string> }>; data: Record<string, string> }
+interface State {
+  /** per layer: the stamp ("z/x_y") and content hash of every tile */
+  layers: Record<string, { sources: Record<string, string>; hashes: Record<string, string> }>;
+  data: Record<string, string>;
+  /** source PNG path -> "mtime:size@content hash" */
+  src?: Record<string, string>;
+}
 let state: State = { layers: {}, data: {} };
 const hash = (b: Buffer | string) => createHash("sha1").update(b).digest("hex").slice(0, 10);
 const pendingFile = () => join(WEB_CACHE, `${activeRegion()}.state.json`);
@@ -159,72 +207,77 @@ async function pool(jobs: Array<() => Promise<void>>) {
   await Promise.all(Array.from({ length: PARALLEL }, async () => { while (next < jobs.length) await jobs[next++](); }));
 }
 
+/**
+ * One layer's pyramid, idempotent and resumable: every tile has a stamp of everything its pixels depend on
+ * (native: the source PNG's content hash, its edge fade, deck style, format; zoomed out: the hashes of the
+ * child tiles it is built from) and is encoded only when the stamp changed. Finished tiles go into the
+ * state as they are written, and the state is checkpointed, so a stopped export picks up where it was.
+ */
 async function exportLayer(layer: string, sources: Map<Key, string>) {
   index[layer] = {};
   const root = join(OUT, "tiles", layer);
-  // which source (path + mtime) produced each native tile last time, and every tile's content hash
   const st = (state.layers[layer] ??= { sources: {}, hashes: {} });
-  const prevSources = st.sources, nextSources: Record<string, string> = {}, hashes: Record<string, string> = {};
-  const save = async (img: ReturnType<typeof sharp>, z: number, x: number, y: number) => {
+  const produced = new Set<string>(); // "z/x_y" of every tile of this export
+  const save = async (img: ReturnType<typeof sharp>, z: number, x: number, y: number, stamp: string) => {
     const buf = await img.avif({ quality: QUALITY, effort: 4 }).toBuffer();
     mkdirSync(join(root, `${z}`, `${x}`), { recursive: true });
     writeFileSync(join(root, `${z}`, `${x}`, `${y}.${FORMAT}`), buf);
-    hashes[`${z}/${x}_${y}`] = hash(buf);
+    st.hashes[`${z}/${x}_${y}`] = hash(buf);
+    st.sources[`${z}/${x}_${y}`] = stamp;
+    checkpoint();
   };
-  // native zoom: split each 1024 art tile into 512 web tiles (only when the source changed)
-  let level = new Map<Key, number>(); // key -> source mtime
-  let changed = new Set<Key>();
-  const jobs: Array<() => Promise<void>> = [];
+  const fresh = (id: string, stamp: string) => !!st.hashes[id] && st.sources[id] === stamp;
+  // native zoom: split each 1024 art tile into 512 web tiles
+  let level = new Set<Key>();
+  let jobs: Array<() => Promise<void>> = [];
   for (const [k, file] of sources) {
     const [tx, ty] = parse(k);
     const painted = layer === "map" && file.includes("/paint/");
-    const m = statSync(file).mtimeMs, stamp = `${file}@${m}@edge${EDGE0}-${EDGE1}d${painted ? `@${DECK_STYLE}` : ""}@${FORMAT}${QUALITY}`;
+    const src = sourceHash(file);
     for (let j = 0; j < SPLIT; j++)
       for (let i = 0; i < SPLIT; i++) {
-        const x = tx * SPLIT + i, y = ty * SPLIT + j, h = st.hashes[`${NATIVE_Z}/${x}_${y}`];
-        level.set(key(x, y), m);
-        nextSources[key(x, y)] = stamp;
-        if (h && prevSources[key(x, y)] === stamp) { hashes[`${NATIVE_Z}/${x}_${y}`] = h; continue; }
-        changed.add(key(x, y));
+        const x = tx * SPLIT + i, y = ty * SPLIT + j, id = `${NATIVE_Z}/${x}_${y}`;
+        const grid = edgeGrid(x * TS, y * TS);
+        const stamp = `${src}@${grid ? `e${hash(Buffer.from(grid.buffer))}` : "in"}@edge${EDGE0}-${EDGE1}${painted ? `@${DECK_STYLE}` : ""}@${FORMAT}${QUALITY}`;
+        level.add(key(x, y));
+        produced.add(id);
+        if (fresh(id, stamp)) continue;
         jobs.push(async () => {
           let img = sharp(file).extract({ left: i * TS, top: j * TS, width: TS, height: TS });
           const svg = painted ? deckSvg(x * TS, y * TS) : null;
           if (svg) img = sharp(await img.png().toBuffer()).composite([{ input: svg }]);
           const rgb = await img.removeAlpha().raw().toBuffer();
-          const alpha = edgeAlpha(x * TS, y * TS);
           // fade baked toward the page background: opaque tiles, so no seams where tiles meet
-          if (alpha) for (let p = 0; p < TS * TS; p++) for (let c = 0; c < 3; c++)
-            rgb[p * 3 + c] = Math.round(BG[c] + (rgb[p * 3 + c] - BG[c]) * (alpha[p] / 255));
-          await save(sharp(rgb, { raw: { width: TS, height: TS, channels: 3 } }), NATIVE_Z, x, y);
+          if (grid) {
+            const alpha = edgeAlpha(grid);
+            for (let p = 0; p < TS * TS; p++) for (let c = 0; c < 3; c++)
+              rgb[p * 3 + c] = Math.round(BG[c] + (rgb[p * 3 + c] - BG[c]) * (alpha[p] / 255));
+          }
+          await save(sharp(rgb, { raw: { width: TS, height: TS, channels: 3 } }), NATIVE_Z, x, y, stamp);
         });
       }
   }
+  console.log(`  ${layer} z${NATIVE_Z}: ${level.size} tiles, ${jobs.length} to encode`);
   await pool(jobs);
-  console.log(`  ${layer} z${NATIVE_Z}: ${level.size} (${changed.size} updated)`);
-  const keep = (z: number) => Object.fromEntries([...level.keys()].map((k) => [k, hashes[`${z}/${k}`]]));
-  index[layer][NATIVE_Z] = keep(NATIVE_Z);
+  const keep = (z: number, keys: Iterable<Key>) => Object.fromEntries([...keys].map((k) => [k, st.hashes[`${z}/${k}`]]));
+  index[layer][NATIVE_Z] = keep(NATIVE_Z, level);
+  let built = 0;
   for (let z = NATIVE_Z - 1; z >= MIN_Z; z--) {
-    const parents = new Map<Key, Array<[number, number]>>();
-    for (const k of level.keys()) {
-      const [x, y] = parse(k);
-      const p = key(Math.floor(x / 2), Math.floor(y / 2));
-      if (!parents.has(p)) parents.set(p, []);
-      parents.get(p)!.push([x, y]);
-    }
-    const next = new Map<Key, number>(), nextChanged = new Set<Key>();
-    jobs.length = 0;
-    for (const [p, kids] of parents) {
-      const [px, py] = parse(p);
-      const h = st.hashes[`${z}/${p}`];
-      next.set(p, Math.max(...kids.map(([x, y]) => level.get(key(x, y))!)));
-      if (h && !kids.some(([x, y]) => changed.has(key(x, y)))) { hashes[`${z}/${p}`] = h; continue; }
-      nextChanged.add(p);
+    const parents = new Set<Key>();
+    for (const k of level) { const [x, y] = parse(k); parents.add(key(Math.floor(x / 2), Math.floor(y / 2))); }
+    jobs = [];
+    for (const p of parents) {
+      const [px, py] = parse(p), id = `${z}/${p}`;
+      // the 2×2 children plus their neighbours (the MARGIN strip): their hashes are this tile's stamp
+      const near: Array<[number, number]> = [];
+      for (let y = py * 2 - 1; y <= py * 2 + 2; y++) for (let x = px * 2 - 1; x <= px * 2 + 2; x++) if (level.has(key(x, y))) near.push([x, y]);
+      const stamp = hash(near.map(([x, y]) => `${x}_${y}:${st.hashes[`${z + 1}/${x}_${y}`]}`).join(","));
+      produced.add(id);
+      if (fresh(id, stamp)) continue;
       jobs.push(async () => {
-        // the 2×2 children plus a MARGIN strip of their neighbours, so the downscale filter sees
-        // across tile edges (otherwise faint lines appear along tile borders at low zoom)
+        // the downscale filter sees across tile edges (otherwise faint lines appear along tile borders at low zoom)
         const composite = [];
-        for (let y = py * 2 - 1; y <= py * 2 + 2; y++) for (let x = px * 2 - 1; x <= px * 2 + 2; x++) {
-          if (!level.has(key(x, y))) continue;
+        for (const [x, y] of near) {
           const left = (x - px * 2) * TS + MARGIN, top = (y - py * 2) * TS + MARGIN;
           const cut = { left: Math.max(0, -left), top: Math.max(0, -top) };
           const width = Math.min(TS - cut.left, TS * 2 + 2 * MARGIN - Math.max(0, left)), height = Math.min(TS - cut.top, TS * 2 + 2 * MARGIN - Math.max(0, top));
@@ -236,17 +289,39 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
         const merged = await sharp({ create: { width: S, height: S, channels: 3, background: { r: BG[0], g: BG[1], b: BG[2] } } })
           .composite(composite).png().toBuffer();
         const half = await sharp(merged).resize(S / 2, S / 2, { kernel: "lanczos3" }).png().toBuffer();
-        await save(sharp(half).extract({ left: MARGIN / 2, top: MARGIN / 2, width: TS, height: TS }), z, px, py);
+        await save(sharp(half).extract({ left: MARGIN / 2, top: MARGIN / 2, width: TS, height: TS }), z, px, py, stamp);
       });
     }
+    built += jobs.length;
     await pool(jobs);
-    level = next;
-    changed = nextChanged;
-    index[layer][z] = keep(z);
+    level = parents;
+    index[layer][z] = keep(z, level);
   }
-  console.log(`  ${layer} z${MIN_Z}–${NATIVE_Z - 1}: ${Object.keys(hashes).length - Object.keys(index[layer][NATIVE_Z]).length} tiles`);
-  st.sources = nextSources;
-  st.hashes = hashes; // tiles no longer produced drop out (they stay in R2, unreferenced)
+  console.log(`  ${layer} z${MIN_Z}–${NATIVE_Z - 1}: ${built} encoded`);
+  // tiles no longer produced drop out (they stay in R2, unreferenced)
+  for (const id of Object.keys(st.hashes)) if (!produced.has(id)) delete st.hashes[id];
+  for (const id of Object.keys(st.sources)) if (!produced.has(id)) delete st.sources[id];
+  checkpoint(true);
+}
+
+/** Content hash of a source PNG, cached in the state by path, size and mtime (a re-render with the same pixels changes nothing). */
+function sourceHash(file: string) {
+  const { mtimeMs, size } = statSync(file), id = `${mtimeMs}:${size}`, rel = relative(DERIVED, file);
+  const c = (state.src ??= {})[rel];
+  if (c?.startsWith(`${id}@`)) return c.slice(id.length + 1);
+  const h = hash(readFileSync(file));
+  state.src[rel] = `${id}@${h}`;
+  return h;
+}
+
+/** Write the pending state now and then (atomically), so a stopped export resumes instead of starting over. */
+let lastCheckpoint = Date.now();
+function checkpoint(force = false) {
+  if (!force && Date.now() - lastCheckpoint < 30_000) return;
+  lastCheckpoint = Date.now();
+  mkdirSync(WEB_CACHE, { recursive: true });
+  writeFileSync(`${pendingFile()}.tmp`, JSON.stringify(state));
+  renameSync(`${pendingFile()}.tmp`, pendingFile());
 }
 
 /** Surface ellipsoid height sampler from the renderer's height pass (256² per 1024² tile). */
@@ -286,7 +361,7 @@ class Heights {
 
 /** lat/lon -> art pixel on the real terrain (iterate: project, read ground, re-project). */
 async function onGround(heights: Heights, lat: number, lon: number) {
-  let h = GROUND_H;
+  let h = groundH();
   let [x, y] = llhToPixel(lat, lon, h);
   for (let it = 0; it < 3; it++) {
     const g = await heights.ground(x, y);
@@ -557,6 +632,10 @@ async function main() {
   if (from) state = readJson(from);
   console.log(`  ${activeRegion()}: ${from ? `changes since ${from === pendingFile() ? "the last (unpublished) export" : "the published state"}` : "no published state: building everything"}`);
   outlines = areas.map((a) => areaPolygon(AREAS[a].bbox));
+  buildUnionEdges();
+  shape = outlinePixels();
+  // areas overlap: each tile from the area it lies deepest inside (its scene has the most context around it)
+  const depth = new Map<string, number>();
   const photo = new Map<Key, string>(), art = new Map<Key, string>();
   const attributions = new Set<string>();
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -568,6 +647,9 @@ async function main() {
       if (!existsSync(join(dir, layer))) continue;
       for (const f of readdirSync(join(dir, layer)).filter((f) => f.endsWith(".png"))) {
         const [tx, ty] = parse(f.replace(".png", ""));
+        const d = insideDistance([(tx + 0.5) * CAMERA.tile, (ty + 0.5) * CAMERA.tile], outlines[areas.indexOf(a)]);
+        if (d < (depth.get(`${layer}:${tx}_${ty}`) ?? -1)) continue;
+        depth.set(`${layer}:${tx}_${ty}`, d);
         map.set(key(tx, ty), join(dir, layer, f));
         x0 = Math.min(x0, tx * CAMERA.tile); y0 = Math.min(y0, ty * CAMERA.tile);
         x1 = Math.max(x1, (tx + 1) * CAMERA.tile); y1 = Math.max(y1, (ty + 1) * CAMERA.tile);
@@ -606,8 +688,7 @@ async function main() {
     state.data["world.json"] = hash(world);
   }
   console.log(`  world.json: ${photo.size} rendered, ${art.size} painted tiles`);
-  mkdirSync(WEB_CACHE, { recursive: true });
-  writeFileSync(pendingFile(), JSON.stringify(state));
+  checkpoint(true);
   const files = existsSync(OUT) ? readdirSync(OUT, { recursive: true }).filter((f) => String(f).match(/\.(avif|webp|json)$/)).length : 0;
   console.log(files ? `  ${files} files ready in ${OUT}\n  preview: npm run dev · publish: npm run publish -- ${activeRegion()}` : "  nothing changed");
 }

@@ -4,7 +4,7 @@ import type { Traffic } from "./traffic.ts";
 import type { Cats } from "./cats.ts";
 import type { Planes, Parrots, Airport } from "./sky.ts";
 import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
-import { CITIES } from "../../../pipeline/src/places.ts";
+import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
 
 interface World {
@@ -134,7 +134,7 @@ function loadAnimations() {
     if (world.airport) planes = new Planes(world.enu2px, world.airport);
     if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)]);
     if (roads.length) cats = new Cats(roads, world.enu2px);
-    if (roads.length) { // parakeets roam over the streets' extent
+    if (roads.length && REGION === "israel-center") { // Tel Aviv's feral parakeets roam over the streets' extent
       const a = [Infinity, Infinity, -Infinity, -Infinity];
       for (const r of roads) for (let i = 0; i < r.s.length; i += 4) {
         a[0] = Math.min(a[0], r.s[i]); a[1] = Math.min(a[1], r.s[i + 1]); a[2] = Math.max(a[2], r.s[i]); a[3] = Math.max(a[3], r.s[i + 1]);
@@ -275,7 +275,7 @@ viewer.addOnceHandler("open", () => {
   const ll = new URLSearchParams(location.search).get("at")?.split(",").map(Number);
   /** centre on lat/lon with `widthM` metres across the screen */
   const show = (lat: number, lon: number, widthM: number) => {
-    const [x, y] = llhToPixel(lat, lon, 25), vp = viewer.viewport;
+    const [x, y] = llhToPixel(lat, lon, REGIONS[REGION].groundH), vp = viewer.viewport; // at the region's typical ground (25 m Tel Aviv, 300 m Stuttgart)
     vp.zoomTo(base().getContentSize().x / (widthM / CAMERA.mpp), undefined, true);
     vp.panTo(globalToViewport(x, y), true);
   };
@@ -301,7 +301,10 @@ viewer.addOnceHandler("open", () => {
 
 document.getElementById("credits")!.innerHTML = [
   `© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>`,
-  `<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`,
+  // the region's own data sources
+  ...(REGION === "stuttgart"
+    ? [`Datenquelle: <a href="https://www.lgl-bw.de">LGL</a>, <a href="https://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a>`]
+    : [`<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`]),
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
   // the method to recreate the derived database (ODbL) and the code
   `<a href="https://github.com/krasun/isometricworld">Source</a>`,

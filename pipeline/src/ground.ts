@@ -1,7 +1,9 @@
 /**
  * Build the ground an area stands on, from open data only:
  *   terrain  Copernicus GLO-30 (a surface model: buildings are removed with a morphological
- *            opening + blur, which is plenty for flat Gush Dan), sea/lakes flattened from OSM
+ *            opening + blur, which is plenty for flat Gush Dan), sea/lakes flattened from OSM;
+ *            regions with sources "lgl": LGL DGM1 (1 m bare earth, sampled on a 3 m grid, no
+ *            filtering; Copernicus only where DGM1 has no data), rivers left at their surveyed level
  *   surface  OSM roads at real widths, pavements, landuse, parks, beach, water, rail
  *
  *   npm -w pipeline run ground -- tlv-core
@@ -14,15 +16,13 @@ import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
 import { openArea } from "./areas.ts";
-import { camera, ecefToEnu, llhToEcef } from "./camera.ts";
+import { ecefToEnu, enuToLlh, llhToEcef } from "./camera.ts";
+import { rasterSampler, toUtm } from "./lgl.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
-import { SEA_H } from "./heights.ts";
+import { REGIONS } from "./places.ts";
 import { ROAD, isOneway, roadWidth } from "./roadspec.ts";
 
 type P2 = [number, number];
-/** Geoid undulation off Tel Aviv: orthometric (MSL) + this = ellipsoid height (= sea level). */
-const GEOID = SEA_H;
-const STEP = 10;
 const MARGIN = 0.02;
 const R_EARTH = 6371000;
 
@@ -30,10 +30,16 @@ const R_EARTH = 6371000;
  * k: kind (drawn by page/renderer.ts), r: polygon rings (even-odd) or l: polyline,
  * w: line width (m), o: one-way, n: lanes, y: layer (bridges above)
  */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][] }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number }
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
+const region = REGIONS[area.region];
+const LGL = region.sources === "lgl";
+/** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
+const GEOID = region.geoidM;
+/** Terrain grid posting (m) and how far past the area it reaches (deg; the render footprint of an edge tile). */
+const STEP = LGL ? 3 : 10, TMARGIN = LGL ? 0.008 : MARGIN;
 const [S, W, N, E] = area.bbox;
 const bb = [S - MARGIN, W - MARGIN, N + MARGIN, E + MARGIN];
 const out = join(DERIVED, name, "ground");
@@ -120,10 +126,32 @@ function fillGrid(rings: P2[][], g: Grid, cb: (i: number) => void) {
 // ---- OSM features --------------------------------------------------------------------------
 const PATH: Record<string, number> = { pedestrian: 5, footway: 2.2, path: 1.6, cycleway: 2, steps: 2.5, bridleway: 2, corridor: 2 };
 
+const GRASS = /^(grass|dirt|ground|earth|unpaved)$/;
+/**
+ * Fields are not all one colour: a shade per field, from its crop where mapped (index into the ground page's
+ * FIELD palette: 0 wheat/cereal, 1 maize, 2 grass/hay, 3 vegetables, 4 rapeseed), else from the OSM id (5+).
+ */
+function fieldShade(t: Record<string, string>, id: number): number {
+  const c = t.crop ?? "";
+  if (/wheat|barley|cereal|rye|oat|spelt|triticale/.test(c)) return 0;
+  if (/corn|maize/.test(c)) return 1;
+  if (/grass|hay|forage|clover/.test(c)) return 2;
+  if (/vegetable|strawberr|potato|beet|cabbage/.test(c)) return 3;
+  if (/rape/.test(c)) return 4;
+  return 5 + ((Math.imul(id, 2654435761) >>> 0) % 7);
+}
+
 function areaKind(t: Record<string, string>): string | null {
   const lu = t.landuse, le = t.leisure, na = t.natural, am = t.amenity;
   if (na === "water" || t.water || t.waterway === "riverbank" || lu === "basin" || lu === "reservoir") return "water";
   if (le === "swimming_pool") return "pool";
+  // golf courses: bunkers, greens and tees, fairways (over the course's lawn)
+  if (t.golf === "bunker") return "bunker";
+  if (t.golf === "green" || t.golf === "tee") return "green";
+  if (t.golf === "fairway" || t.golf === "driving_range") return "fairway";
+  if (t.golf === "rough") return "park";
+  // airfields: runways, taxiways, aprons drawn as areas by surface (EDTQ: asphalt and grass side by side)
+  if (/^(runway|taxiway|apron|helipad)$/.test(t.aeroway ?? "")) return GRASS.test(t.surface ?? "") ? "airgrass" : "tarmac";
   if (na === "beach" || na === "sand") return "sand";
   if (le === "pitch" || le === "stadium") return "pitch";
   if (le === "track") return "track";
@@ -131,14 +159,19 @@ function areaKind(t: Record<string, string>): string | null {
   if (na === "wood" || lu === "forest") return "wood";
   if (["scrub", "grassland", "heath", "wetland", "bare_rock"].includes(na)) return "scrub";
   if (lu === "cemetery" || am === "grave_yard") return "cemetery";
+  if (LGL && lu === "meadow") return "meadow";
+  if (lu === "flowerbed") return "flowerbed";
   if (["park", "garden", "dog_park", "golf_course", "recreation_ground", "nature_reserve"].includes(le)
-    || ["grass", "meadow", "village_green", "recreation_ground", "flowerbed"].includes(lu)) return "park";
+    || ["grass", "meadow", "village_green", "recreation_ground"].includes(lu)) return "park";
+  if (LGL && ["vineyard", "allotments", "orchard"].includes(lu)) return lu; // the Kessel's slopes: own colours and rows
   if (["farmland", "orchard", "allotments", "plant_nursery", "greenhouse_horticulture", "vineyard"].includes(lu)) return "farm";
   if (["construction", "brownfield", "greenfield", "landfill"].includes(lu)) return "dirt";
   if (am === "parking") return "parking";
   if (t["area:highway"] || t.place === "square" || (t.highway === "pedestrian" && t.area === "yes")
-    || ["pier", "breakwater", "groyne"].includes(t.man_made)) return "paving";
+    || ["pier", "breakwater", "groyne"].includes(t.man_made))
+    return /^(fine_gravel|gravel|compacted|pebblestone)$/.test(t.surface ?? "") ? "gravel" : "paving";
   if (["school", "university", "college", "hospital"].includes(am)) return "campus";
+  if (t.aeroway === "aerodrome") return "park"; // a small airfield's grass (EDTQ Pattonville is also tagged landuse=military)
   if (["industrial", "railway", "port", "military", "depot", "garages"].includes(lu)) return "industrial";
   if (["commercial", "retail"].includes(lu)) return "commercial";
   if (lu === "residential") return "residential";
@@ -162,8 +195,13 @@ for (const el of osm.elements) {
   if (el.type === "way" && el.geometry) {
     const g = geom(el.geometry);
     if (closed(g) && !(t.highway && t.area !== "yes") && !t.railway) rings = [g];
-    else if (t.highway || t.railway || ["breakwater", "groyne", "pier"].includes(t.man_made)) {
+    else if (t.highway || t.railway || ["breakwater", "groyne", "pier"].includes(t.man_made) || /^(runway|taxiway)$/.test(t.aeroway ?? "")) {
       const l = simplifyLine(g, 0.3);
+      if (t.aeroway) { // runway / taxiway centre lines at their width (OSM width, else 30 m / 10 m)
+        const w = Number(String(t.width).replace(",", ".")) || (t.aeroway === "runway" ? 30 : 10);
+        features.push({ k: GRASS.test(t.surface ?? "") ? "grassway" : t.aeroway, l, w: r1(w) });
+        continue;
+      }
       const layer = Number(t.layer) || (t.bridge && t.bridge !== "no" ? 1 : 0);
       if (t.railway) { features.push({ k: "rail", l, ...(layer > 0 ? { y: layer } : {}) }); continue; }
       if (t.man_made) { features.push({ k: "pier", l, w: Number(t.width) || 4 }); continue; }
@@ -198,7 +236,7 @@ for (const el of osm.elements) {
   if (!k) continue;
   const r = rings.map((q) => simplifyRing(q, 0.3)).filter((q) => q.length >= 4);
   if (!r.length) continue;
-  features.push({ k, r });
+  features.push(k === "farm" || k === "meadow" ? { k, r, v: fieldShade(t, el.id) } : { k, r });
   if (k === "water") water.push(r);
 }
 
@@ -234,7 +272,8 @@ console.log(`  features: ${features.length} (${chains.length} coastline chains)`
 
 // ---- terrain grid ------------------------------------------------------------------------------
 interface Grid { x0: number; y0: number; nx: number; ny: number }
-const corners = [[bb[0], bb[1]], [bb[0], bb[3]], [bb[2], bb[1]], [bb[2], bb[3]]].map(([la, lo]) => toEnu(lo, la));
+const tb = [S - TMARGIN, W - TMARGIN, N + TMARGIN, E + TMARGIN];
+const corners = [[tb[0], tb[1]], [tb[0], tb[3]], [tb[2], tb[1]], [tb[2], tb[3]]].map(([la, lo]) => toEnu(lo, la));
 const x0 = Math.floor(Math.min(...corners.map((c) => c[0])) / STEP) * STEP, x1 = Math.max(...corners.map((c) => c[0]));
 const y0 = Math.floor(Math.min(...corners.map((c) => c[1])) / STEP) * STEP, y1 = Math.max(...corners.map((c) => c[1]));
 const grid: Grid = { x0, y0, nx: Math.ceil((x1 - x0) / STEP) + 1, ny: Math.ceil((y1 - y0) / STEP) + 1 };
@@ -258,16 +297,19 @@ async function loadDem() {
   };
 }
 
-// ENU -> lat/lon by Newton-free local inversion (good to < 1 m over the area; DEM posting is 30 m)
-const { lat: LAT0, lon: LON0 } = camera().origin;
-const mLat = (Math.PI / 180) * 6367000, mLon = (Math.PI / 180) * 6386000 * Math.cos((LAT0 * Math.PI) / 180);
 const dem = await loadDem();
+const dgm = LGL ? await rasterSampler("dgm1", tb) : null;
 const n = grid.nx * grid.ny;
 let h = new Float32Array(n);
+const fine = new Uint8Array(n); // 1: bare-earth DGM1 (no filtering needed)
 for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
-  const x = grid.x0 + ix * STEP, y = grid.y0 + iy * STEP;
-  h[iy * grid.nx + ix] = dem(LAT0 + y / mLat, LON0 + x / mLon);
+  const x = grid.x0 + ix * STEP, y = grid.y0 + iy * STEP, i = iy * grid.nx + ix;
+  const [lat, lon] = enuToLlh([x, y, 0]);
+  const v = dgm ? dgm.at(...toUtm(lat, lon)) : NaN;
+  if (Number.isFinite(v)) { h[i] = v; fine[i] = 1; } else h[i] = dem(lat, lon);
 }
+const fineShare = fine.reduce((a, b) => a + b, 0) / n;
+if (LGL) console.log(`  terrain: DGM1 on ${(fineShare * 100).toFixed(1)}% of the grid, Copernicus elsewhere`);
 /** Separable min / max / box filter with radius r grid cells. */
 function filter(a: Float32Array, r: number, op: "min" | "max" | "mean") {
   const pass = (src: Float32Array, horiz: boolean) => {
@@ -287,14 +329,17 @@ function filter(a: Float32Array, r: number, op: "min" | "max" | "mean") {
   };
   return pass(pass(a, true), false);
 }
-// bare earth: opening removes blocks up to ~200 m across, then smooth twice (≈ gaussian)
-h = filter(filter(h, 10, "min"), 10, "max");
-h = filter(filter(h, 4, "mean"), 4, "mean");
+// bare earth: opening removes blocks up to ~200 m across, then smooth twice (≈ gaussian); DGM1 is bare already
+if (fineShare < 1) {
+  const r = Math.round(100 / STEP), s = Math.round(40 / STEP);
+  const smooth = filter(filter(filter(filter(h, r, "min"), r, "max"), s, "mean"), s, "mean");
+  for (let i = 0; i < n; i++) if (!fine[i]) h[i] = smooth[i];
+}
 
 // water: sea at 0 m; lakes/rivers at their lowest surrounding ground; land kept above the sea
 const isWater = new Uint8Array(n);
 if (sea.length) fillGrid(sea, grid, (i) => { isWater[i] = 1; h[i] = -0.4; });
-for (const w of water) {
+for (const w of LGL ? [] : water) { // DGM1 already holds each river's surveyed level (and the Neckar's weirs)
   const idx: number[] = [];
   fillGrid(w, grid, (i) => idx.push(i));
   if (!idx.length) continue;
