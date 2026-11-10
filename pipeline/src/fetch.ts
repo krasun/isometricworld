@@ -8,6 +8,7 @@
  * data/raw/<area>/tlv_canopy.geojson     layer 574: 2024 tree canopy polygons
  * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage)
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
+ * data/raw/<area>/rails.json             OSM rail routes (S-Bahn, regional, Stadtbahn…) and their tracks (trains)
  * data/raw/<area>/ground.json            OSM ground surface: roads/paths, landuse, parks, water,
  *                                        coastline, rail (bbox + margin, drawn onto the terrain)
  * data/raw/dem/*.tif                     Copernicus GLO-30 elevation (1°×1° tiles, AWS open data)
@@ -19,6 +20,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openArea } from "./areas.ts";
+import { LOOKS, TOWERS } from "./landmarks.ts";
 import { download } from "./lgl.ts";
 import { FILTERS, localOsm, type OsmFilter } from "./osmlocal.ts";
 import { overpass } from "./overpass.ts";
@@ -94,7 +96,7 @@ if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;
   const b = `(${s},${w},${n},${e})`;
   const data = await osmQuery(`[out:json][timeout:300];
-${sources === "lgl" ? `(node["natural"="tree"]${b}; ${["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)).join(" ")});` : `(way["building"]${b}; relation["building"]${b}; node["natural"="tree"]${b};);`}
+${sources === "lgl" ? `(node["natural"="tree"]${b}; ${["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)).join(" ")} ${Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`).join(" ")} ${Object.keys(TOWERS).map((n) => `way["name"="${n}"]${b};`).join(" ")} nwr["amenity"="fountain"]${b};);` : `(way["building"]${b}; relation["building"]${b}; node["natural"="tree"]${b};);`}
 out body geom;`, area.bbox, sources === "lgl" ? FILTERS.treesAndLooks : FILTERS.buildingsAndTrees);
   writeFileSync(join(dir, "osm.json"), JSON.stringify(data));
   console.log(`  osm: ${data.elements.length} elements`);
@@ -106,6 +108,19 @@ way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|resident
 out body geom;`, area.bbox, FILTERS.roads);
   writeFileSync(join(dir, "roads.json"), JSON.stringify(data));
   console.log(`  roads: ${data.elements.length} ways`);
+}
+if (!existsSync(join(dir, "rails.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  // routes without member geometry (long-distance ones span the country), their tracks here, their stop nodes
+  const data = await osmQuery(`[out:json][timeout:300];
+relation["route"~"^(train|light_rail|subway|tram)$"]${b}->.r;
+.r out body;
+way["railway"~"^(rail|light_rail|subway|tram|narrow_gauge)$"]${b};
+out body geom;
+node(r.r:"stop")${b};
+out body;`, area.bbox, FILTERS.rails);
+  writeFileSync(join(dir, "rails.json"), JSON.stringify(data));
+  console.log(`  rails: ${data.elements.length} elements`);
 }
 if (!existsSync(join(dir, "ground.json"))) {
   const [s, w, n, e] = area.bbox, m = 0.02;

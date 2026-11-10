@@ -12,6 +12,7 @@
  *         data/derived/<area>/ground/height.bin    Float32 ENU "up" of the ground per grid node
  *         data/derived/<area>/ground/features.json drawable features in ENU (see Feature)
  */
+import { isBridge } from "./bridges.ts";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -30,7 +31,7 @@ const R_EARTH = 6371000;
  * k: kind (drawn by page/renderer.ts), r: polygon rings (even-odd) or l: polyline,
  * w: line width (m), o: one-way, n: lanes, y: layer (bridges above)
  */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1 }
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
@@ -203,7 +204,8 @@ for (const el of osm.elements) {
         continue;
       }
       const layer = Number(t.layer) || (t.bridge && t.bridge !== "no" ? 1 : 0);
-      if (t.railway) { features.push({ k: "rail", l, ...(layer > 0 ? { y: layer } : {}) }); continue; }
+      const deck = isBridge(t) ? { b: 1 as const } : {}; // own deck in the render (bridges.ts)
+      if (t.railway) { features.push({ k: "rail", l, ...(layer > 0 ? { y: layer } : {}), ...deck }); continue; }
       if (t.man_made) { features.push({ k: "pier", l, w: Number(t.width) || 4 }); continue; }
       const road = ROAD[t.highway], path = PATH[t.highway];
       if (!road && !path) continue;
@@ -222,6 +224,7 @@ for (const el of osm.elements) {
       if (oneway) f.o = 1;
       if (lanes) f.n = lanes;
       if (layer > 0) f.y = layer;
+      Object.assign(f, deck);
       features.push(f);
       continue;
     }

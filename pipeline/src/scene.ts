@@ -16,8 +16,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { openArea } from "./areas.ts";
 import { CAMERA, ecefToEnu, enuToPixel, llhToEcef } from "./camera.ts";
+import { isBridge } from "./bridges.ts";
 import { crowns } from "./canopy.ts";
-import { type Piece, TOPS, TOWERS } from "./landmarks.ts";
+import { ARCADES, arcade, LOOKS, type Piece, TOPS, TOWERS } from "./landmarks.ts";
 import { lod2Files, rasterSampler } from "./lgl.ts";
 import { type Lod2Building, parseLod2 } from "./lod2.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
@@ -233,13 +234,26 @@ if (region.sources === "lgl") {
       if (r) noTrees.push({ r, b: [Math.min(...r.map((q) => q[0])), Math.min(...r.map((q) => q[1])), Math.max(...r.map((q) => q[0])), Math.max(...r.map((q) => q[1]))] });
     }
   }
-  let masked = 0;
+  // Bridges: the surface model holds the deck above the bare-earth gap, read as crowns. Drop crowns on
+  // the deck (a tree under it is hidden by it anyway).
+  const decks: P2[][] = [];
+  for (const el of readJson(join(raw, "ground.json")).elements) {
+    if (el.type !== "way" || !isBridge(el.tags ?? {}) || !(el.tags.highway || el.tags.railway) || !(el.geometry?.length >= 2)) continue;
+    decks.push(el.geometry.map((q: any) => { const e = toEnu(q.lon, q.lat); return [e[0], e[1]] as P2; }));
+  }
+  const segDist = (p: P2, a: P2, b: P2) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(p[0] - a[0] - dx * t, p[1] - a[1] - dy * t);
+  };
+  const onDeck = (p: P2) => decks.some((l) => l.some((a, i) => i > 0 && segDist(p, l[i - 1], a) < 4));
+  let masked = 0, bridged = 0;
   for (const c of cs) {
     const [lat, lon] = fromUtm(c.e, c.n), p = toEnu(lon, lat);
+    if (onDeck([p[0], p[1]])) { bridged++; continue; }
     if ((c.r < 4 || c.h < 8) && noTrees.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && inside([p[0], p[1]], r))) { masked++; continue; }
     trees.push([p[0], p[1], c.r, Math.max(c.r * 0.6 + 1, c.h - c.r * 0.85)]);
   }
-  console.log(`  ndom1 tree crowns: ${cs.length - masked} (${masked} dropped on rail land / building sites)`);
+  console.log(`  ndom1 tree crowns: ${cs.length - masked - bridged} (${masked} dropped on rail land / building sites, ${bridged} on bridges)`);
 }
 
 // 2. OSM buildings where the municipal layer has nothing (Ramat Gan, Givatayim, Bnei Brak…).
@@ -260,15 +274,23 @@ let osmCount = 0;
 // tall towers (TV towers…): LoD2 has only a stump, OSM often has the whole shape as building:parts with min_height
 const tallTowers: Array<{ ring: P2[]; h: number; name?: string }> = [];
 const tops: Array<{ ring: P2[]; name: string }> = []; // landmarks.ts TOPS
+const fountains: Array<{ ring?: P2[]; at?: P2 }> = [];
+const arcades: Array<{ ring: P2[]; name: string }> = []; // landmarks.ts ARCADES
 const parts: Array<{ ring: P2[]; h: number; min: number; t: Record<string, string> }> = [];
-const looks: Array<{ ring: P2[]; area: number; roof: number[] | null; style: number | null; wall: number[] | null }> = [];
+const looks: Array<{ ring: P2[]; area: number; roof: number[] | null; style: number | null; wall: number[] | null; bare?: boolean }> = [];
 for (const el of osm.elements) {
-  const t = el.tags ?? {};
+  const t = { ...el.tags, ...(LOOKS[el.tags?.name] ?? {}) };
+  if (t.amenity === "fountain" && region.sources === "lgl") { // nDOM reads fountain sculptures as tree crowns
+    if (el.type === "node") { const q = toEnu(el.lon, el.lat); fountains.push({ at: [q[0], q[1]] }); }
+    else if (el.type === "way" && el.geometry?.length >= 4) { const ring = ringFromLonLat(el.geometry.map((q: any) => [q.lon, q.lat])); if (ring) fountains.push({ ring }); }
+    if (!t.building) continue;
+  }
   if (el.type === "node" && t.natural === "tree") {
     if (region.sources === "lgl") continue; // the nDOM crowns include them
     const p = toEnu(el.lon, el.lat); trees.push([p[0], p[1], 3, 6]); continue;
   }
-  const lglLook = region.sources === "lgl" && !!(t.building || t["building:part"]);
+  const monument = region.sources === "lgl" && !t.building && !t["building:part"] && el.type === "way" && (t.name ?? "") in TOWERS; // Jubiläumssäule
+  const lglLook = region.sources === "lgl" && (!!(t.building || t["building:part"]) || monument);
   if (!lglLook && (!t.building || t.building === "roof" || t.location === "underground")) continue;
   const coords = el.type === "way" ? el.geometry?.map((q: any) => [q.lon, q.lat])
     : el.members?.find((m: any) => m.role === "outer" && m.geometry)?.geometry.map((q: any) => [q.lon, q.lat]);
@@ -278,10 +300,12 @@ for (const el of osm.elements) {
   if (region.sources === "lgl") {
     if (!lglLook) continue;
     const h = parseFloat(t.height);
+    if (monument) { tallTowers.push({ ring, h, name: t.name }); continue; }
     if (/^(tower|communications_tower)$/.test(t.man_made ?? "") && h >= 60) tallTowers.push({ ring, h, name: t.name });
     if (t.name && t.name in TOPS) tops.push({ ring, name: t.name });
+    if (t.name && t.name in ARCADES && t.building) arcades.push({ ring, name: t.name });
     if (t["building:part"] && h) parts.push({ ring, h, min: parseFloat(t.min_height) || 0, t });
-    looks.push({ ring, area: Math.abs(area2(ring)), roof: roofRgb(t), ...wallLook(t) });
+    looks.push({ ring, area: Math.abs(area2(ring)), roof: roofRgb(t), ...wallLook(t), bare: t.name in LOOKS }); // landmarks: no solar panels etc.
     continue;
   }
   const c: P2 = [ring.reduce((a, p) => a + p[0], 0) / ring.length, ring.reduce((a, p) => a + p[1], 0) / ring.length];
@@ -291,6 +315,14 @@ for (const el of osm.elements) {
   if (!h) h = Math.abs(area2(ring)) > 1500 ? 14 : ["house", "garage", "shed", "kiosk"].includes(t.building) ? 5 : 13;
   buildings.push({ ring, h, s: style(h, t.amenity || t.building === "school" ? "public" : "regular", el.id), g: null });
   osmCount++;
+}
+if (fountains.length) {
+  const n0 = trees.length;
+  for (let i = trees.length - 1; i >= 0; i--) {
+    const p: P2 = [trees[i][0], trees[i][1]];
+    if (fountains.some((f) => (f.ring ? inside(p, f.ring) : Math.hypot(p[0] - f.at![0], p[1] - f.at![1]) < 3))) trees.splice(i, 1);
+  }
+  console.log(`  fountains: ${fountains.length}, ${n0 - trees.length} crown(s) on them dropped`);
 }
 console.log(`  osm buildings (outside municipal layer): ${osmCount}`);
 if (looks.length) console.log(`  osm roof/wall looks: ${looks.length}`);
@@ -308,7 +340,7 @@ for (const r of looks) {
 }
 const lookAt = (pt: P2) => {
   const hits = lookGrid.get(`${Math.floor(pt[0] / 50)}_${Math.floor(pt[1] / 50)}`)?.filter((r) => inside(pt, r.ring)) ?? [];
-  return { roof: hits.find((r) => r.roof)?.roof ?? null, style: hits.find((r) => r.style !== null)?.style ?? null, wall: hits.find((r) => r.wall)?.wall ?? null };
+  return { roof: hits.find((r) => r.roof)?.roof ?? null, style: hits.find((r) => r.style !== null)?.style ?? null, wall: hits.find((r) => r.wall)?.wall ?? null, bare: hits.some((r) => r.bare) };
 };
 
 // Bridges and decks recorded as buildings (Arlozorov / Savidor over the Ayalon): any footprint a
@@ -408,6 +440,8 @@ for (const tw of tallTowers) {
   const model = tw.name ? TOWERS[tw.name] : undefined;
   if (model) {
     meshes.push(...model(centre(tw.ring), base).map(fromPiece));
+    const tc = centre(tw.ring); // nDOM reads a slender column as a tree crown
+    for (let i = trees.length - 1; i >= 0; i--) if (Math.hypot(trees[i][0] - tc[0], trees[i][1] - tc[1]) < 6) trees.splice(i, 1);
     console.log(`  landmark ${tw.name}: ${stump.length} LoD2 part(s) -> model`);
     continue;
   }
@@ -424,10 +458,29 @@ for (const tp of tops) {
   for (const b of meshes) for (let i = 0; i < b.roof.length; i += 3)
     if (inside([b.roof[i], b.roof[i + 1]], tp.ring)) top = Math.max(top, b.roof[i + 2]);
   if (!Number.isFinite(top)) continue;
-  meshes.push(...TOPS[tp.name](centre(tp.ring), top, region.headingDeg).map(fromPiece));
+  // centre of the top face (a tower's flat roof, a lantern's cap), not of the outline (U-shaped palaces)
+  let sx = 0, sy = 0, sn = 0;
+  for (const b of meshes) for (let i = 0; i < b.roof.length; i += 3)
+    if (b.roof[i + 2] > top - 0.3 && inside([b.roof[i], b.roof[i + 1]], tp.ring)) { sx += b.roof[i]; sy += b.roof[i + 1]; sn++; }
+  meshes.push(...TOPS[tp.name]([sx / sn, sy / sn], top, region.headingDeg).map(fromPiece));
   console.log(`  landmark ${tp.name}: on the roof at ${top.toFixed(1)} m`);
 }
 
+// colonnades (Königsbau): carved into the LoD2 front wall inside the OSM outline
+for (const ac of arcades) {
+  for (const b of meshes.filter((m) => inside(centre(m.footprint), ac.ring))) {
+    const extra = arcade(b as any, ARCADES[ac.name]);
+    meshes.push(...extra.map(fromPiece));
+    if (extra.length) console.log(`  landmark ${ac.name}: colonnade carved`);
+  }
+  // nDOM reads the colonnade overhang as a row of crowns in front of it: drop crowns at the building
+  const near = (p: P2) => inside(p, ac.ring) || ac.ring.some((a, i) => {
+    const b = ac.ring[(i + 1) % ac.ring.length], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+    const f = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+    return Math.hypot(p[0] - a[0] - f * dx, p[1] - a[1] - f * dy) < 5;
+  });
+  for (let i = trees.length - 1; i >= 0; i--) if (near([trees[i][0], trees[i][1]])) trees.splice(i, 1);
+}
 for (const b of meshes as Mesh[]) {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
   const see = (x: number, y: number, z: number) => {
@@ -440,7 +493,8 @@ for (const b of meshes as Mesh[]) {
   const fc: P2 = [b.footprint.reduce((a, p) => a + p[0], 0) / b.footprint.length, b.footprint.reduce((a, p) => a + p[1], 0) / b.footprint.length];
   const look = b.look ?? lookAt(fc);
   const entry: unknown[] = [look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
-  if (look.roof || look.wall) entry.push(look.roof, look.wall);
+  if (look.roof || look.wall || ("bare" in look && look.bare)) entry.push(look.roof, look.wall);
+  if ("bare" in look && look.bare) entry.push(1);
   add(minx, miny, maxx, maxy, (bin) => bin.m.push(entry));
 }
 for (const t of trees) {

@@ -6,7 +6,8 @@
  */
 
 type P2 = [number, number];
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number }
+/** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1 }
 interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }
 
 const FILL: Record<string, string> = {
@@ -223,6 +224,7 @@ export function drawGround(
     // 6. rail of this layer: ballast, sleepers, two rails (a road bridge above covers it)
     ctx.lineCap = "round";
     for (const f of rails.filter((f) => (f.y ?? 0) === layer)) {
+      if (layer > 0) { stroke(f.l!, 5, "#55565c"); stroke(f.l!, 4.4, "#cfcac0"); } // deck edge and parapets, like road bridges
       stroke(f.l!, 3.4, "#a9a49a");
       stroke(f.l!, 2.6, "#7d6a58", [0.25, 0.4]);
       ctx.setLineDash([]);

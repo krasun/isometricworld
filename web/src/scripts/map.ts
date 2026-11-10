@@ -1,6 +1,7 @@
 import OpenSeadragon from "openseadragon";
 // traffic, cats and sky are loaded after the first view (loadAnimations): not in the first script
 import type { Traffic } from "./traffic.ts";
+import type { Trains } from "./trains.ts";
 import type { Cats } from "./cats.ts";
 import type { Planes, Parrots, Airport } from "./sky.ts";
 import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
@@ -21,7 +22,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; borders?: string; roads?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; borders?: string; roads?: string; trains?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -120,6 +121,7 @@ const globalToViewport = (x: number, y: number) => base().imageToViewportCoordin
 // ---- overlay: borders, labels, traffic ------------------------------------------------------
 let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
+let trains: Trains | null = null;
 let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, planes: Planes | null = null;
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
@@ -129,8 +131,10 @@ function loadAnimations() {
   Promise.all([
     import("./traffic.ts"), import("./cats.ts"), import("./sky.ts"), import("./roads.ts"),
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
-  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots }, { decodeRoads }, data]) => {
+    files.trains ? Promise.all([import("./trains.ts"), fetch(`${BASE}/data/${files.trains}`).then((r) => (r.ok ? r.json() : null))]) : null,
+  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots }, { decodeRoads }, data, rail]) => {
     const roads = decodeRoads(data);
+    if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)]);
     if (world.airport) planes = new Planes(world.enu2px, world.airport);
     if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)]);
     if (roads.length) cats = new Cats(roads, world.enu2px);
@@ -141,7 +145,7 @@ function loadAnimations() {
       }
       parrots = new Parrots(world.enu2px, a);
     }
-    Object.assign(window as object, { __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes });
+    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes });
   });
 }
 setTimeout(loadAnimations, 6000); // slow connection: don't wait for every tile forever
@@ -200,6 +204,10 @@ function frame(t: number) {
   // zoomed out too far to see them (their draw() thresholds), cars and cats pause instead of
   // simulating thousands of invisible movers every frame
   const px = k / dpr;
+  if (trains && showTraffic && px >= 0.08) { // under the cars: road bridges cross the tracks, rarely the reverse
+    trains.step(dt);
+    trains.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+  }
   if (traffic && showTraffic && px >= 0.14) {
     traffic.step(dt);
     traffic.draw(ctx, toScreen, px, [0, 0, w, hgt]);

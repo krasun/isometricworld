@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { CAMERA, axes, ecefToEnu, llhToEcef, tileCamera, useRegion } from "../src/camera.ts";
 import { REGIONS } from "../src/places.ts";
 import { drawGround, type Feature } from "./ground.ts";
+import { deckHeight } from "../src/bridges.ts";
 
 const params = new URLSearchParams(location.search);
 const REGION = params.get("region") ?? "israel-center";
@@ -133,9 +134,13 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   cv.width = w;
   cv.height = h;
   const visible = features.filter((_, i) => fbox[i][0] < x1 && fbox[i][2] > x0 && fbox[i][1] < y1 && fbox[i][3] > y0);
+  // bridges (styled regions): off the ground, onto their own deck above the gap (bridges.ts)
+  const bridges = STYLED ? visible.filter((f) => f.b && f.l && f.l.length >= 2) : [];
   // LoD2 footprints cast the same contact shadows as extruded buildings
   const shadows = { b: [...(data?.b ?? []), ...(data?.m ?? []).map((m) => [m[4], m[5], m[0], null] as [P2[], number, number, null])], t: data?.t ?? [] };
-  drawGround(cv.getContext("2d")!, visible, [x0, y0, x1, y1], GROUND_MPT, shadows, ground, STYLED ? SHADOW : undefined);
+  const ctx = cv.getContext("2d")!;
+  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, shadows, ground, STYLED ? SHADOW : undefined);
+  buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h);
   groundTexture.needsUpdate = true;
   // terrain mesh: 5 m grid draped on the terrain, UVs into the canvas
   const step = Math.min(5, meta.step), nx = Math.ceil((x1 - x0) / step) + 1, ny = Math.ceil((y1 - y0) / step) + 1;
@@ -153,6 +158,102 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   if (STYLED) geo.computeVertexNormals();
   groundMesh.geometry.dispose();
   groundMesh.geometry = geo;
+}
+
+// ---- bridge decks ------------------------------------------------------------------------------
+const deckTexture = new THREE.CanvasTexture(document.createElement("canvas"));
+deckTexture.colorSpace = THREE.NoColorSpace;
+deckTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+const deckMaterial = hillshadeMaterial.clone();
+deckMaterial.uniforms.map = { value: deckTexture };
+deckMaterial.side = THREE.DoubleSide;
+/** deck edges: concrete, lit like the hillshade (sunlit side brighter) */
+const fasciaMaterial = new THREE.ShaderMaterial({
+  vertexShader: /* glsl */ `
+    varying vec3 vNormal;
+    void main() { vNormal = normal; gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform vec3 color, sun; varying vec3 vNormal;
+    void main() { gl_FragColor = vec4(color * (0.72 + 0.4 * max(dot(normalize(vNormal), sun), 0.0)), 1.0); }`,
+  uniforms: { color: { value: new THREE.Color(0.8, 0.79, 0.76) }, sun: { value: SUN } },
+  side: THREE.DoubleSide,
+});
+const decks = new THREE.Group();
+scene.add(decks);
+/** fascia depth below the deck surface (m) */
+const FASCIA = 1.3;
+
+/**
+ * Bridge decks for this tile: the bridges drawn alone onto a second canvas (same look as on the ground),
+ * a ribbon carrying it at the deck height, concrete fascias along both edges, and the deck's shadow on
+ * the ground canvas `ctx` (still in ENU metres after drawGround).
+ */
+function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, x1, y1]: number[], w: number, h: number) {
+  for (const c of decks.children) (c as THREE.Mesh).geometry.dispose();
+  decks.clear();
+  if (!bridges.length) return;
+  const cv = deckTexture.image as HTMLCanvasElement;
+  if (w !== cv.width || h !== cv.height) deckTexture.dispose();
+  cv.width = w; cv.height = h;
+  drawGround(cv.getContext("2d")!, bridges, [x0, y0, x1, y1], GROUND_MPT, { b: [], t: [] }, ground, SHADOW);
+  deckTexture.needsUpdate = true;
+  const top: number[] = [], uv: number[] = [], side: number[] = [], sideN: number[] = [];
+  const U = (x: number, y: number) => [(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)];
+  ctx.save();
+  ctx.fillStyle = "rgba(40,40,48,0.28)";
+  for (const f of bridges) {
+    const l = f.l!, deck = deckHeight(l, ground), half = f.k === "rail" ? 2.5 : (f.w ?? 6) / 2 + 1.5;
+    // samples every ≤ 2 m along the line, with the direction there
+    const pts: Array<{ x: number; y: number; z: number; dx: number; dy: number; g: number }> = [];
+    for (let i = 0; i + 1 < l.length; i++) {
+      const [ax, ay] = l[i], [bx, by] = l[i + 1], L = Math.hypot(bx - ax, by - ay);
+      if (L < 1e-3) continue;
+      const n = Math.max(1, Math.ceil(L / 2));
+      for (let k = 0; k <= n; k++) {
+        if (k === 0 && pts.length) continue;
+        const t = k / n, x = ax + (bx - ax) * t, y = ay + (by - ay) * t;
+        pts.push({ x, y, z: deck.at(deck.cum[i] + L * t, x, y) + 0.05, dx: (bx - ax) / L, dy: (by - ay) / L, g: ground(x, y) });
+      }
+    }
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1];
+      // mitred normals: average the directions at a joint
+      const na = i > 0 ? [-(pts[i - 1].dy + a.dy) / 2, (pts[i - 1].dx + a.dx) / 2] : [-a.dy, a.dx];
+      const nb = [-b.dy, b.dx];
+      const la = Math.hypot(na[0], na[1]) || 1, lb = Math.hypot(nb[0], nb[1]) || 1;
+      const A = [[a.x + (na[0] / la) * half, a.y + (na[1] / la) * half], [a.x - (na[0] / la) * half, a.y - (na[1] / la) * half]];
+      const B = [[b.x + (nb[0] / lb) * half, b.y + (nb[1] / lb) * half], [b.x - (nb[0] / lb) * half, b.y - (nb[1] / lb) * half]];
+      // top: A0 B0 B1, A0 B1 A1 (counter-clockwise from above: left side is +normal)
+      for (const [p, z] of [[A[1], a.z], [B[1], b.z], [B[0], b.z], [A[1], a.z], [B[0], b.z], [A[0], a.z]] as Array<[number[], number]>) {
+        top.push(p[0], p[1], z); uv.push(...U(p[0], p[1]));
+      }
+      // fascias: both edges, from the deck down FASCIA m (or to the ground where it is close)
+      for (const [s0, s1, sgn] of [[A[0], B[0], 1], [B[1], A[1], -1]] as Array<[number[], number[], number]>) {
+        const za = sgn > 0 ? a.z : b.z, zb = sgn > 0 ? b.z : a.z;
+        const ba = Math.max(za - FASCIA, Math.min(za, (sgn > 0 ? a.g : b.g))), bb = Math.max(zb - FASCIA, Math.min(zb, (sgn > 0 ? b.g : a.g)));
+        const q = [[s0[0], s0[1], ba], [s1[0], s1[1], bb], [s1[0], s1[1], zb], [s0[0], s0[1], za]];
+        const ex = s1[0] - s0[0], ey = s1[1] - s0[1], el = Math.hypot(ex, ey) || 1, nx = -ey / el, ny = ex / el; // outward: left of the way for A, right for B (walked backwards)
+        for (const k of [0, 1, 2, 0, 2, 3]) { side.push(...q[k]); sideN.push(nx, ny, 0); }
+      }
+      // shadow on the ground: the deck strip shifted away from the sun by its clearance
+      const clear = (a.z + b.z - a.g - b.g) / 2;
+      if (clear > 1) {
+        const L = Math.min(9, clear * 0.45), sx = SHADOW[0] * L, sy = SHADOW[1] * L;
+        ctx.beginPath();
+        ctx.moveTo(A[0][0] + sx, A[0][1] + sy); ctx.lineTo(B[0][0] + sx, B[0][1] + sy); ctx.lineTo(B[1][0] + sx, B[1][1] + sy); ctx.lineTo(A[1][0] + sx, A[1][1] + sy);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+  const tg = new THREE.BufferGeometry();
+  tg.setAttribute("position", new THREE.Float32BufferAttribute(top, 3));
+  tg.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  tg.setAttribute("normal", new THREE.Float32BufferAttribute(top.map((_, i) => (i % 3 === 2 ? 1 : 0)), 3));
+  const sg = new THREE.BufferGeometry();
+  sg.setAttribute("position", new THREE.Float32BufferAttribute(side, 3));
+  sg.setAttribute("normal", new THREE.Float32BufferAttribute(sideN, 3));
+  decks.add(new THREE.Mesh(tg, deckMaterial), new THREE.Mesh(sg, fasciaMaterial));
 }
 
 /** Ellipsoid height (cm + 10000, 16 bit in RG) of whatever surface is visible. */
@@ -195,7 +296,7 @@ export interface TileObjects {
   b: Array<[P2[], number, number, number | null]>; // ring, height, style, ground hint (ellipsoid)
   t: Array<[number, number, number, number]>;      // x, y, radius, crown height
   /** LoD2 meshes: style, roof kind, roof xyz[], wall (xyz, along, above base)[], footprint, height, seed */
-  m?: Array<[number, number, number[], number[], P2[], number, number, (number[] | null)?, (number[] | null)?]>;
+  m?: Array<[number, number, number[], number[], P2[], number, number, (number[] | null)?, (number[] | null)?, number?]>; // … osm roof, osm wall, bare (no roof furniture)
 }
 
 /** wall, roof colours per style (see scene.ts): bauhaus, residential, public, tower, shed, modern */
@@ -630,7 +731,7 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
 /** LoD2 meshes into the shared building arrays (flat-shaded triangles; walls carry facade coordinates). */
 function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[], fac: number[], kin: number[]) {
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
-  for (const [style, roofKind, roof, wall, footprint, , seed, osmRoof, osmWall] of data.m ?? []) {
+  for (const [style, roofKind, roof, wall, footprint, , seed, osmRoof, osmWall, bare] of data.m ?? []) {
     const j = (seed % 97) / 97 - 0.5; // per-building tint
     const walls = WALL_BY_STYLE[style] ?? WALLS_STR, w = (osmWall ?? walls[seed % walls.length]).map((v) => Math.min(1, v * (1 + 0.04 * j)));
     // OSM roof:colour / roof:material where mapped (scene.ts), else the palette by roof kind
@@ -639,7 +740,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
     const rnd = mulberry(seed * 7919 + 1);
     // style in the integer part, the building's facade variation in the fraction (buildingMaterial)
     const kind = 10 + style + 0.05 + 0.9 * mulberry(seed * 104729 + 7)();
-    const green = roofKind % 10 === 6, landmark = style === 4 && !!osmRoof; // hand-modelled landmarks: no roof furniture
+    const green = roofKind % 10 === 6, landmark = (style === 4 && !!osmRoof) || !!bare; // hand-modelled / LOOKS landmarks: no roof furniture
     const planes: Plane[] = [];
     for (let i = 0; i + 8 < roof.length; i += 9) {
       a.fromArray(roof, i); b.fromArray(roof, i + 3); c.fromArray(roof, i + 6);

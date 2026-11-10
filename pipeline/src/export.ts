@@ -13,6 +13,7 @@
  *   data/tiles-<layer>.<hash>.json     every tile of a layer per zoom with its content hash (URL ?v=)
  *   data/borders.<hash>.json           OSM city borders in art-pixel space, on real terrain
  *   data/roads.<hash>.json             drivable roads for traffic (columnar, delta-coded: encodeRoads)
+ *   data/trains.<hash>.json            rail lines and their tracks for the trains (exportTrains)
  *   preview/<city>-<land|port>.<hash>.avif  the city's opening view, shown until the tiles are in
  * Content-hashed names never change, so browsers keep them for a year; world.json says which are current.
  * The legacy data/tiles.json + .webp tiles stay on R2 untouched: the viewer's fallback without AVIF.
@@ -33,6 +34,7 @@ import { HOSTING } from "./hosting.ts";
 import { DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
 import { CITIES, REGIONS } from "./places.ts";
 import { readHeights } from "./heights.ts";
+import { deckHeight, isBridge } from "./bridges.ts";
 
 const TS = 512;                  // web tile size
 const SPLIT = CAMERA.tile / TS;  // web tiles per art tile edge
@@ -428,14 +430,12 @@ async function exportBorders(heights: Heights) {
   console.log(`  borders: ${feats.length} cities`);
 }
 
-/** Drivable roads as ENU polylines sampled every 4 m, each sample flagged visible/occluded. */
-async function exportRoads(areas: string[], heights: Heights) {
-  const CLS: Record<string, number> = { motorway: 0, trunk: 0, primary: 1, secondary: 2, tertiary: 3, unclassified: 4, residential: 4, living_street: 5, service: 5 };
-  const ways = [];
-  const seen = new Set<number>(); // areas overlap (the pilot lies inside tlv-core): each OSM way once
-  let occluded = 0, total = 0, fallback = 0;
-  // the terrain grids the render drapes roads on (ground.ts): a road's height is the ground under it,
-  // not the lowest surface nearby (that is the track bed next to a cutting or below an embankment)
+/**
+ * The terrain grids the render drapes roads and tracks on (ground.ts): ENU height at (e, n), or null off
+ * the grids. A road's height is the ground under it, not the lowest surface nearby (that is the track bed
+ * next to a cutting or below an embankment).
+ */
+function terrainSampler(areas: string[]) {
   const grids = areas.map((a) => join(DERIVED, a, "ground")).filter((d) => existsSync(join(d, "meta.json"))).map((d) => {
     const m = readJson(join(d, "meta.json")), b = readFileSync(join(d, "height.bin"));
     return { ...m, h: new Float32Array(b.buffer, b.byteOffset, b.length / 4) } as { x0: number; y0: number; nx: number; ny: number; step: number; h: Float32Array };
@@ -450,6 +450,34 @@ async function exportRoads(areas: string[], heights: Heights) {
     }
     return null;
   };
+  return terrainU;
+}
+
+/**
+ * A point at ENU height `u` (null: on the rendered ground) in art px, with its ENU position and whether it
+ * is visible (not behind a building or tree in the height pass).
+ */
+async function placePoint(heights: Heights, lat: number, lon: number, u: number | null) {
+  let g: { x: number; y: number; h: number };
+  if (u === null) g = await onGround(heights, lat, lon);
+  else {
+    const h = enuHeight([...latLonEnu(lat, lon), u] as [number, number, number]), [x, y] = llhToPixel(lat, lon, h);
+    await heights.ensure(x, y, 4);
+    g = { x, y, h };
+  }
+  const surf = heights.at(g.x, g.y);
+  const vis = surf === null || surf <= g.h + 2.5 ? 1 : 0; // bridges are drawn at ground level
+  return { x: g.x, y: g.y, e: ecefToEnu(llhToEcef(lat, lon, g.h)), vis };
+}
+const latLonEnu = (lat: number, lon: number): [number, number] => { const e = ecefToEnu(llhToEcef(lat, lon, 0)); return [e[0], e[1]]; };
+
+/** Drivable roads as ENU polylines sampled every 4 m, each sample flagged visible/occluded. */
+async function exportRoads(areas: string[], heights: Heights) {
+  const CLS: Record<string, number> = { motorway: 0, trunk: 0, primary: 1, secondary: 2, tertiary: 3, unclassified: 4, residential: 4, living_street: 5, service: 5 };
+  const ways = [];
+  const seen = new Set<number>(); // areas overlap (the pilot lies inside tlv-core): each OSM way once
+  let occluded = 0, total = 0, fallback = 0;
+  const terrainU = terrainSampler(areas);
   for (const a of areas) {
     const f = join(RAW, a, "roads.json");
     if (!existsSync(f)) continue;
@@ -466,6 +494,9 @@ async function exportRoads(areas: string[], heights: Heights) {
       const t = el.tags ?? {};
       const cls = CLS[String(t.highway).replace("_link", "")] ?? 5;
       const width = roadWidth(t);
+      // bridges: on the deck the render builds (bridges.ts), from the whole way's ends, by arc length
+      const line: Array<[number, number]> = el.geometry.map((p: any) => { const e = ecefToEnu(llhToEcef(p.lat, p.lon, 0)); return [e[0], e[1]]; });
+      const deck = isBridge(t) ? deckHeight(line, terrainU) : null;
       let start = 0;
       for (let end = 1; end < el.nodes.length; end++) {
         if (end < el.nodes.length - 1 && (use.get(el.nodes[end]) ?? 0) < 2) continue;
@@ -476,18 +507,12 @@ async function exportRoads(areas: string[], heights: Heights) {
           const n = Math.max(1, Math.ceil(Math.hypot(b0.e[0] - a0.e[0], b0.e[1] - a0.e[1]) / 6));
           for (let k = 0; k < n + (i === pts.length - 2 ? 1 : 0); k++) {
             const f2 = k / n, lat = a0.lat + (b0.lat - a0.lat) * f2, lon = a0.lon + (b0.lon - a0.lon) * f2;
-            const e0 = ecefToEnu(llhToEcef(lat, lon, 0)), u = terrainU(e0[0], e0[1]);
-            let g: { x: number; y: number; h: number };
-            if (u === null) { g = await onGround(heights, lat, lon); fallback++; }
-            else {
-              const h = enuHeight([e0[0], e0[1], u]), [x, y] = llhToPixel(lat, lon, h);
-              await heights.ensure(x, y, 4);
-              g = { x, y, h };
-            }
-            const surf = heights.at(g.x, g.y);
-            const vis = surf === null || surf <= g.h + 2.5 ? 1 : 0; // bridges are drawn at ground level
+            const e0 = ecefToEnu(llhToEcef(lat, lon, 0));
+            const j = start + i, ud = deck ? deck.at(deck.cum[j] + (deck.cum[j + 1] - deck.cum[j]) * f2, e0[0], e0[1]) : terrainU(e0[0], e0[1]);
+            const u = ud !== null && Number.isFinite(ud) ? ud : null;
+            if (u === null) fallback++;
+            const { e, vis } = await placePoint(heights, lat, lon, u);
             total++; occluded += 1 - vis;
-            const e = ecefToEnu(llhToEcef(lat, lon, g.h));
             samples.push(Math.round(e[0] * 10) / 10, Math.round(e[1] * 10) / 10, Math.round(e[2] * 10) / 10, vis);
           }
         }
@@ -510,6 +535,177 @@ async function exportRoads(areas: string[], heights: Heights) {
   bridgeDecks(ways);
   writeData("roads", JSON.stringify(encodeRoads(ways)));
   console.log(`  roads: ${ways.length} ways, ${total} samples, ${((occluded / Math.max(1, total)) * 100).toFixed(1)}% occluded, ${fallback} off the terrain grids`);
+}
+
+/**
+ * Trains on the real lines, for web/src/scripts/trains.ts: OSM route relations (S-Bahn, regional and long-
+ * distance trains, Stadtbahn) on their tracks. Each route's track members are chained into one run (the
+ * longest connected one inside the region), and a line's two directions are paired, so trains shuttle: out
+ * on one relation and back on the other (the Stadtbahn end to end; mainline trains in to the Hbf terminus
+ * and back out over the map edge). Columnar like the roads:
+ *   n, s, vis  tracks (each OSM way once): samples [e, n, u] in 0.1 m, delta-coded per track; visible runs.
+ *              Tunnels are hidden, bridges run on the deck (bridges.ts).
+ *   l          lines: k kind (0 Stadtbahn, 1 S-Bahn, 2 regional, 3 long distance), r ref, c colour,
+ *              i interval (min), w tracks in running order (~index: run backwards), st stops (m along the
+ *              run), b the line back (-1: back along the same run)
+ */
+async function exportTrains(areas: string[], heights: Heights) {
+  const ways = new Map<number, any>(), rels = new Map<number, any>(), nodes = new Map<number, [number, number]>();
+  for (const a of areas) {
+    const f = join(RAW, a, "rails.json");
+    if (!existsSync(f)) continue;
+    for (const el of readJson(f).elements) {
+      if (el.type === "way") {
+        if (el.geometry?.length >= 2 && el.nodes?.length === el.geometry.length && !(ways.get(el.id)?.nodes.length >= el.nodes.length)) ways.set(el.id, el);
+      } else if (el.type === "relation") {
+        rels.set(el.id, el);
+        for (const m of el.members ?? []) if (m.type === "node" && m.lat !== undefined) nodes.set(m.ref, [m.lat, m.lon]);
+      } else if (el.type === "node") nodes.set(el.id, [el.lat, el.lon]);
+    }
+  }
+  if (!rels.size) return;
+  const enu = new Map<number, Array<[number, number]>>();
+  const lineOf = (w: any) => enu.get(w.id) ?? enu.set(w.id, w.geometry.map((p: any) => latLonEnu(p.lat, p.lon))).get(w.id)!;
+  const lenOf = (w: any) => { const l = lineOf(w); let d = 0; for (let i = 1; i < l.length; i++) d += Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]); return d; };
+
+  // each relation's track members in running order; a member outside the region breaks the run
+  type Run = { ids: number[]; fwd: boolean[]; len: number };
+  const runOf = (r: any): Run | null => {
+    const runs: Run[] = [];
+    let cur: Run | null = null, head = -1, tail = -1;
+    for (const m of r.members ?? []) {
+      if (m.type !== "way" || /platform/.test(m.role ?? "")) continue;
+      const w = ways.get(m.ref);
+      if (!w) { cur = null; continue; }
+      const a = w.nodes[0], b = w.nodes.at(-1);
+      // the first way's direction is only known from the second
+      if (cur && cur.ids.length === 1 && (a === head || b === head) && a !== tail && b !== tail) { cur.fwd[0] = !cur.fwd[0]; [head, tail] = [tail, head]; }
+      if (cur && a === tail) { cur.ids.push(w.id); cur.fwd.push(true); tail = b; }
+      else if (cur && b === tail) { cur.ids.push(w.id); cur.fwd.push(false); tail = a; }
+      else { cur = { ids: [w.id], fwd: [true], len: 0 }; runs.push(cur); head = a; tail = b; }
+      cur.len += lenOf(w);
+    }
+    return runs.sort((x, y) => y.len - x.len)[0] ?? null;
+  };
+  const endsOf = (run: Run) => {
+    const f = lineOf(ways.get(run.ids[0])), l = lineOf(ways.get(run.ids.at(-1)!));
+    return [run.fwd[0] ? f[0] : f.at(-1)!, run.fwd.at(-1) ? l.at(-1)! : l[0]];
+  };
+  const kindOf = (t: Record<string, string>) => {
+    if (/^(light_rail|subway|tram)$/.test(t.route)) return 0;
+    const refs = (t.ref ?? "").toUpperCase().split(";").map((x) => x.trim());
+    if (refs.some((x) => /^S\s*\d/.test(x))) return 1;
+    if (refs.some((x) => /^(ICE|IC|EC|ECE|EN|NJ|TGV|RJX?|FLX)\b/.test(x)) || /long_distance|high_speed/.test(t.service ?? "")) return 3;
+    return 2;
+  };
+  const DEFAULT_INTERVAL = [10, 15, 30, 60];
+  const intervalOf = (t: Record<string, string>, k: number) => {
+    const m = /^(?:(\d+):)?(\d+)/.exec(t.interval ?? "");
+    const v = m ? (m[1] ? Number(m[1]) * 60 : 0) + Number(m[2]) : 0;
+    return v >= 3 && v <= 240 ? v : DEFAULT_INTERVAL[k];
+  };
+
+  // one line per ref and its way back: the longest run, and the other direction ending where it starts
+  const groups = new Map<string, Array<{ r: any; run: Run; k: number }>>();
+  for (const r of rels.values()) {
+    const run = runOf(r);
+    if (!run || run.len < 300) continue;
+    const k = kindOf(r.tags ?? {}), key = `${r.tags.route}:${(r.tags.ref ?? r.tags.name ?? r.id).toString().split(";").at(-1)!.trim()}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push({ r, run, k });
+  }
+  const chosen: Array<{ r: any; run: Run; k: number; back: number }> = [];
+  for (const g of groups.values()) {
+    g.sort((a, b) => b.run.len - a.run.len);
+    const A = g[0], [as, ae] = endsOf(A.run);
+    let best = -1, bd = Infinity;
+    g.forEach((B, i) => {
+      if (!i) return;
+      const [bs, be] = endsOf(B.run), d = Math.hypot(ae[0] - bs[0], ae[1] - bs[1]) + Math.hypot(as[0] - be[0], as[1] - be[1]);
+      if (d < bd) { bd = d; best = i; }
+    });
+    const ia = chosen.push({ ...A, back: -1 }) - 1;
+    if (best > 0 && bd < 3000) { chosen[ia].back = chosen.length; chosen.push({ ...g[best], back: ia }); }
+  }
+
+  // sample every track a chosen line runs on, once
+  const terrainU = terrainSampler(areas);
+  const index = new Map<number, number>(), tracks: number[][] = [];
+  let hidden = 0, total = 0;
+  for (const c of chosen) for (const id of c.run.ids) {
+    if (index.has(id)) continue;
+    const w = ways.get(id), t = w.tags ?? {}, line = lineOf(w);
+    const tunnel = /^(yes|building_passage|covered)$/.test(t.tunnel ?? "") || t.covered === "yes";
+    const deck = isBridge(t) ? deckHeight(line, terrainU) : null;
+    const g = w.geometry, samples: number[] = [];
+    let cum = 0;
+    for (let i = 0; i < g.length - 1; i++) {
+      const d = Math.hypot(line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]), n = Math.max(1, Math.ceil(d / 8));
+      for (let k = 0; k < n + (i === g.length - 2 ? 1 : 0); k++) {
+        const f = k / n, lat = g[i].lat + (g[i + 1].lat - g[i].lat) * f, lon = g[i].lon + (g[i + 1].lon - g[i].lon) * f;
+        const [e0, n0] = latLonEnu(lat, lon), ground = terrainU(e0, n0);
+        const ud = deck ? deck.at(cum + d * f, e0, n0) : ground;
+        const p = await placePoint(heights, lat, lon, ud !== null && Number.isFinite(ud) ? ud : null);
+        const vis = tunnel || edgeDistance(p.x, p.y) < (EDGE0 + EDGE1) / 2 ? 0 : p.vis;
+        total++; hidden += 1 - vis;
+        samples.push(Math.round(p.e[0] * 10) / 10, Math.round(p.e[1] * 10) / 10, Math.round(p.e[2] * 10) / 10, vis);
+      }
+      cum += d;
+    }
+    index.set(id, tracks.push(samples) - 1);
+  }
+
+  // stops: the relation's stop nodes, as distance along the run
+  const lines = chosen.map((c) => {
+    const pts: Array<[number, number]> = [];
+    c.run.ids.forEach((id, j) => {
+      const s = tracks[index.get(id)!], n = s.length / 4;
+      for (let q = 0; q < n; q++) {
+        const i = c.run.fwd[j] ? q : n - 1 - q;
+        if (j && !q) continue; // the joint is the previous track's last sample
+        pts.push([s[i * 4], s[i * 4 + 1]]);
+      }
+    });
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    const st: number[] = [];
+    for (const m of c.r.members ?? []) {
+      if (m.type !== "node" || !/^stop/.test(m.role ?? "") || !nodes.has(m.ref)) continue;
+      const [x, y] = latLonEnu(...nodes.get(m.ref)!);
+      let bd = 40, bs = -1;
+      for (let i = 1; i < pts.length; i++) {
+        const [ax, ay] = pts[i - 1], dx = pts[i][0] - ax, dy = pts[i][1] - ay, L2 = dx * dx + dy * dy || 1;
+        const f = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L2)), d = Math.hypot(ax + dx * f - x, ay + dy * f - y);
+        if (d < bd) { bd = d; bs = cum[i - 1] + Math.sqrt(L2) * f; }
+      }
+      if (bs >= 0) st.push(Math.round(bs));
+    }
+    st.sort((a, b) => a - b);
+    const t = c.r.tags ?? {};
+    return {
+      k: c.k, r: String(t.ref ?? "").split(";").at(-1)!.trim(), c: t.colour ?? "", i: intervalOf(t, c.k), b: c.back,
+      w: c.run.ids.map((id, j) => (c.run.fwd[j] ? index.get(id)! : ~index.get(id)!)),
+      st: st.filter((v, i) => !i || v - st[i - 1] > 30),
+    };
+  });
+
+  const out = { v: 1, n: [] as number[], s: [] as number[], vis: [] as number[], l: lines };
+  for (const s of tracks) {
+    out.n.push(s.length / 4);
+    let pe = 0, pn = 0, pu = 0, cur = 1, run = 0;
+    const runs: number[] = [];
+    for (let k = 0; k < s.length; k += 4) {
+      const e = Math.round(s[k] * 10), n = Math.round(s[k + 1] * 10), u = Math.round(s[k + 2] * 10);
+      out.s.push(e - pe, n - pn, u - pu);
+      pe = e; pn = n; pu = u;
+      if (s[k + 3] === cur) run++; else { runs.push(run); cur = s[k + 3]; run = 1; }
+    }
+    runs.push(run);
+    out.vis.push(runs.length, ...runs);
+  }
+  writeData("trains", JSON.stringify(out));
+  const kinds = [0, 1, 2, 3].map((k) => lines.filter((l) => l.k === k).length);
+  console.log(`  trains: ${lines.length} lines (${kinds[0]} Stadtbahn, ${kinds[1]} S-Bahn, ${kinds[2]} regional, ${kinds[3]} long distance) on ${tracks.length} tracks, ${total} samples, ${((hidden / Math.max(1, total)) * 100).toFixed(1)}% hidden`);
 }
 
 /**
@@ -715,6 +911,7 @@ async function main() {
   }
   const heights = new Heights(areas.map((a) => join(DERIVED, a, "height")));
   await exportRoads(areas, heights); // first: the bridge decks are drawn into the painted tiles
+  await exportTrains(areas, heights);
   if (!process.argv.includes("--data-only")) {
     await exportLayer("map", new Map([...photo, ...art])); // painted wins
     await exportLayer("photo", photo);
@@ -736,7 +933,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), borders: dataFile("borders"), roads: dataFile("roads") },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains") },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {

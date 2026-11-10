@@ -9,6 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { LOOKS, TOWERS } from "./landmarks.ts";
 import { RAW } from "./paths.ts";
 
 type Tags = Record<string, string>;
@@ -98,7 +99,10 @@ export const FILTERS = {
   trees: ((type, t) => type === "node" && t.natural === "tree") as OsmFilter,
   /** trees + buildings (and parts) tagged with roof/wall colour or material (LoD2 regions take only the looks from OSM) */
   treesAndLooks: ((type, t) => (type === "node" && t.natural === "tree") || (type !== "node" && !!(t.building || t["building:part"])
-    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "")))) as OsmFilter,
+    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (type === "way" && (t.name ?? "") in TOWERS) || t.amenity === "fountain") as OsmFilter,
+  /** rail route relations (S-Bahn, regional, long distance, Stadtbahn) and the tracks they run on, tunnels included */
+  rails: ((type, t) => (type === "relation" && /^(train|light_rail|subway|tram)$/.test(t.route ?? ""))
+    || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge)$/.test(t.railway ?? ""))) as OsmFilter,
   buildingsAndTrees: ((type, t) => (type !== "node" && !!t.building) || (type === "node" && t.natural === "tree")) as OsmFilter,
   roads: ((type, t) => type === "way" && ROAD.test(t.highway ?? "") && t.area !== "yes") as OsmFilter,
   ground: ((type, t) =>
