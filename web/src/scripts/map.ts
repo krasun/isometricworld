@@ -133,7 +133,7 @@ function loadAnimations() {
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
     files.trains ? Promise.all([import("./trains.ts"), fetch(`${BASE}/data/${files.trains}`).then((r) => (r.ok ? r.json() : null))]) : null,
   ]).then(([{ Traffic }, { Cats }, { Planes, Parrots }, { decodeRoads }, data, rail]) => {
-    const roads = decodeRoads(data);
+    const roads = decodeRoads(data, !files.trains); // no trains: exported before terrain road heights
     if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)]);
     if (world.airport) planes = new Planes(world.enu2px, world.airport);
     if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)]);
