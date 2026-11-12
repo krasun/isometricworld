@@ -12,7 +12,7 @@
  *         data/derived/<area>/ground/height.bin    Float32 ENU "up" of the ground per grid node
  *         data/derived/<area>/ground/features.json drawable features in ENU (see Feature)
  */
-import { isBridge } from "./bridges.ts";
+import { bridgeEnds, isBridge, type GraphWay } from "./bridges.ts";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -31,7 +31,7 @@ const R_EARTH = 6371000;
  * k: kind (drawn by page/renderer.ts), r: polygon rings (even-odd) or l: polyline,
  * w: line width (m), o: one-way, n: lanes, y: layer (bridges above)
  */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1 }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number] }
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
@@ -188,6 +188,9 @@ const nodeUse = new Map<number, { n: number; w: number; foot: boolean; y: number
 const footNodes = new Set<number>();
 const nodePos = new Map<number, [P2, P2, number]>(); // position, a neighbour along the road, road width
 const geom = (g: Array<{ lat: number; lon: number }>) => g.map((q) => toEnu(q.lon, q.lat));
+/** highways and railways as a node graph, for bridge joints (bridges.ts bridgeEnds); bridge features by OSM id */
+const graph: GraphWay[] = [];
+const deckFeatures = new Map<number, Feature>();
 
 for (const el of osm.elements) {
   const t: Record<string, string> = el.tags ?? {};
@@ -205,7 +208,13 @@ for (const el of osm.elements) {
       }
       const layer = Number(t.layer) || (t.bridge && t.bridge !== "no" ? 1 : 0);
       const deck = isBridge(t) ? { b: 1 as const } : {}; // own deck in the render (bridges.ts)
-      if (t.railway) { features.push({ k: "rail", l, ...(layer > 0 ? { y: layer } : {}), ...deck }); continue; }
+      if (el.nodes?.length === g.length) graph.push({ id: el.id, nodes: el.nodes, l: g, kind: t.railway ? "rail" : ROAD[t.highway] ? "road" : "path", bridge: isBridge(t) });
+      if (t.railway) {
+        const f: Feature = { k: "rail", l, ...(layer > 0 ? { y: layer } : {}), ...deck };
+        features.push(f);
+        if (deck.b) deckFeatures.set(el.id, f);
+        continue;
+      }
       if (t.man_made) { features.push({ k: "pier", l, w: Number(t.width) || 4 }); continue; }
       const road = ROAD[t.highway], path = PATH[t.highway];
       if (!road && !path) continue;
@@ -226,6 +235,7 @@ for (const el of osm.elements) {
       if (layer > 0) f.y = layer;
       Object.assign(f, deck);
       features.push(f);
+      if (deck.b) deckFeatures.set(el.id, f);
       continue;
     }
   } else if (el.type === "relation" && el.members) {
@@ -359,6 +369,15 @@ for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
 
 writeFileSync(join(out, "height.bin"), Buffer.from(h.buffer));
 writeFileSync(join(out, "meta.json"), JSON.stringify({ ...grid, step: STEP }));
+// bridge decks: heights at both ends, joints between bridge ways interpolated (bridges.ts)
+const sample = (x: number, y: number) => {
+  const fx = Math.min(grid.nx - 1.001, Math.max(0, (x - grid.x0) / STEP)), fy = Math.min(grid.ny - 1.001, Math.max(0, (y - grid.y0) / STEP));
+  const ix = Math.floor(fx), iy = Math.floor(fy), ax = fx - ix, ay = fy - iy, i = iy * grid.nx + ix;
+  return (h[i] * (1 - ax) + h[i + 1] * ax) * (1 - ay) + (h[i + grid.nx] * (1 - ax) + h[i + grid.nx + 1] * ax) * ay;
+};
+const ends = bridgeEnds(graph, sample);
+for (const [id, e] of ends) { const f = deckFeatures.get(id); if (f) f.e = e; }
+writeFileSync(join(out, "bridge-ends.json"), JSON.stringify(Object.fromEntries(ends)));
 writeFileSync(join(out, "features.json"), JSON.stringify(features));
 let lo = Infinity, hi = -Infinity;
 for (const v of h) { lo = Math.min(lo, v); hi = Math.max(hi, v); }

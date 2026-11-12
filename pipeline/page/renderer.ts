@@ -137,10 +137,11 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   // bridges (styled regions): off the ground, onto their own deck above the gap (bridges.ts)
   const bridges = STYLED ? visible.filter((f) => f.b && f.l && f.l.length >= 2) : [];
   // LoD2 footprints cast the same contact shadows as extruded buildings
-  const shadows = { b: [...(data?.b ?? []), ...(data?.m ?? []).map((m) => [m[4], m[5], m[0], null] as [P2[], number, number, null])], t: data?.t ?? [] };
+  const shadows = { b: [...(data?.b ?? []), ...(data?.m ?? []).filter((m) => !m[9] || m[9] < 2).map((m) => [m[4], m[5], m[0], null] as [P2[], number, number, null])], t: data?.t ?? [] };
   const ctx = cv.getContext("2d")!;
   drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, shadows, ground, STYLED ? SHADOW : undefined);
   buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h);
+  if (STYLED) deckShadows(ctx, data);
   groundTexture.needsUpdate = true;
   // terrain mesh: 5 m grid draped on the terrain, UVs into the canvas
   const step = Math.min(5, meta.step), nx = Math.ceil((x1 - x0) / step) + 1, ny = Math.ceil((y1 - y0) / step) + 1;
@@ -202,7 +203,7 @@ function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, 
   ctx.save();
   ctx.fillStyle = "rgba(40,40,48,0.28)";
   for (const f of bridges) {
-    const l = f.l!, deck = deckHeight(l, ground), half = f.k === "rail" ? 2.5 : (f.w ?? 6) / 2 + 1.5;
+    const l = f.l!, deck = deckHeight(l, ground, f.e), half = f.k === "rail" ? 2.5 : (f.w ?? 6) / 2 + 1.5;
     // samples every ≤ 2 m along the line, with the direction there
     const pts: Array<{ x: number; y: number; z: number; dx: number; dy: number; g: number }> = [];
     for (let i = 0; i + 1 < l.length; i++) {
@@ -254,6 +255,26 @@ function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, 
   sg.setAttribute("position", new THREE.Float32BufferAttribute(side, 3));
   sg.setAttribute("normal", new THREE.Float32BufferAttribute(sideN, 3));
   decks.add(new THREE.Mesh(tg, deckMaterial), new THREE.Mesh(sg, fasciaMaterial));
+}
+
+/** Drop shadows of hand-built bridge decks (mesh entries flagged 2, bridgemodels.ts), like buildDecks' shadows. */
+function deckShadows(ctx: CanvasRenderingContext2D, data?: TileObjects) {
+  ctx.save();
+  ctx.fillStyle = "rgba(40,40,48,0.28)";
+  ctx.beginPath();
+  for (const m of data?.m ?? []) {
+    if (m[9] !== 2) continue;
+    const roof = m[2];
+    for (let i = 0; i + 8 < roof.length; i += 9) {
+      const cx = (roof[i] + roof[i + 3] + roof[i + 6]) / 3, cy = (roof[i + 1] + roof[i + 4] + roof[i + 7]) / 3;
+      const clear = (roof[i + 2] + roof[i + 5] + roof[i + 8]) / 3 - ground(cx, cy);
+      if (clear <= 1) continue;
+      const L = Math.min(9, clear * 0.45), sx = SHADOW[0] * L, sy = SHADOW[1] * L;
+      ctx.moveTo(roof[i] + sx, roof[i + 1] + sy); ctx.lineTo(roof[i + 3] + sx, roof[i + 4] + sy); ctx.lineTo(roof[i + 6] + sx, roof[i + 7] + sy); ctx.closePath();
+    }
+  }
+  ctx.fill("nonzero");
+  ctx.restore();
 }
 
 /** Ellipsoid height (cm + 10000, 16 bit in RG) of whatever surface is visible. */

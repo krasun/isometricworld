@@ -435,6 +435,16 @@ async function exportBorders(heights: Heights) {
  * the grids. A road's height is the ground under it, not the lowest surface nearby (that is the track bed
  * next to a cutting or below an embankment).
  */
+/** bridge deck end heights (OSM way id -> [start, end]) that ground.ts computed for these areas (bridges.ts bridgeEnds) */
+function bridgeEndsOf(areas: string[]) {
+  const m = new Map<number, [number, number]>();
+  for (const a of areas) {
+    const f = join(DERIVED, a, "ground", "bridge-ends.json");
+    if (existsSync(f)) for (const [id, e] of Object.entries(readJson(f))) m.set(Number(id), e as [number, number]);
+  }
+  return m;
+}
+
 function terrainSampler(areas: string[]) {
   const grids = areas.map((a) => join(DERIVED, a, "ground")).filter((d) => existsSync(join(d, "meta.json"))).map((d) => {
     const m = readJson(join(d, "meta.json")), b = readFileSync(join(d, "height.bin"));
@@ -477,7 +487,7 @@ async function exportRoads(areas: string[], heights: Heights) {
   const ways = [];
   const seen = new Set<number>(); // areas overlap (the pilot lies inside tlv-core): each OSM way once
   let occluded = 0, total = 0, fallback = 0;
-  const terrainU = terrainSampler(areas);
+  const terrainU = terrainSampler(areas), ends = bridgeEndsOf(areas);
   for (const a of areas) {
     const f = join(RAW, a, "roads.json");
     if (!existsSync(f)) continue;
@@ -496,7 +506,7 @@ async function exportRoads(areas: string[], heights: Heights) {
       const width = roadWidth(t);
       // bridges: on the deck the render builds (bridges.ts), from the whole way's ends, by arc length
       const line: Array<[number, number]> = el.geometry.map((p: any) => { const e = ecefToEnu(llhToEcef(p.lat, p.lon, 0)); return [e[0], e[1]]; });
-      const deck = isBridge(t) ? deckHeight(line, terrainU) : null;
+      const deck = isBridge(t) ? deckHeight(line, terrainU, ends.get(el.id)) : null;
       let start = 0;
       for (let end = 1; end < el.nodes.length; end++) {
         if (end < el.nodes.length - 1 && (use.get(el.nodes[end]) ?? 0) < 2) continue;
@@ -629,14 +639,14 @@ async function exportTrains(areas: string[], heights: Heights) {
   }
 
   // sample every track a chosen line runs on, once
-  const terrainU = terrainSampler(areas);
+  const terrainU = terrainSampler(areas), ends = bridgeEndsOf(areas);
   const index = new Map<number, number>(), tracks: number[][] = [];
   let hidden = 0, total = 0;
   for (const c of chosen) for (const id of c.run.ids) {
     if (index.has(id)) continue;
     const w = ways.get(id), t = w.tags ?? {}, line = lineOf(w);
     const tunnel = /^(yes|building_passage|covered)$/.test(t.tunnel ?? "") || t.covered === "yes";
-    const deck = isBridge(t) ? deckHeight(line, terrainU) : null;
+    const deck = isBridge(t) ? deckHeight(line, terrainU, ends.get(id)) : null;
     const g = w.geometry, samples: number[] = [];
     let cum = 0;
     for (let i = 0; i < g.length - 1; i++) {

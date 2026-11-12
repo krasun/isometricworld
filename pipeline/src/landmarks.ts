@@ -9,7 +9,9 @@
  */
 
 type P2 = [number, number];
-type Look = { roof: number[] | null; wall: number[] | null; style: number };
+/** bare: 1 = no roof furniture; 2 = also a bridge deck: a drop shadow instead of a footprint shadow; 3 = no shadow (hand-built
+ * structures whose footprint is only a bounding box) */
+type Look = { roof: number[] | null; wall: number[] | null; style: number; bare?: 1 | 2 | 3 };
 export type Piece = { roof: number[]; wall: number[]; footprint: P2[]; height: number; base: number; look: Look };
 
 const CONCRETE = [0.82, 0.82, 0.8], ALU = [0.89, 0.89, 0.9], GLASS = [0.2, 0.23, 0.27], WHITE = [0.94, 0.94, 0.93];
@@ -28,7 +30,7 @@ function quad(p: Piece, v: Array<[number, number, number, number, number]>) {
 }
 
 /** surface of revolution around c: rings [z, r] from bottom to top, n sides, heights above `base` */
-function lathe(p: Piece, c: P2, rings: Array<[number, number]>, n: number) {
+export function lathe(p: Piece, c: P2, rings: Array<[number, number]>, n: number) {
   for (let k = 0; k + 1 < rings.length; k++) {
     const [z0, r0] = rings[k], [z1, r1] = rings[k + 1];
     for (let i = 0; i < n; i++) {

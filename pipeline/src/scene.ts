@@ -19,6 +19,9 @@ import { CAMERA, ecefToEnu, enuToPixel, llhToEcef } from "./camera.ts";
 import { isBridge } from "./bridges.ts";
 import { crowns } from "./canopy.ts";
 import { ARCADES, arcade, LOOKS, type Piece, TOPS, TOWERS } from "./landmarks.ts";
+import { groupEnds, portal, tunnelEnds } from "./portals.ts";
+import { BRIDGES } from "./bridgemodels.ts";
+import { deckHeight } from "./bridges.ts";
 import { lod2Files, rasterSampler } from "./lgl.ts";
 import { type Lod2Building, parseLod2 } from "./lod2.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
@@ -246,14 +249,27 @@ if (region.sources === "lgl") {
     return Math.hypot(p[0] - a[0] - dx * t, p[1] - a[1] - dy * t);
   };
   const onDeck = (p: P2) => decks.some((l) => l.some((a, i) => i > 0 && segDist(p, l[i - 1], a) < 4));
+  // ... and inside bridge outlines (a bridge whose tracks OSM has not opened yet has no way), and on water,
+  // where the surface model is noise and boats
+  const over: Array<{ r: P2[][]; b: number[] }> = [];
+  for (const el of readJson(join(raw, "ground.json")).elements) {
+    const t = el.tags ?? {};
+    if (t.man_made !== "bridge" && !(t.natural === "water" || t.waterway === "riverbank")) continue;
+    const rings = (el.type === "way" ? [el.geometry] : (el.members ?? []).filter((m: any) => m.geometry).map((m: any) => m.geometry))
+      .filter((g: any) => g && g.length >= 4).map((g: any) => ringFromLonLat(g.map((q: any) => [q.lon, q.lat]))).filter(Boolean) as P2[][];
+    if (!rings.length) continue;
+    const all = rings.flat();
+    over.push({ r: rings, b: [Math.min(...all.map((q) => q[0])), Math.min(...all.map((q) => q[1])), Math.max(...all.map((q) => q[0])), Math.max(...all.map((q) => q[1]))] });
+  }
+  const overWater = (p: P2) => over.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && r.filter((q) => inside(p, q)).length % 2 === 1);
   let masked = 0, bridged = 0;
   for (const c of cs) {
     const [lat, lon] = fromUtm(c.e, c.n), p = toEnu(lon, lat);
-    if (onDeck([p[0], p[1]])) { bridged++; continue; }
+    if (onDeck([p[0], p[1]]) || overWater([p[0], p[1]])) { bridged++; continue; }
     if ((c.r < 4 || c.h < 8) && noTrees.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && inside([p[0], p[1]], r))) { masked++; continue; }
     trees.push([p[0], p[1], c.r, Math.max(c.r * 0.6 + 1, c.h - c.r * 0.85)]);
   }
-  console.log(`  ndom1 tree crowns: ${cs.length - masked - bridged} (${masked} dropped on rail land / building sites, ${bridged} on bridges)`);
+  console.log(`  ndom1 tree crowns: ${cs.length - masked - bridged} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water)`);
 }
 
 // 2. OSM buildings where the municipal layer has nothing (Ramat Gan, Givatayim, Bnei Brak…).
@@ -481,6 +497,39 @@ for (const ac of arcades) {
   });
   for (let i = trees.length - 1; i >= 0; i--) if (near([trees[i][0], trees[i][1]])) trees.splice(i, 1);
 }
+// tunnel portals where roads and tracks go underground (portals.ts)
+if (region.sources === "lgl") {
+  const ways = ["roads.json", "rails.json", "ground.json"].filter((f) => existsSync(join(raw, f)))
+    .flatMap((f) => readJson(join(raw, f)).elements.filter((e: any) => e.type === "way"));
+  const groups = groupEnds(tunnelEnds(ways, (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }));
+  for (const g of groups) meshes.push(...portal(g, groundAt).map(fromPiece));
+  console.log(`  tunnel portals: ${groups.length}`);
+  // named bridges (bridgemodels.ts) on their OSM outline
+  const ends = existsSync(join(DERIVED, name, "ground", "bridge-ends.json")) ? readJson(join(DERIVED, name, "ground", "bridge-ends.json")) : {};
+  const bridgeWays: Array<{ l: P2[]; dh: ReturnType<typeof deckHeight> }> = [];
+  for (const e of ways) {
+    const t = e.tags ?? {};
+    if (!isBridge(t) || !(t.highway || t.railway) || !(e.geometry?.length >= 2)) continue;
+    const l = e.geometry.map((q: any) => { const p = toEnu(q.lon, q.lat); return [p[0], p[1]] as P2; });
+    bridgeWays.push({ l, dh: deckHeight(l, groundAt, ends[e.id]) });
+  }
+  const deckAt = (p: P2) => {
+    let best = 12, z: number | null = null;
+    for (const { l, dh } of bridgeWays) for (let i = 1; i < l.length; i++) {
+      const a = l[i - 1], b = l[i], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+      const f = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2)), dist = Math.hypot(p[0] - a[0] - f * dx, p[1] - a[1] - f * dy);
+      if (dist < best) { best = dist; z = dh.at(dh.cum[i - 1] + f * Math.sqrt(L2), p[0], p[1]); }
+    }
+    return z;
+  };
+  for (const e of ways) {
+    const model = BRIDGES[e.tags?.wikidata ?? ""];
+    if (!model || e.tags.man_made !== "bridge" || !(e.geometry?.length >= 4)) continue;
+    const ring = e.geometry.map((q: any) => { const p = toEnu(q.lon, q.lat); return [p[0], p[1]] as P2; });
+    meshes.push(...model(ring, { ground: groundAt, deckAt }).map(fromPiece));
+    console.log(`  bridge ${e.tags.name}: model`);
+  }
+}
 for (const b of meshes as Mesh[]) {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
   const see = (x: number, y: number, z: number) => {
@@ -494,7 +543,7 @@ for (const b of meshes as Mesh[]) {
   const look = b.look ?? lookAt(fc);
   const entry: unknown[] = [look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
   if (look.roof || look.wall || ("bare" in look && look.bare)) entry.push(look.roof, look.wall);
-  if ("bare" in look && look.bare) entry.push(1);
+  if ("bare" in look && look.bare) entry.push(look.bare);
   add(minx, miny, maxx, maxy, (bin) => bin.m.push(entry));
 }
 for (const t of trees) {
