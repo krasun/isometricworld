@@ -103,8 +103,8 @@ export const REGIONS: Record<string, Region> = {
     ],
     adminLevels: ["6", "8"], // Stuttgart is a city-county (admin_level 6), its neighbours are 8
     credits: [
-      "Map data © OpenStreetMap contributors · Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0",
-      "Buildings: LGL LoD2 · Terrain: LGL DGM1 · Trees: LGL nDOM1",
+      "Map data © OpenStreetMap contributors · Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (verändert)",
+      "Buildings: LGL LoD2 · Terrain: LGL DGM1, Copernicus DEM © DLR, Airbus DS · Trees: LGL nDOM1",
     ],
     // Stuttgart Airport (EDDS) runway 25: threshold and true heading from OSM (way 164016757, node 10710079299),
     // threshold ground 359.9 m NHN from LGL DGM1 (+ geoid 48.4). Planes come in from the east over the faded
