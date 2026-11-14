@@ -6,7 +6,8 @@
  */
 
 type P2 = [number, number];
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][] }
+/** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number] }
 interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }
 
 const FILL: Record<string, string> = {
@@ -14,10 +15,20 @@ const FILL: Record<string, string> = {
   farm: "#c9cd8c", dirt: "#d2b98f", cemetery: "#b2c798",
   park: "#9dcb6c", wood: "#73a851", scrub: "#adbb7b", sand: "#eedbab", pitch: "#6db35a", track: "#c97a5c",
   playground: "#dccba1", parking: "#bebcb7", paving: "#e6e0d4", water: "#3f95c2", pool: "#5ccbe6",
+  vineyard: "#bfc27a", allotments: "#a9c676", orchard: "#b4cc7e", meadow: "#b6cf7e",
+  flowerbed: "#86b45a", gravel: "#ddd0b4",
+  fairway: "#8fca62", green: "#76c158", bunker: "#f0e2b4", airgrass: "#a8cf78", tarmac: "#8e9196",
 };
+/** field shades (ground.ts fieldShade): wheat, maize, grass, vegetables, rapeseed, then unmapped fields by id */
+const FIELD = ["#d8c983", "#a9c26a", "#b8cf7f", "#bcc48c", "#e0d66c",
+  "#c9cd8c", "#d3cd91", "#bcc983", "#cdc489", "#b3c67c", "#d8d1a0", "#c6b892"];
+/** Lawns, beds and paved or gravel squares nest in each other both ways (lawns in a square, a plaza in a park):
+ *  drawn together, largest first, so whatever lies inside another polygon ends up on top. */
+const NESTED = new Set(["park", "flowerbed", "paving", "gravel"]);
+const BLOOM = ["#e0525e", "#f2c94c", "#f4f1ea", "#c86bb0"];
 /** paint order of area kinds: broad landuse first, details on top */
-const AREA_ORDER = ["residential", "commercial", "industrial", "campus", "farm", "dirt", "cemetery", "scrub", "wood",
-  "park", "sand", "parking", "paving", "pitch", "track", "playground", "water", "pool"];
+const AREA_ORDER = ["residential", "commercial", "industrial", "campus", "farm", "meadow", "orchard", "vineyard", "allotments",
+  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "water", "pool"];
 const BASE = "#d9d3c4";
 const SEA = "#2c80b2", SHALLOW = "#4ea6cb";
 const ASPHALT: Record<string, string> = { highway: "#6c7077", street: "#7b7e85", lane: "#8b8d91", dirtroad: "#c3ab82" };
@@ -27,8 +38,9 @@ const SHADOW_DIR: P2 = [0.84, 0.54]; // away from the renderer's sun (-0.55, -0.
 
 export function drawGround(
   ctx: CanvasRenderingContext2D, features: Feature[], [x0, y0, x1, y1]: number[], mpt: number,
-  objects: Objects, ground: (x: number, y: number) => number,
+  objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR,
 ) {
+  const SHADOW_DIR = shadowDir;
   const W = ctx.canvas.width, H = ctx.canvas.height;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = BASE;
@@ -51,9 +63,61 @@ export function drawGround(
   const zebras = (of("zebras")[0]?.j ?? []).filter(inView);
 
   // 1. areas
-  for (const k of AREA_ORDER) for (const f of of(k)) {
-    path(f.r!); ctx.fillStyle = FILL[k]; ctx.fill("evenodd");
+  const ringArea = (r: P2[]) => Math.abs(r.reduce((a, [x, y], i) => { const [u, v] = r[(i + 1) % r.length]; return a + x * v - u * y; }, 0)) / 2;
+  const areas: Feature[] = [];
+  for (const k of AREA_ORDER) {
+    if (!NESTED.has(k)) areas.push(...of(k));
+    else if (k === "park") areas.push(...features.filter((f) => NESTED.has(f.k)).sort((a, b) => ringArea(b.r![0]) - ringArea(a.r![0])));
+  }
+  for (const f of areas) {
+    const k = f.k;
+    path(f.r!); ctx.fillStyle = (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL[k] : FILL[k]; ctx.fill("evenodd");
+    if (k === "farm" && f.v !== undefined) { // tramlines / furrows: faint parallel lines, own angle per field
+      ctx.save(); ctx.clip("evenodd");
+      const [bx0, by0, bx1, by1] = bounds(f.r!), cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, R = Math.hypot(bx1 - bx0, by1 - by0) / 2;
+      const a = ((f.v * 0.37) % 1) * Math.PI, ux = Math.cos(a), uy = Math.sin(a), gap = f.v === 2 ? 9 : 3;
+      ctx.lineWidth = 0.5; ctx.strokeStyle = "rgba(90,80,40,0.10)"; ctx.setLineDash([]);
+      ctx.beginPath();
+      for (let s = -R; s < R; s += gap) { ctx.moveTo(cx - uy * s - ux * R, cy + ux * s - uy * R); ctx.lineTo(cx - uy * s + ux * R, cy + ux * s + uy * R); }
+      ctx.stroke(); ctx.restore();
+    }
+    if (k === "fairway") {    // mowing stripes, 6 m wide
+      ctx.save(); ctx.clip("evenodd");
+      const [bx0, by0, bx1, by1] = bounds(f.r!);
+      ctx.fillStyle = "rgba(255,255,255,0.10)";
+      for (let x = Math.floor(bx0 / 12) * 12; x < bx1; x += 12) ctx.fillRect(x, by0, 6, by1 - by0);
+      ctx.restore();
+    }
+    if (k === "bunker") { ctx.lineWidth = 0.4; ctx.strokeStyle = "#cdbb88"; ctx.stroke(); }
+    if (k === "flowerbed") { // blossoms: a deterministic speckle every ~1 m
+      ctx.save(); ctx.clip("evenodd");
+      const [bx0, by0, bx1, by1] = bounds(f.r!);
+      for (let y = Math.floor(by0); y < by1; y += 0.9) for (let x = Math.floor(bx0); x < bx1; x += 0.9) {
+        const h = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
+        if (h > 0.55) continue;
+        ctx.fillStyle = BLOOM[Math.floor(h * 7.27) % BLOOM.length];
+        ctx.fillRect(x + h * 0.5, y + (h * 3.1) % 0.5, 0.45, 0.45);
+      }
+      ctx.restore();
+    }
     if (k === "pitch") { ctx.lineWidth = 0.25; ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.stroke(); }
+    if (k === "vineyard") {   // vine rows ~2 m apart, up and down the slope (drawn north-south: most Stuttgart slopes face south)
+      ctx.save(); ctx.clip("evenodd");
+      const [bx0, by0, bx1, by1] = bounds(f.r!);
+      ctx.lineWidth = 0.7; ctx.strokeStyle = "#6f8a3a"; ctx.setLineDash([]);
+      ctx.beginPath();
+      for (let x = Math.floor(bx0 / 2) * 2; x < bx1; x += 2) { ctx.moveTo(x, by0); ctx.lineTo(x, by1); }
+      ctx.stroke(); ctx.restore();
+    }
+    if (k === "allotments") { // garden plots: a loose grid of hedges
+      ctx.save(); ctx.clip("evenodd");
+      const [bx0, by0, bx1, by1] = bounds(f.r!);
+      ctx.lineWidth = 0.5; ctx.strokeStyle = "#7f9e52"; ctx.setLineDash([]);
+      ctx.beginPath();
+      for (let x = Math.floor(bx0 / 14) * 14; x < bx1; x += 14) { ctx.moveTo(x, by0); ctx.lineTo(x, by1); }
+      for (let y = Math.floor(by0 / 18) * 18; y < by1; y += 18) { ctx.moveTo(bx0, y); ctx.lineTo(bx1, y); }
+      ctx.stroke(); ctx.restore();
+    }
     if (k === "pool") { ctx.lineWidth = 0.6; ctx.strokeStyle = "#e9ecee"; ctx.stroke(); }
     if (k === "water") { ctx.lineWidth = 1; ctx.strokeStyle = "rgba(220,235,240,0.5)"; ctx.stroke(); }
   }
@@ -70,6 +134,17 @@ export function drawGround(
     }
     ctx.restore();
   }
+
+  // 2b. airfields: runway and taxiway centre lines at their width (paved: markings; grass: a mown strip)
+  ctx.lineCap = "butt";
+  for (const f of of("grassway")) { stroke(f.l!, f.w!, "#b3d684"); stroke(f.l!, f.w! - 2, "#a8cf78"); }
+  for (const f of of("taxiway")) { stroke(f.l!, f.w!, FILL.tarmac); stroke(f.l!, 0.3, "#e8c547"); }
+  for (const f of of("runway")) {
+    stroke(f.l!, f.w!, "#7f8288");
+    for (const s of [-1, 1]) stroke(offset(f.l!, s * (f.w! / 2 - 1)), 0.5, "rgba(255,255,255,0.9)");
+    stroke(f.l!, 0.9, "rgba(255,255,255,0.9)", [20, 15]);
+  }
+  ctx.lineCap = "round";
 
   // 3. soft contact shadows (short: the art has no long shadows)
   ctx.save();
@@ -149,6 +224,7 @@ export function drawGround(
     // 6. rail of this layer: ballast, sleepers, two rails (a road bridge above covers it)
     ctx.lineCap = "round";
     for (const f of rails.filter((f) => (f.y ?? 0) === layer)) {
+      if (layer > 0) { stroke(f.l!, 5, "#55565c"); stroke(f.l!, 4.4, "#cfcac0"); } // deck edge and parapets, like road bridges
       stroke(f.l!, 3.4, "#a9a49a");
       stroke(f.l!, 2.6, "#7d6a58", [0.25, 0.4]);
       ctx.setLineDash([]);
@@ -186,4 +262,10 @@ function offset(l: P2[], d: number): P2[] {
     const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
     return [p[0] - (dy / L) * d, p[1] + (dx / L) * d];
   });
+}
+
+function bounds(rings: P2[][]) {
+  let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+  for (const r of rings) for (const [x, y] of r) { a = Math.min(a, x); b = Math.min(b, y); c = Math.max(c, x); d = Math.max(d, y); }
+  return [a, b, c, d];
 }

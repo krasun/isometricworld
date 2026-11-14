@@ -8,7 +8,7 @@ export const DATA = join(ROOT, "data");
 export const RAW = join(DATA, "raw");
 export const DERIVED = join(DATA, "derived");
 /** Built map data waiting to be published (served by the dev server over production); emptied by publish. */
-export const WEB_CACHE = join(DATA, "web");
+export const WEB_CACHE = process.env.WEB_CACHE || join(DATA, "web"); // override: test exports elsewhere
 /** What is published per region: tile sources + content hashes (lets export rebuild only changes). */
 export const WEB_STATE = join(DATA, "web-state");
 // optional local settings (.env at the repo root, never committed; see .env.example)

@@ -19,7 +19,7 @@ import sharp, { type OverlayOptions } from "sharp";
 import { openArea } from "./areas.ts";
 import { CAMERA, llhToPixel } from "./camera.ts";
 import { DERIVED, PIPELINE, readJson, writeAtomic } from "./paths.ts";
-import { SEA_H, readHeights } from "./heights.ts";
+import { seaH, readHeights } from "./heights.ts";
 import { applyRegistration, register } from "./register.ts";
 
 const WIN = 1024, OVERLAP = 128, STRIDE = WIN - OVERLAP, T = CAMERA.tile;
@@ -35,31 +35,24 @@ const MIN_TEXTURE = 0.05;
 
 const PROMPT = `Use your image generation tool. Four images are attached:
 1. input.png: an orthographic aerial render (camera tilted 45° down, no perspective) of a simple 3D model \
-of {title}, Israel, built from map data. ~256 m across. The layout is exact; the colours are flat \
-placeholders (grey = asphalt with lane markings, pale = pavement/plaza, green = grass/park, sand = beach, \
-blue = water, brown dashes = rail, terracotta = bike path) and the window patterns are schematic hints. \
-Tree crowns are colour-coded by species (see image 4): dark green = ficus, light green = tipuana, \
-lilac = jacaranda in bloom, red-orange = flame tree, grey-green = olive, dark teal = Aleppo pine, \
-blue-green tall = eucalyptus, small crown on a thin brown trunk = date palm (shorter) or Washingtonia fan palm (taller).
+of {title}, {country}, built from map data. ~256 m across. {render}
 2. height.png: the height map from the SAME camera, pixel-aligned with image 1. Black = ground \
 (streets, squares, sea), grey→white = buildings and trees, brighter = taller. Use it to find exact \
 building footprints, edges and heights; open black areas are streets/plazas, not trees.
 3. style.png: the STYLE REFERENCE.
-4. trees.png: what each tree species looks like (Tel Aviv street and park trees), in the same style.
+4. trees.png: what each tree species looks like ({treesOf} street and park trees), in the same style.
 
 Redraw image 1 as detailed isometric pixel-art-style city illustration in EXACTLY the style of image 3: \
 clean crisp 3D blocks with straight vertical walls, every facade drawn with regular window grids and \
 balconies, flat roofs with rooftop details, saturated but natural colours, realistic varied trees \
-drawn as the species of image 4 seen from above (palms as star-shaped frond crowns with a visible trunk), smooth grey asphalt with lane markings, clean pavements, soft even daylight, light ambient \
+drawn as the species of image 4 seen from above{treeHint}, smooth grey asphalt with lane markings, clean pavements, soft even daylight, light ambient \
 occlusion, no long shadows, no haze, no photographic noise.
 
 Geometry comes ONLY from images 1 and 2 — this is a tracing job:
 - Same orthographic camera, framing and scale: the output overlays image 1 pixel-for-pixel.
-- Every building keeps its exact footprint, position, height and roof outline. Draw believable Tel Aviv \
-materials: white/cream plaster Bauhaus blocks with rounded balconies, stone public buildings, glass towers, \
-real window grids, balconies, shutters, rooftop solar heaters and AC units. Tall towers stay tall. \
+- Every building keeps its exact footprint, position, height and roof outline. {materials} \
 Do not add, remove, merge or move buildings or trees; do not invent trees over open streets.
-- Streets, squares, parks, beach and sea stay exactly where they are; give them real texture \
+- {ground} stay exactly where they are; give them real texture \
 (pale grey/cream stone paving — not orange or terracotta —, crosswalks at junctions, grass, sand, water ripples, parked cars along kerbs only, \
 no cars in the driving lanes).
 - Layering is exactly as in image 1: where a road bridge crosses rail tracks, a river or another road, the \
@@ -70,6 +63,45 @@ rails or lane markings across a bridge deck.
 
 When done, copy the final PNG to {out} and reply only with that path.
 `;
+/** What differs per region in the prompt (and the tree species sheet). */
+interface Local { ground: string; country: string; render: string; treesOf: string; treeHint: string; materials: string; trees: string }
+const LOCAL: Record<string, Local> = {
+  "israel-center": {
+    ground: "Streets, squares, parks, beach and sea",
+    country: "Israel",
+    render: `The layout is exact; the colours are flat \
+placeholders (grey = asphalt with lane markings, pale = pavement/plaza, green = grass/park, sand = beach, \
+blue = water, brown dashes = rail, terracotta = bike path) and the window patterns are schematic hints. \
+Tree crowns are colour-coded by species (see image 4): dark green = ficus, light green = tipuana, \
+lilac = jacaranda in bloom, red-orange = flame tree, grey-green = olive, dark teal = Aleppo pine, \
+blue-green tall = eucalyptus, small crown on a thin brown trunk = date palm (shorter) or Washingtonia fan palm (taller).`,
+    treesOf: "Tel Aviv",
+    treeHint: " (palms as star-shaped frond crowns with a visible trunk)",
+    materials: `Draw believable Tel Aviv \
+materials: white/cream plaster Bauhaus blocks with rounded balconies, stone public buildings, glass towers, \
+real window grids, balconies, shutters, rooftop solar heaters and AC units. Tall towers stay tall.`,
+    trees: TREES,
+  },
+  stuttgart: {
+    ground: "Streets, squares, parks, vineyards, rail yards and the river",
+    country: "Germany",
+    render: `The layout and every roof shape are exact (real \
+pitched, hipped and flat roofs from the city's 3D building data); the colours and window patterns are stylised hints \
+(grey = asphalt with lane markings, pale = pavement/plaza, green = grass/park, olive with fine stripes = vineyard, \
+blue = water, brown lines = rail, terracotta = bike path). Tree crowns are colour-coded by species (see image 4): \
+yellow-green = plane tree, lime or maple, dark green = horse chestnut, oak or beech, pale yellow-green small = birch, \
+pink = ornamental cherry in bloom, dark blue-green narrow = spruce.`,
+    treesOf: "Stuttgart",
+    treeHint: " (broad rounded deciduous crowns in late-spring green, spruces as narrow dark cones)",
+    materials: `Draw believable Stuttgart \
+materials: yellow-beige and red sandstone (Schlossplatz palaces, churches, public buildings), pale plaster \
+Gründerzeit and post-war blocks, red and brown clay-tile pitched roofs, grey slate, green copper on churches and \
+palaces, glass and concrete offices, dormers, chimneys, real window grids, solar panels where the render shows them. \
+Tall towers stay tall.`,
+    trees: join(PIPELINE, "style", "trees-stuttgart.png"),
+  },
+};
+
 const CONTINUATION = `- The strip(s) along the {edges} edge(s) of image 1 are ALREADY-PAINTED neighbouring artwork. \
 Reproduce them unchanged and continue the same palette and detail seamlessly into the rest.
 `;
@@ -92,7 +124,9 @@ const { values: args, positionals } = parseArgs({
 const areaName = positionals[0] ?? "tlv-core";
 const base = join(DERIVED, areaName);
 const manifest = readJson(join(base, "manifest.json"));
-const title = openArea(areaName).title;
+const AREA = openArea(areaName), title = AREA.title;
+const local = LOCAL[AREA.region];
+if (!local) throw new Error(`paint: no prompt for region ${AREA.region} (LOCAL in paint.ts)`);
 const OLDER = args.older ? new Date(args.older).getTime() : 0;
 const mtime = (f: string) => (existsSync(f) ? statSync(f).mtimeMs : 0);
 /** painted in the current style (with --older, windows painted before the cut-off don't count) */
@@ -137,10 +171,10 @@ async function windowGround(x: number, y: number) {
   for (let ty = Math.floor(y / T); ty <= Math.floor((y + WIN - 1) / T); ty++)
     for (let tx = Math.floor(x / T); tx <= Math.floor((x + WIN - 1) / T); tx++) {
       const f = join(base, "height", `${tx}_${ty}.png`);
-      if (existsSync(f)) for (const v of await readHeights(f)) if (!Number.isNaN(v) && v > SEA_H - 0.5) all.push(v);
+      if (existsSync(f)) for (const v of await readHeights(f)) if (!Number.isNaN(v) && v > seaH() - 0.5) all.push(v);
     }
   all.sort((a, b) => a - b);
-  return all[Math.floor(all.length * 0.05)] ?? SEA_H;
+  return all[Math.floor(all.length * 0.05)] ?? seaH();
 }
 
 function windows(): Array<[number, number]> {
@@ -220,7 +254,7 @@ async function seaFraction(i: number, j: number) {
       if (!existsSync(f)) continue;
       const h = (await readHeights(f))[Math.floor((y - ty * T) / 4) * 256 + Math.floor((x - tx * T) / 4)];
       n++;
-      if (h <= SEA_H + 0.3) wet++;
+      if (h <= seaH() + 0.3) wet++;
     }
   return n ? wet / n : 0;
 }
@@ -270,8 +304,9 @@ async function paintWindow(i: number, j: number) {
   mkdirSync(work, { recursive: true });
   const edges = await composeInput(i, j, join(work, "input.png"), join(work, "height.png"));
   copyFileSync(STYLE, join(work, "style.png"));
-  copyFileSync(TREES, join(work, "trees.png"));
-  const prompt = PROMPT.replace("{title}", title).replace("{out}", join(work, "out.png"))
+  copyFileSync(local.trees, join(work, "trees.png"));
+  const prompt = PROMPT.replace("{title}", title).replace("{country}", local.country).replace("{render}", local.render)
+    .replace("{treesOf}", local.treesOf).replace("{treeHint}", local.treeHint).replace("{materials}", local.materials).replace("{ground}", local.ground).replace("{out}", join(work, "out.png"))
     .replace("{continuation}", edges.length ? CONTINUATION.replace("{edges}", edges.join(" and ")) : "");
   for (let attempt = 1; attempt <= 3; attempt++) {
     while (Date.now() < resumeAt) await sleep(Math.min(60_000, resumeAt - Date.now()));
@@ -337,7 +372,7 @@ async function deepWater(i: number, j: number) {
   let any = false;
   for (let cy = 0; cy < n; cy++) for (let cx = 0; cx < n; cx++) {
     const h = await heightAt(x0 + cx * CELL + CELL / 2, y0 + cy * CELL + CELL / 2);
-    const land = !Number.isNaN(h) && h > SEA_H + 0.3;
+    const land = !Number.isNaN(h) && h > seaH() + 0.3;
     d[cy * n + cx] = land ? 0 : 1e9;
     if (!land && !Number.isNaN(h)) any = true;
   }

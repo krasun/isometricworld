@@ -134,6 +134,25 @@ npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/tel-aviv-
 | publish | `pipeline/src/publish.ts` | Uploads the cache to the R2 bucket (tiles and previews first, `world.json` last), checks every upload, records the published state, empties the cache. |
 | web | `web/src/scripts/map.ts`, `traffic.ts`, `cats.ts`, `sky.ts` | OpenSeadragon deep zoom: a sparse pyramid with a tile index (no 404s), level blending, and zoom limited to the metro. A canvas overlay draws borders, labels, and simulated cars and buses on OSM roads (split at every shared node): lanes within the drawn asphalt, car following with safe gaps, junctions taken in turns by approach, drifting cruise speeds; hidden behind buildings using the height pass and under bridges (higher OSM layer). A few street cats (~1 per 900 m of street) sit and stroll on the pavements when zoomed in close; small flocks of green parakeets dart over the streets, and every ~2 min an airliner comes in from the sea on the Ben Gurion approach and fades out inland. Keys: **B** borders · **T** traffic · **P** raw render · **I** about · **V** video mode (`?video`). `/#metro` shows the whole metro. |
 
+**Stuttgart** (region `stuttgart`, `sources: "lgl"`) differs from Tel Aviv:
+
+- Data: LGL Baden-Württemberg open data (dl-de/by-2.0, `lgl.ts`): LoD2 buildings with real roofs (`lod2.ts`),
+  DGM1 bare-earth terrain, and tree crowns found in the nDOM1 surface model (`canopy.ts`).
+- OSM comes from a Geofabrik extract via osmium (`osmExtract`, `osmlocal.ts`; `brew install osmium-tool`),
+  not from Overpass.
+- Look: not painted. The renderer draws a styled look itself (facade and roof materials, hillshade, outlines,
+  ambient occlusion, paper grain; `STYLED` in `renderer.ts`).
+- Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
+  the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
+  rendered, and export fades the map edge along its outer border only (not between the towns).
+- OSM detail on top of LoD2: `roof:colour`/`roof:material` and `building:colour`/`building:material` set roof
+  and facade looks; tall towers (`man_made=tower|communications_tower`, ≥ 60 m) are rebuilt from their OSM
+  `building:part`s; no nDOM tree crowns on railway and construction land.
+- Landmarks (`landmarks.ts`): hand-built models from published dimensions, matched by OSM `name`: the
+  Fernsehturm (whole tower) and the Mercedes star on the Bahnhofsturm (on its roof).
+- Areas: the city (`stuttgart-*`) and the towns around it (`metro-*`) are split into overlapping areas. Where
+  they overlap, export takes each tile from the area it lies deepest inside.
+
 **Add an area:** add its bbox (and region) to `pipeline/src/areas.ts`, then run fetch, ground, scene, render, paint and export.
 Areas of one region share its camera and grid, so they line up.
 

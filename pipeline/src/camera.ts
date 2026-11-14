@@ -78,6 +78,20 @@ export function ecefToEnu(p: Vec3): Vec3 {
   ];
 }
 
+/** ENU point -> [lat, lon, ellipsoid height] (exact: ECEF, then Bowring's latitude with two refinements). */
+export function enuToLlh([x, y, z]: Vec3): Vec3 {
+  const { east: e, north: n, up: u, o } = FRAME;
+  const p: Vec3 = [0, 1, 2].map((k) => o[k] + e[k] * x + n[k] * y + u[k] * z) as Vec3;
+  const lon = Math.atan2(p[1], p[0]), r = Math.hypot(p[0], p[1]);
+  let lat = Math.atan2(p[2], r * (1 - E2)), h = 0;
+  for (let i = 0; i < 3; i++) {
+    const N = A / Math.sqrt(1 - E2 * Math.sin(lat) ** 2);
+    h = r / Math.cos(lat) - N;
+    lat = Math.atan2(p[2], r * (1 - (E2 * N) / (N + h)));
+  }
+  return [(lat * 180) / Math.PI, (lon * 180) / Math.PI, h];
+}
+
 /** Camera axes in ENU. */
 export function axes() {
   const h = rad(REGIONS[region].headingDeg), p = rad(CAMERA.pitchDeg);

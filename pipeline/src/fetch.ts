@@ -8,14 +8,24 @@
  * data/raw/<area>/tlv_canopy.geojson     layer 574: 2024 tree canopy polygons
  * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage)
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
+ * data/raw/<area>/rails.json             OSM rail routes (S-Bahn, regional, Stadtbahn…) and their tracks (trains)
  * data/raw/<area>/ground.json            OSM ground surface: roads/paths, landuse, parks, water,
  *                                        coastline, rail (bbox + margin, drawn onto the terrain)
  * data/raw/dem/*.tif                     Copernicus GLO-30 elevation (1°×1° tiles, AWS open data)
+ * data/raw/lgl/{dgm1,ndom1,lod2}/*.zip    LGL Baden-Württemberg terrain, surface heights, LoD2 buildings
+ *                                        (regions with sources "lgl"; see lgl.ts)
+ *
+ * The Tel Aviv-Yafo layers are fetched only for regions with sources "tlv".
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openArea } from "./areas.ts";
+import { LOOKS, TOWERS } from "./landmarks.ts";
+import { download } from "./lgl.ts";
+import { FILTERS, localOsm, type OsmFilter } from "./osmlocal.ts";
+import { overpass } from "./overpass.ts";
 import { RAW } from "./paths.ts";
+import { REGIONS } from "./places.ts";
 
 const TLV = "https://gisn.tel-aviv.gov.il/arcgis/rest/services/IView2/MapServer/{layer}/query";
 const UA = { "User-Agent": "isometric-world/0.3 (open-data isometric map)" };
@@ -59,64 +69,85 @@ async function arcgis(layer: number, bbox: [number, number, number, number], fie
   return { type: "FeatureCollection", features: [...seen.values()] };
 }
 
-async function overpass(query: string) {
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    const r = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST", headers: { ...UA, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ data: query }),
-    });
-    if (r.ok) return r.json();
-    console.warn(`  overpass ${r.status}, retrying…`);
-    await new Promise((res) => setTimeout(res, 15_000 * attempt));
-  }
-  throw new Error("overpass failed");
-}
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
+const sources = REGIONS[area.region].sources;
+const extract = REGIONS[area.region].osmExtract;
+/** Overpass query, or the same selection from the region's local extract. */
+const osmQuery = (ql: string, bbox: number[], filter: OsmFilter) => extract ? localOsm(extract, bbox, filter) : overpass(ql);
 const dir = join(RAW, name);
 mkdirSync(dir, { recursive: true });
 
-if (!existsSync(join(dir, "tlv_buildings.geojson")))
-  writeFileSync(join(dir, "tlv_buildings.geojson"), JSON.stringify(await arcgis(513, area.bbox,
-    "id_binyan,t_sug_mivne,ms_komot,gova_simplex_2019,min_height,max_height,year", "id_binyan")));
-if (!existsSync(join(dir, "tlv_canopy.geojson")))
-  writeFileSync(join(dir, "tlv_canopy.geojson"), JSON.stringify(await arcgis(574, area.bbox, "OBJECTID", "OBJECTID")));
+if (sources === "tlv") {
+  if (!existsSync(join(dir, "tlv_buildings.geojson")))
+    writeFileSync(join(dir, "tlv_buildings.geojson"), JSON.stringify(await arcgis(513, area.bbox,
+      "id_binyan,t_sug_mivne,ms_komot,gova_simplex_2019,min_height,max_height,year", "id_binyan")));
+  if (!existsSync(join(dir, "tlv_canopy.geojson")))
+    writeFileSync(join(dir, "tlv_canopy.geojson"), JSON.stringify(await arcgis(574, area.bbox, "OBJECTID", "OBJECTID")));
+}
+if (sources === "lgl") {
+  const [s, w, n, e] = area.bbox, m = 0.005, g = 0.02; // objects just past the edge; terrain as far as ground.ts reads
+  await download("lod2", [s - m, w - m, n + m, e + m]);
+  await download("ndom1", [s - m, w - m, n + m, e + m]);
+  await download("dgm1", [s - g, w - g, n + g, e + g]);
+}
 if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;
   const b = `(${s},${w},${n},${e})`;
-  const data = await overpass(`[out:json][timeout:300];
-(way["building"]${b}; relation["building"]${b}; node["natural"="tree"]${b};);
-out body geom;`);
+  const data = await osmQuery(`[out:json][timeout:300];
+${sources === "lgl" ? `(node["natural"="tree"]${b}; ${["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)).join(" ")} ${Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`).join(" ")} ${Object.keys(TOWERS).map((n) => `way["name"="${n}"]${b};`).join(" ")} nwr["amenity"="fountain"]${b};);` : `(way["building"]${b}; relation["building"]${b}; node["natural"="tree"]${b};);`}
+out body geom;`, area.bbox, sources === "lgl" ? FILTERS.treesAndLooks : FILTERS.buildingsAndTrees);
   writeFileSync(join(dir, "osm.json"), JSON.stringify(data));
   console.log(`  osm: ${data.elements.length} elements`);
 }
 if (!existsSync(join(dir, "roads.json"))) {
   const [s, w, n, e] = area.bbox;
-  const data = await overpass(`[out:json][timeout:300];
+  const data = await osmQuery(`[out:json][timeout:300];
 way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|living_street|service)$"]["area"!="yes"](${s},${w},${n},${e});
-out body geom;`);
+out body geom;`, area.bbox, FILTERS.roads);
   writeFileSync(join(dir, "roads.json"), JSON.stringify(data));
   console.log(`  roads: ${data.elements.length} ways`);
+}
+if (!existsSync(join(dir, "rails.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  // routes without member geometry (long-distance ones span the country), their tracks here, their stop nodes
+  const data = await osmQuery(`[out:json][timeout:300];
+relation["route"~"^(train|light_rail|subway|tram)$"]${b}->.r;
+.r out body;
+way["railway"~"^(rail|light_rail|subway|tram|narrow_gauge)$"]${b};
+out body geom;
+node(r.r:"stop")${b};
+out body;`, area.bbox, FILTERS.rails);
+  writeFileSync(join(dir, "rails.json"), JSON.stringify(data));
+  console.log(`  rails: ${data.elements.length} elements`);
 }
 if (!existsSync(join(dir, "ground.json"))) {
   const [s, w, n, e] = area.bbox, m = 0.02;
   const b = `(${s - m},${w - m},${n + m},${e + m})`;
-  const data = await overpass(`[out:json][timeout:600][maxsize:1073741824];
-(
-  way["highway"]["tunnel"!~"yes|building_passage"]${b};
+  // in parts: one big query mostly ends in a 504 when Overpass is busy; elements are merged (deduplicated)
+  const parts = [
+    `way["highway"]["tunnel"!~"yes|building_passage"]${b};
   way["area:highway"]${b};
-  way["railway"~"^(rail|light_rail|tram)$"]["tunnel"!="yes"]${b};
-  nwr["landuse"]${b};
-  nwr["leisure"~"^(park|garden|pitch|playground|stadium|track|golf_course|swimming_pool|dog_park|nature_reserve|recreation_ground|marina|sports_centre)$"]${b};
+  way["railway"~"^(rail|light_rail|tram)$"]["tunnel"!="yes"]${b};`,
+    `nwr["landuse"]${b};`,
+    `nwr["leisure"~"^(park|garden|pitch|playground|stadium|track|golf_course|swimming_pool|dog_park|nature_reserve|recreation_ground|marina|sports_centre)$"]${b};
   nwr["natural"~"^(water|beach|sand|scrub|grassland|wood|wetland|coastline|bare_rock|heath)$"]${b};
   nwr["water"]${b};
   nwr["waterway"="riverbank"]${b};
   nwr["amenity"~"^(parking|school|university|college|hospital|grave_yard)$"]${b};
   nwr["man_made"~"^(pier|breakwater|groyne|bridge)$"]${b};
   nwr["place"="square"]${b};
-);
-out body geom;`);
+  nwr["golf"~"^(bunker|green|tee|fairway|driving_range|rough)$"]${b};
+  way["aeroway"~"^(runway|taxiway|apron|helipad)$"]${b};`,
+  ];
+  const seen = new Set<string>(), data = { elements: [] as any[] };
+  if (extract) data.elements = (await localOsm(extract, [s - m, w - m, n + m, e + m], FILTERS.ground)).elements;
+  else for (const [i, q] of parts.entries()) {
+    const r = await overpass(`[out:json][timeout:600][maxsize:1073741824];\n(\n  ${q}\n);\nout body geom;`);
+    for (const el of r.elements) if (!seen.has(`${el.type}${el.id}`)) { seen.add(`${el.type}${el.id}`); data.elements.push(el); }
+    console.log(`  ground part ${i + 1}/${parts.length}: ${r.elements.length} elements`);
+  }
   writeFileSync(join(dir, "ground.json"), JSON.stringify(data));
   console.log(`  ground: ${data.elements.length} elements`);
 }
