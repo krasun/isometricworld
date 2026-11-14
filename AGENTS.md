@@ -127,7 +127,7 @@ npm run deploy                                 # after every publish: pages bake
 
 `pipeline/src/film.ts` renders a deterministic clip from the running site (square 1080, 60 fps, poses +
 eased moves, crisp (`--blur 8` for motion blur), light grain, city name fading in at the end, credits always
-visible). Edit its `SHOTS` for a new
+visible). Add the city's shots to its `FILMS` (render with `--city <slug>`) for a new
 city, check with `--preview`, then render (~1 h). Output goes to `video/<city-slug>.mp4`; the GitHub GIF is
 made from a landscape render (`--size 960x540 --fps 30 --grain 0`), 2.5× faster, 480 px, 12 fps, ffmpeg palette +
 `gifsicle --lossy` (keep it ≲ 4 MB).
