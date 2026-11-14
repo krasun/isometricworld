@@ -229,9 +229,25 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
     writeFileSync(join(root, `${z}`, `${x}`, `${y}.${FORMAT}`), buf);
     st.hashes[`${z}/${x}_${y}`] = hash(buf);
     st.sources[`${z}/${x}_${y}`] = stamp;
+    changed.add(`${z}/${x}_${y}`);
     checkpoint();
   };
   const fresh = (id: string, stamp: string) => !!st.hashes[id] && st.sources[id] === stamp;
+  // State from before content-hash stamps (Tel Aviv, published with mtime stamps keyed "x_y" and no stamps on
+  // zoomed-out tiles): a tile whose old stamp still matches keeps its published pixels and only gets the new
+  // stamp, so the first export after the change re-encodes and re-uploads only what really changed.
+  const legacy = Object.keys(st.sources).some((k) => !k.includes("/"));
+  const changed = new Set<string>(); // ids encoded or cloned in this export
+  const legacyNative = (id: string, k: Key, file: string, painted: boolean) => {
+    const old = st.sources[k];
+    if (!legacy || !old || !st.hashes[id] || !existsSync(file)) return false;
+    // the old stamp: <absolute source path>@<mtime>@edge…d[@deck style]@<format><quality>; the path is
+    // compared below data/derived/, so a moved checkout still matches
+    const rest = `@${statSync(file).mtimeMs}@edge${EDGE0}-${EDGE1}d${painted ? `@${DECK_STYLE}` : ""}@${FORMAT}${QUALITY}`;
+    return old.endsWith(`/data/derived/${relative(DERIVED, file)}${rest}`);
+  };
+  const legacyParent = (id: string, near: Array<[number, number]>, z: number) =>
+    legacy && !!st.hashes[id] && !st.sources[id] && !near.some(([x, y]) => changed.has(`${z + 1}/${x}_${y}`));
   // decoded tiles (raw RGB) for building the next level up: each child feeds up to 9 parents, kept LRU
   const cache = new Map<string, Promise<Buffer>>();
   const decoded = (z: number, x: number, y: number) => {
@@ -254,6 +270,7 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
     copyFileSync(from, join(root, `${z}`, `${x}`, `${y}.${FORMAT}`), constants.COPYFILE_FICLONE);
     st.hashes[id] = twin.hashes[id];
     st.sources[id] = stamp;
+    changed.add(id);
     checkpoint();
     return true;
   };
@@ -272,6 +289,7 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
         level.add(key(x, y));
         produced.add(id);
         if (fresh(id, stamp)) continue;
+        if (legacyNative(id, key(x, y), file, painted)) { st.sources[id] = stamp; continue; }
         if (reuse(id, NATIVE_Z, x, y, stamp)) continue;
         jobs.push(async () => {
           let img = sharp(file).extract({ left: i * TS, top: j * TS, width: TS, height: TS });
@@ -288,7 +306,7 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
         });
       }
   }
-  console.log(`  ${layer} z${NATIVE_Z}: ${level.size} tiles, ${jobs.length} to encode`);
+  console.log(`  ${layer} z${NATIVE_Z}: ${level.size} tiles, ${jobs.length} to encode${legacy ? " (old stamps converted)" : ""}`);
   await pool(jobs);
   const keep = (z: number, keys: Iterable<Key>) => Object.fromEntries([...keys].map((k) => [k, st.hashes[`${z}/${k}`]]));
   index[layer][NATIVE_Z] = keep(NATIVE_Z, level);
@@ -306,6 +324,7 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
       const stamp = hash(`${PYRAMID}:` + near.map(([x, y]) => `${x}_${y}:${st.hashes[`${z + 1}/${x}_${y}`]}`).join(","));
       produced.add(id);
       if (fresh(id, stamp)) continue;
+      if (legacyParent(id, near, z)) { st.sources[id] = stamp; continue; }
       if (reuse(id, z, px, py, stamp)) continue;
       jobs.push(async () => {
         // the downscale filter sees across tile edges (otherwise faint lines appear along tile borders at low zoom):
