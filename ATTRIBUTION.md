@@ -52,7 +52,8 @@ social platforms ask for AI-generated content to be labelled.
 
 Everything in `pipeline/style/` was painted the same way for this project: `reference.png` (the house style,
 a stretch of the painted Tel Aviv map: Gordon beach and the city behind it), `trees.png` (tree species
-sheet) and `sea.png` (sea texture).
+sheet), `trees-stuttgart.png` (Stuttgart tree species sheet, derived from `trees.png` with Codex/ChatGPT)
+and `sea.png` (sea texture).
 
 ## Software
 
