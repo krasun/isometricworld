@@ -316,6 +316,8 @@ document.getElementById("credits")!.innerHTML = [
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
   // the method to recreate the derived database (ODbL) and the code
   `<a href="https://github.com/krasun/isometricworld">Source</a>`,
-  `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
+  REGION === "stuttgart" // the Stuttgart region was built by Lukas Hermann
+    ? `Made by <a href="https://lukashermann.dev/">Lukas Hermann</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
+    : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
 // each credit stays on one line; the separator rides at the end of the previous one so no line starts with "·"
 ].map((c, i, all) => `<span class="credit">${c}${i < all.length - 1 ? " ·" : ""}</span>`).join(" ");
