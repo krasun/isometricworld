@@ -20,6 +20,8 @@ export interface Road {
   s: number[];      // [e, n, u, visible] × samples (≈ 6 m apart)
 }
 
+import { ink } from "./ink.ts";
+
 type Vec3 = [number, number, number];
 
 interface Way { r: Road; n: number; cum: Float32Array; len: number; w: number }
@@ -467,17 +469,20 @@ export class Traffic {
     const base = [corner(hl, hw, 0.25), corner(hl, -hw, 0.25), corner(-hl, -hw, 0.25), corner(-hl, hw, 0.25)];
     const top = base.map((p) => [p[0], p[1], p[2] + v.hei] as Vec3);
     const [R, G, B] = v.color;
-    const fill = (pts: Vec3[], k: number) => {
+    const p0 = proj(c), pe = proj([c[0] + 1, c[1], c[2]]), pn = proj([c[0], c[1] + 1, c[2]]);
+    const pxPerM = (Math.hypot(pe[0] - p0[0], pe[1] - p0[1]) + Math.hypot(pn[0] - p0[0], pn[1] - p0[1])) / 2;
+    const fill = (pts: Vec3[], k: number, outline = true) => {
       ctx.fillStyle = `rgb(${R * k | 0},${G * k | 0},${B * k | 0})`;
       ctx.beginPath();
       pts.forEach((p, i) => { const [x, y] = proj(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
       ctx.closePath();
       ctx.fill();
+      if (outline) ink(ctx, pxPerM);
     };
     // soft contact shadow
     const a = v.alpha;
     ctx.globalAlpha = 0.25 * a;
-    fill(base.map((p) => [p[0] + 0.4, p[1] - 0.4, p[2] - 0.25] as Vec3), 0);
+    fill(base.map((p) => [p[0] + 0.4, p[1] - 0.4, p[2] - 0.25] as Vec3), 0, false);
     ctx.globalAlpha = a;
     // sides facing the camera (outward normal · camera forward < 0), then roof
     for (let i = 0; i < 4; i++) {

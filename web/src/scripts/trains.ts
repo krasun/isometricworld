@@ -10,6 +10,8 @@
  * ends), hidden in tunnels and behind cover with a short fade, like the road traffic.
  */
 
+import { ink } from "./ink.ts";
+
 type Vec3 = [number, number, number];
 type RGB = [number, number, number];
 
@@ -208,14 +210,23 @@ export class Trains {
     const corner = (a: number, b: number, z: number): Vec3 => [c[0] + d[0] * a + r[0] * b, c[1] + d[1] * a + r[1] * b, c[2] + z];
     const Z0 = 0.35; // on the rails
     const base = [corner(hl, hw, Z0), corner(hl, -hw, Z0), corner(-hl, -hw, Z0), corner(-hl, hw, Z0)];
-    const poly = (pts: Vec3[], [R, G, B]: RGB, k: number) => {
+    const p0 = proj(c), pe = proj([c[0] + 1, c[1], c[2]]), pn = proj([c[0], c[1] + 1, c[2]]);
+    const pxPerM = (Math.hypot(pe[0] - p0[0], pe[1] - p0[1]) + Math.hypot(pn[0] - p0[0], pn[1] - p0[1])) / 2;
+    const poly = (pts: Vec3[], [R, G, B]: RGB, k: number, outline = false) => {
       ctx.fillStyle = `rgb(${Math.min(255, R * k) | 0},${Math.min(255, G * k) | 0},${Math.min(255, B * k) | 0})`;
       ctx.beginPath();
       pts.forEach((p, i) => { const [x, y] = proj(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
       ctx.closePath();
       ctx.fill();
+      if (outline) ink(ctx, pxPerM);
     };
     const up = (p: Vec3, z: number): Vec3 => [p[0], p[1], p[2] + z];
+    const outlinePath = (pts: Vec3[]) => {
+      ctx.beginPath();
+      pts.forEach((p, i) => { const [x, y] = proj(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.closePath();
+      ink(ctx, pxPerM);
+    };
     ctx.globalAlpha = 0.25 * alpha; // contact shadow
     poly(base.map((p) => [p[0] + 0.5, p[1] - 0.5, p[2] - Z0] as Vec3), [0, 0, 0], 0);
     ctx.globalAlpha = alpha;
@@ -229,11 +240,12 @@ export class Trains {
       const ins = i % 2 ? 0.5 / car.len : 0.18;
       const a2: Vec3 = [a[0] + (b[0] - a[0]) * ins, a[1] + (b[1] - a[1]) * ins, a[2]], b2: Vec3 = [b[0] + (a[0] - b[0]) * ins, b[1] + (a[1] - b[1]) * ins, b[2]];
       for (const [z0, z1, col] of car.liv.bands) poly([up(a2, z0), up(b2, z0), up(b2, z1), up(a2, z1)], col, k);
+      outlinePath([a, b, up(b, car.hei - 0.2), up(a, car.hei - 0.2)]); // after the bands: one clean edge per side
     }
     // rounded roof: the body colour runs over the roof edges (that is what reads from above), the roof
     // itself is a narrower raised strip
     const top = [corner(hl, hw, Z0 + car.hei - 0.2), corner(hl, -hw, Z0 + car.hei - 0.2), corner(-hl, -hw, Z0 + car.hei - 0.2), corner(-hl, hw, Z0 + car.hei - 0.2)];
-    poly(top, car.liv.body, 0.95);
+    poly(top, car.liv.body, 0.95, true);
     const rh = hw * 0.55, rl = hl - 0.4;
     poly([corner(rl, rh, Z0 + car.hei), corner(rl, -rh, Z0 + car.hei), corner(-rl, -rh, Z0 + car.hei), corner(-rl, rh, Z0 + car.hei)], car.liv.roof, 1.06);
     ctx.globalAlpha = 1;

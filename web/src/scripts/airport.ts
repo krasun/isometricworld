@@ -258,7 +258,7 @@ export class AirportTraffic {
       const pl = frame(ctx, this.M, toScreen, p, d, scale);
       if (!inView(pl.o, view, 300) && !inView(sh.o, view, 300)) continue;
       const [body, tail] = LIVERIES[j.livery];
-      ctx.globalAlpha = alpha * 0.18; sh.set(); airliner(ctx, "#000", "#000", "#000");
+      ctx.globalAlpha = alpha * 0.18; sh.set(); airliner(ctx, "#000", "#000", "#000", "#000", false);
       ctx.globalAlpha = alpha; pl.set(); airliner(ctx, body, "#c9ced6", "#8a93a0", tail);
       if (j.phase !== "parked") {
         ctx.fillStyle = "#ff3b30"; ctx.fillRect(-5.1, -18, 1.2, 1.2); // wingtips (x -3…-6, y ±18)

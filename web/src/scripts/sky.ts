@@ -7,6 +7,7 @@
 export type Vec3 = [number, number, number];
 export type ToScreen = (x: number, y: number) => [number, number];
 
+import { ink } from "./ink.ts";
 import { ecefToEnu, llhToEcef } from "../../../pipeline/src/camera.ts";
 import type { Airfield } from "../../../pipeline/src/places.ts";
 
@@ -65,7 +66,7 @@ export class Planes {
       const sh = frame(ctx, this.M, toScreen, [p[0] + above * 0.25, p[1] + above * 0.35, B[2]], DIR, scale);
       const pl = frame(ctx, this.M, toScreen, p, DIR, scale);
       if (!inView(pl.o, view, 400) && !inView(sh.o, view, 400)) continue;
-      ctx.globalAlpha = alpha * 0.18; sh.set(); airliner(ctx, "#000", "#000", "#000");
+      ctx.globalAlpha = alpha * 0.18; sh.set(); airliner(ctx, "#000", "#000", "#000", "#000", false);
       ctx.globalAlpha = alpha; pl.set(); airliner(ctx, "#f4f5f7", "#c9ced6", "#8a93a0");
       // nav lights: red port, green starboard, white strobe on the tail
       const blink = (performance.now() % 1200) < 120;
@@ -79,19 +80,22 @@ export class Planes {
 }
 
 /** narrow-body airliner from above, ~38 m long and 36 m across, nose at +x (`tail`: fin colour, default `edge`) */
-export function airliner(ctx: CanvasRenderingContext2D, body: string, wing: string, edge: string, tail = edge) {
+export function airliner(ctx: CanvasRenderingContext2D, body: string, wing: string, edge: string, tail = edge, outline = true) {
+  // ink outline like the painted map; a plane is drawn at least ~20 px long, so keep a visible line even then
+  const pxPerM = Math.max(3, Math.hypot(ctx.getTransform().a, ctx.getTransform().b));
+  const line = () => { if (outline) ink(ctx, pxPerM); };
   const poly = (pts: number[], color: string) => {
     ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(pts[0], pts[1]);
     for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
-    ctx.closePath(); ctx.fill();
+    ctx.closePath(); ctx.fill(); line();
   };
   for (const s of [-1, 1]) {
     poly([3, s * 1.8, -3, s * 18, -6, s * 18, -5, s * 1.8], wing);           // swept wing
     poly([-14, s * 1, -18.5, s * 6.5, -20, s * 6.5, -19, s * 1], wing);      // tailplane
     poly([0.5, s * 7, -3, s * 7, -3, s * 8.6, 0.5, s * 8.6], edge);           // engine
   }
-  ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(0, 0, 19, 2, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = tail; ctx.beginPath(); ctx.ellipse(-17.5, 0, 2.5, 0.5, 0, 0, Math.PI * 2); ctx.fill(); // fin
+  ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(0, 0, 19, 2, 0, 0, Math.PI * 2); ctx.fill(); line();
+  ctx.fillStyle = tail; ctx.beginPath(); ctx.ellipse(-17.5, 0, 2.5, 0.5, 0, 0, Math.PI * 2); ctx.fill(); line(); // fin
 }
 
 interface Flock { p: Vec3; h: number; turn: number; timer: number; birds: Array<[number, number, number, number]> }
@@ -270,6 +274,7 @@ export class LightAircraft {
       for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
       if (mirror) for (let i = pts.length - 2; i >= 0; i -= 2) ctx.lineTo(pts[i], -pts[i + 1]);
       ctx.closePath(); ctx.fill();
+      if (detail && color === body) ink(ctx, Math.max(3, Math.hypot(ctx.getTransform().a, ctx.getTransform().b)));
     };
     if (kind === "echo") {
       poly([4.2, 0.35, 3.4, 0.6, 0.8, 0.62, -2.2, 0.4, -4.3, 0.15], body);          // fuselage
