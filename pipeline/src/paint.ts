@@ -17,16 +17,18 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import sharp, { type OverlayOptions } from "sharp";
 import { openArea } from "./areas.ts";
-import { REGIONS } from "./places.ts";
 import { CAMERA, llhToPixel } from "./camera.ts";
 import { DERIVED, PIPELINE, readJson, writeAtomic } from "./paths.ts";
-import { seaH, readHeights } from "./heights.ts";
+import { groundPixel, seaH, readHeights } from "./heights.ts";
+import { areaPois } from "./pois.ts";
 import { applyRegistration, register } from "./register.ts";
 
 const WIN = 1024, OVERLAP = 128, STRIDE = WIN - OVERLAP, T = CAMERA.tile;
 /** Blend band in the middle of each overlap; outside it a window's own pixels win outright. */
 const FEATHER = 64;
 const STYLE = join(PIPELINE, "style", "reference.png");
+/** --look simple: a crop of the procedural Stuttgart render (flat fills, outlines, low-poly trees). */
+const STYLE_SIMPLE = join(PIPELINE, "style", "reference-simple.png");
 const TREES = join(PIPELINE, "style", "trees.png"); // species sheet (painted once with Codex)
 const SEA = join(PIPELINE, "style", "sea.png");
 /** Minimum edge-map correlation between render and painted window (pilot range 0.58–0.90). */
@@ -43,19 +45,13 @@ building footprints, edges and heights; open black areas are streets/plazas, not
 3. style.png: the STYLE REFERENCE.
 4. trees.png: what each tree species looks like ({treesOf} street and park trees), in the same style.
 {aerialImage}
-Redraw image 1 as detailed isometric pixel-art-style city illustration in EXACTLY the style of image 3: \
-clean crisp 3D blocks with straight vertical walls, every facade drawn with regular window grids and \
-balconies, flat roofs with rooftop details, saturated but natural colours, realistic varied trees \
-drawn as the species of image 4 seen from above{treeHint}, smooth grey asphalt with lane markings, clean pavements, soft even daylight, light ambient \
-occlusion, no long shadows, no haze, no photographic noise.
+{style}
 
 Geometry comes ONLY from images 1 and 2 — this is a tracing job:
 - Same orthographic camera, framing and scale: the output overlays image 1 pixel-for-pixel.
 - Every building keeps its exact footprint, position, height and roof outline. {materials} \
 Do not add, remove, merge or move buildings or trees; do not invent trees over open streets.
-- {ground} stay exactly where they are; give them real texture \
-(pale grey/cream stone paving — not orange or terracotta —, crosswalks at junctions, grass, sand, water ripples, parked cars along kerbs only, \
-no cars in the driving lanes).
+- {ground} stay exactly where they are; {groundLook}.
 - Layering is exactly as in image 1: where a road bridge crosses rail tracks, a river or another road, the \
 bridge deck is continuous and on top, and whatever passes underneath is hidden beneath it — never draw \
 rails or lane markings across a bridge deck.
@@ -64,6 +60,31 @@ rails or lane markings across a bridge deck.
 
 When done, copy the final PNG to {out} and reply only with that path.
 `;
+const PAINTED_STYLE = `Redraw image 1 as detailed isometric pixel-art-style city illustration in EXACTLY the style of image 3: \
+clean crisp 3D blocks with straight vertical walls, every facade drawn with regular window grids and \
+balconies, flat roofs with rooftop details, saturated but natural colours, realistic varied trees \
+drawn as the species of image 4 seen from above{treeHint}, smooth grey asphalt with lane markings, clean pavements, soft even daylight, light ambient \
+occlusion, no long shadows, no haze, no photographic noise.`;
+const PAINTED_GROUND = `give them real texture \
+(pale grey/cream stone paving — not orange or terracotta —, crosswalks at junctions, grass, sand, water ripples, parked cars along kerbs only, \
+no cars in the driving lanes)`;
+/**
+ * --look simple: readable at every zoom. Painted detail turned to noise up close (and cost twice the bytes)
+ * and to mush zoomed out; the procedural look's flat fills and outlines survive both.
+ */
+const SIMPLE_STYLE = `Redraw image 1 as a clean, SIMPLE isometric city illustration in EXACTLY the style of image 3: \
+flat-shaded 3D blocks with straight vertical walls and a thin dark outline along every building and roof edge, \
+each surface ONE flat colour with at most a soft gradient, facades as simple even window grids, \
+tree crowns as LOW-POLY FACETED balls with a dark outline and a soft round shadow on the ground (shaped like the \
+trees in image 3, coloured like the species of image 4), smooth flat asphalt with crisp white markings, soft even \
+daylight, light ambient occlusion. Few large, clearly separated shapes: it must read clearly when shown small. \
+NO fine texture: no gravel or grass speckle, no plant noise on green roofs (flat green), no roof clutter, \
+no photographic noise, haze, blur or long shadows.`;
+const SIMPLE_GROUND = `draw each as one clean flat colour \
+(pale grey/cream paving, flat green lawns, flat grey asphalt with crisp white markings, blue water) with only the \
+markings that matter (lanes, crosswalks, aircraft stand and taxiway lines). No vehicles in driving lanes, \
+no aircraft anywhere (the map animates traffic and planes); parked cars only in car parks`;
+
 /** What differs per region in the prompt (and the tree species sheet). */
 interface Local { ground: string; country: string; render: string; treesOf: string; treeHint: string; materials: string; trees: string }
 const LOCAL: Record<string, Local> = {
@@ -84,7 +105,7 @@ real window grids, balconies, shutters, rooftop solar heaters and AC units. Tall
     trees: TREES,
   },
   stuttgart: {
-    ground: "Streets, squares, parks, vineyards, rail yards and the river",
+    ground: "Streets, squares, parks, vineyards, rail yards, airport aprons and the river",
     country: "Germany",
     render: `The layout and every roof shape are exact (real \
 pitched, hipped and flat roofs from the city's 3D building data); the colours and window patterns are stylised hints \
@@ -116,15 +137,19 @@ noise, photo shadows, smeared edges or tiny cars. Walls and facades come from im
 
 /** --aerial-input: roofs, ground and trees of image 1 are the draped orthophoto, walls the render. */
 const HYBRID_RENDER = `Walls and facades come from the 3D model (exact \
-geometry; their colours and window patterns are stylised hints). Everything seen from above (roofs, streets, \
-squares, courtyards, lawns, tree crowns) is a REAL AERIAL PHOTO draped onto that model, so its colours and \
-materials are true: green roofs, gravel roofs, solar panel arrays, skylights, rooftop plant rooms, paving, \
-planting. The photo part is hazy and blurred and has photographic shadows, parked and moving cars and slightly \
+geometry; their colours and window patterns are stylised hints). Streets, rail tracks, bridges, pedestrian \
+squares, fountains and water are drawn from the map in flat clean colours: that is exact geometry. Everything \
+else seen from above (roofs, courtyards, lawns, woods, tree crowns, car parks) is a REAL AERIAL PHOTO draped onto \
+that model, so its colours and materials are true: green roofs, gravel roofs, solar panel arrays, skylights, \
+rooftop plant rooms, paving, planting. The photo part is hazy and blurred and has photographic shadows, parked and moving cars and slightly \
 ragged roof edges: none of that is wanted.`;
 const HYBRID_RULE = `- Keep the real colours and materials of every roof and ground surface in image 1 (a green roof stays a \
 green roof, a solar array stays a solar array in the same place, gravel stays gravel, lawns stay lawns) but redraw \
 them crisply in the style of image 3, with clean straight roof edges from image 2. No photo shadows, haze, blur or \
 noise; cars only parked along kerbs.
+- The flat map-drawn streets, rail tracks, bridges, tunnel mouths, squares, fountains and water in image 1 are exact: \
+keep every one where it is, at its width, with its kerbs, lanes, turning loops and outlines. Never move, narrow, \
+straighten or redraw them to follow the photo, and never cover them with photo objects.
 `;
 
 /**
@@ -162,6 +187,8 @@ const { values: args, positionals } = parseArgs({
     "aerial-input": { type: "boolean", default: false },
     // experiments: windows/paint/work go to <dir>-<tag> (export only reads paint/)
     tag: { type: "string" },
+    // painted (detailed, the Tel Aviv look) | simple (flat fills, outlines, low-poly trees; see SIMPLE_STYLE)
+    look: { type: "string", default: "painted" },
   },
 });
 const areaName = positionals[0] ?? "tlv-core";
@@ -233,17 +260,27 @@ function windows(): Array<[number, number]> {
 }
 
 const HYBRID = !!args.aerial && args["aerial-input"];
+if (!["painted", "simple"].includes(args.look!)) throw new Error(`--look painted|simple (got ${args.look})`);
+const SIMPLE = args.look === "simple";
+/** Tel Aviv is frozen as published: its tiles keep the original assembly (no window colour matching). */
+const HARMONISE = AREA.region !== "israel-center";
 /** Hybrid paintings follow the photo, not the render, so they correlate less with it (0.48-0.57 when right). */
 const minMatch = HYBRID ? 0.35 : MIN_MATCH;
-/** Render tile with the draped orthophoto on every surface that isn't a wall (aerial.ts marks walls 128 grey). */
+/** Render tile with the draped orthophoto on every surface that isn't a wall (aerial.ts marks walls 128 grey)
+ *  or masked map geometry (aerial.ts mask/). */
 async function hybridTile(tx: number, ty: number): Promise<Buffer | null> {
   if (!existsSync(renderFile(tx, ty))) return null;
   const af = join(base, `aerial-${args.aerial}`, `${tx}_${ty}.png`);
   if (!existsSync(af)) return sharp(renderFile(tx, ty)).png().toBuffer();
   const r = await sharp(renderFile(tx, ty)).removeAlpha().raw().toBuffer(), a = await sharp(af).removeAlpha().raw().toBuffer();
+  // simple look: a median (2.25 m) flattens photo grain (gravel, cars, roof clutter) but keeps surface edges
+  const flat = SIMPLE ? await sharp(af).removeAlpha().median(9).raw().toBuffer() : a;
+  // data mask (aerial.ts): streets, rails, squares, water and bridge decks keep the render's exact OSM geometry
+  const mf = join(base, "mask", `${tx}_${ty}.png`);
+  const mask = existsSync(mf) ? await sharp(mf).extractChannel(0).raw().toBuffer() : null;
   for (let k = 0; k < a.length; k += 3) {
     const wall = a[k] === 128 && a[k + 1] === 128 && a[k + 2] === 128, none = !a[k] && !a[k + 1] && !a[k + 2];
-    if (!wall && !none) { r[k] = a[k]; r[k + 1] = a[k + 1]; r[k + 2] = a[k + 2]; }
+    if (!wall && !none && !mask?.[k / 3]) { r[k] = flat[k]; r[k + 1] = flat[k + 1]; r[k + 2] = flat[k + 2]; }
   }
   return sharp(r, { raw: { width: T, height: T, channels: 3 } }).png().toBuffer();
 }
@@ -252,8 +289,9 @@ async function composeInput(i: number, j: number, file: string, heightFile: stri
   const ground = await windowGround(i * STRIDE, j * STRIDE);
   await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, (tx, ty) => heightTile(tx, ty, ground))).png().toFile(heightFile);
   // lift baked photogrammetry shadows so footprints and streets read clearly
-  const lifted = await sharp(await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, HYBRID ? hybridTile : undefined)).png().toBuffer())
-    .removeAlpha().clahe({ width: 128, height: 128, maxSlope: 2 }).modulate({ saturation: 1.1 }).png().toBuffer();
+  // (not in the simple look: the contrast lift turns photo grain into texture the model copies)
+  const crop = sharp(await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, HYBRID ? hybridTile : undefined)).png().toBuffer()).removeAlpha();
+  const lifted = await (SIMPLE ? crop : crop.clahe({ width: 128, height: 128, maxSlope: 2 }).modulate({ saturation: 1.1 })).png().toBuffer();
   const img = sharp(lifted);
   const comps: OverlayOptions[] = [];
   const edges: string[] = [];
@@ -350,15 +388,26 @@ async function dropDarkWindows(wins: Array<[number, number]>) {
   if (n) console.log(`  dropped ${n} windows with black patches`);
 }
 
+const MAX_USES = 12;
+
 async function facadeNotes(i: number, j: number) {
   const here = FACADES.filter((f) => f.region === AREA.region);
-  if (!here.length) return "";
+  const pois = AREA.region === "israel-center" ? [] : await areaPois(areaName, AREA);
+  if (!here.length && !pois.length) return "";
   const ground = await windowGround(i * STRIDE, j * STRIDE);
-  return here.map((f) => {
-    const [x, y] = llhToPixel(f.lat, f.lon, ground), lx = Math.round(x - i * STRIDE), ly = Math.round(y - j * STRIDE);
-    return lx >= 0 && ly >= 0 && lx < WIN && ly < WIN
-      ? `- The building whose footprint is centred at about (${lx}, ${ly}) px in image 1 is the ${f.name}: ${f.facade}.\n` : "";
+  const at = (lat: number, lon: number) => {
+    const [x, y] = llhToPixel(lat, lon, ground), lx = Math.round(x - i * STRIDE), ly = Math.round(y - j * STRIDE);
+    return lx >= 32 && ly >= 32 && lx < WIN - 32 && ly < WIN - 32 ? `(${lx}, ${ly})` : null;
+  };
+  const facades = here.map((f) => {
+    const p = at(f.lat, f.lon);
+    return p ? `- The building whose footprint is centred at about ${p} px in image 1 is the ${f.name}: ${f.facade}.\n` : "";
   }).join("");
+  const uses = pois.map((p) => ({ ...p, px: at(p.lat, p.lon) })).filter((p) => p.px)
+    .sort((a, b) => a.rank - b.rank).slice(0, MAX_USES).map((p) => `  - at about ${p.px} px: ${p.what}\n`).join("");
+  return facades + (uses ? `- What some places in image 1 are (OpenStreetMap). Give each the look such a place has in \
+reality (roof, canopy, colours, car park, yard), in the house style, on the building or ground already there; never \
+add or move buildings, never write text, names or logos:\n${uses}` : "");
 }
 
 async function paintWindow(i: number, j: number) {
@@ -375,14 +424,15 @@ async function paintWindow(i: number, j: number) {
   const work = join(base, `work${SUFFIX}`, `${i}_${j}`);
   mkdirSync(work, { recursive: true });
   const edges = await composeInput(i, j, join(work, "input.png"), join(work, "height.png"));
-  copyFileSync(STYLE, join(work, "style.png"));
+  copyFileSync(SIMPLE ? STYLE_SIMPLE : STYLE, join(work, "style.png"));
   copyFileSync(local.trees, join(work, "trees.png"));
   if (args.aerial && !HYBRID) {
     const dir = join(base, `aerial-${args.aerial}`);
     const load = async (tx: number, ty: number) => (existsSync(join(dir, `${tx}_${ty}.png`)) ? sharp(join(dir, `${tx}_${ty}.png`)).png().toBuffer() : null);
     await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, load)).removeAlpha().png().toFile(join(work, "aerial.png"));
   }
-  const prompt = PROMPT.replace("{title}", title).replace("{country}", local.country).replace("{render}", HYBRID ? HYBRID_RENDER : local.render)
+  const prompt = PROMPT.replace("{style}", SIMPLE ? SIMPLE_STYLE : PAINTED_STYLE).replace("{groundLook}", SIMPLE ? SIMPLE_GROUND : PAINTED_GROUND)
+    .replace("{title}", title).replace("{country}", local.country).replace("{render}", HYBRID ? HYBRID_RENDER : local.render)
     .replace("{treesOf}", local.treesOf).replace("{treeHint}", local.treeHint).replace("{materials}", local.materials).replace("{ground}", local.ground).replace("{out}", join(work, "out.png"))
     .replace("{continuation}", edges.length ? CONTINUATION.replace("{edges}", edges.join(" and ")) : "")
     .replace("{count}", args.aerial && !HYBRID ? "Five" : "Four").replace("{aerialImage}", args.aerial && !HYBRID ? AERIAL_IMAGE : "")
@@ -505,11 +555,158 @@ async function harmoniseSea() {
   console.log(`  sea: ${means.length} windows with open water, reference rgb(${ref.map(Math.round).join(",")})`);
 }
 
+/**
+ * Window colour matching. Codex gives every window its own slight colour cast (measured: up to ±11 per channel
+ * between neighbours in the strip they share), which the 64 px feather can't hide. One constant RGB offset per
+ * window, solved so that neighbours agree in their overlaps (least squares, pulled weakly toward 0 so the
+ * overall colour stays the painter's).
+ */
+async function windowOffsets(): Promise<Map<string, number[]>> {
+  const out = new Map<string, number[]>();
+  if (!HARMONISE) return out;
+  // mean colour of each painted window's four overlap strips
+  const strips = new Map<string, number[][]>(); // left, right, top, bottom
+  for (const [i, j] of windows()) {
+    if (!existsSync(winFile(i, j))) continue;
+    const px = await sharp(winFile(i, j)).resize(WIN, WIN).removeAlpha().raw().toBuffer();
+    const m = [0, 1, 2, 3].map(() => [0, 0, 0]);
+    for (let y = 0; y < WIN; y++) for (let x = 0; x < WIN; x++) {
+      const s = (y * WIN + x) * 3;
+      const which = [x < OVERLAP, x >= STRIDE, y < OVERLAP, y >= STRIDE];
+      for (let k = 0; k < 4; k++) if (which[k]) for (let c = 0; c < 3; c++) m[k][c] += px[s + c];
+    }
+    strips.set(`${i}_${j}`, m.map((v) => v.map((c) => c / (OVERLAP * WIN))));
+    out.set(`${i}_${j}`, [0, 0, 0]);
+  }
+  // d: how much brighter window w is than neighbour n in their shared strip
+  const links = new Map<string, Array<[string, number[]]>>();
+  for (const [k, m] of strips) {
+    const [i, j] = k.split("_").map(Number);
+    for (const [n, mine, theirs] of [[`${i + 1}_${j}`, 1, 0], [`${i}_${j + 1}`, 3, 2]] as const) {
+      const o = strips.get(n);
+      if (!o) continue;
+      const d = [0, 1, 2].map((c) => m[mine][c] - o[theirs][c]);
+      links.set(k, [...(links.get(k) ?? []), [n, d]]);
+      links.set(n, [...(links.get(n) ?? []), [k, d.map((v) => -v)]]);
+    }
+  }
+  const PULL = 0.25; // weight of the pull toward 0 (vs 1 per neighbour)
+  for (let it = 0; it < 200; it++)
+    for (const [k, ls] of links) {
+      const sum = [0, 0, 0];
+      for (const [n, d] of ls) for (let c = 0; c < 3; c++) sum[c] += out.get(n)![c] - d[c];
+      out.set(k, sum.map((v) => v / (ls.length + PULL)));
+    }
+  const worst = Math.max(0, ...[...out.values()].flat().map(Math.abs));
+  if (out.size) console.log(`  colour match: ${out.size} windows, largest offset ${worst.toFixed(1)}`);
+  return out;
+}
+
+/** Width (px) of the cross-fade along a seam cut through the overlap of two neighbouring windows. */
+const SEAM_FEATHER = 8;
+
 async function assemble(all = false) {
+  const offsets = await windowOffsets();
   const ramp = new Float32Array(WIN);
-  // 0 → 1 across a FEATHER-wide band centred in the overlap (complementary for neighbours)
+  // Tel Aviv: a fixed 64 px cross-fade centred in the overlap (complementary for neighbours)
   const edge = (k: number) => Math.min(1, Math.max(0, (k + 0.5 - (OVERLAP - FEATHER) / 2) / FEATHER));
   for (let k = 0; k < WIN; k++) ramp[k] = Math.min(edge(k), edge(WIN - 1 - k));
+
+  /** a window's pixels with its colour-match offset and sea fix applied (cached: seams and tiles both need them) */
+  const pixCache = new Map<string, Promise<Buffer>>();
+  const windowPixels = (i: number, j: number) => {
+    const key = `${i}_${j}`;
+    if (!pixCache.has(key)) {
+      if (pixCache.size >= 48) pixCache.delete(pixCache.keys().next().value!);
+      pixCache.set(key, (async () => {
+        const px = await sharp(winFile(i, j)).resize(WIN, WIN).removeAlpha().raw().toBuffer();
+        const off = offsets.get(key);
+        if (off && off.some((v) => Math.abs(v) >= 0.5))
+          for (let s = 0; s < px.length; s += 3) for (let c = 0; c < 3; c++) px[s + c] = Math.max(0, Math.min(255, Math.round(px[s + c] + off[c])));
+        const fix = seaFix.get(key);
+        if (fix) { // bilinear cell weights × colour offset
+          const [w, off] = fix, m = WIN / CELL;
+          for (let y = 0; y < WIN; y++) {
+            const fy = Math.min(m - 1, Math.max(0, (y + 0.5) / CELL - 0.5)), y0 = Math.floor(fy), y1 = Math.min(m - 1, y0 + 1), ay = fy - y0;
+            for (let x = 0; x < WIN; x++) {
+              const fx = Math.min(m - 1, Math.max(0, (x + 0.5) / CELL - 0.5)), x0 = Math.floor(fx), x1 = Math.min(m - 1, x0 + 1), ax = fx - x0;
+              const a = (w[y0 * m + x0] * (1 - ax) + w[y0 * m + x1] * ax) * (1 - ay) + (w[y1 * m + x0] * (1 - ax) + w[y1 * m + x1] * ax) * ay;
+              if (a <= 0) continue;
+              const s = (y * WIN + x) * 3;
+              for (let c = 0; c < 3; c++) px[s + c] = Math.max(0, Math.min(255, px[s + c] + off[c] * a));
+            }
+          }
+        }
+        return px;
+      })());
+    }
+    return pixCache.get(key)!;
+  };
+
+  /**
+   * Seam between window (i,j) and its right (dx=1) or lower (dy=1) neighbour: per row (or column) the band position
+   * where the switch happens, found by dynamic programming as the path of least colour difference through the
+   * overlap. Two windows rarely paint the overlap identically (a road a few px apart, cars in one only); a cut where
+   * they agree avoids the ghost double images a wide cross-fade makes.
+   */
+  const seams = new Map<string, Int16Array>();
+  const seam = async (i: number, j: number, vertical: boolean) => {
+    const key = `${i}_${j}_${vertical ? "v" : "h"}`;
+    if (seams.has(key)) return seams.get(key)!;
+    const A = await windowPixels(i, j), B = await windowPixels(vertical ? i + 1 : i, vertical ? j : j + 1);
+    // cost[t][b]: along the seam t (0..WIN), across the band b (0..OVERLAP)
+    const cost = new Float32Array(WIN * OVERLAP);
+    for (let t = 0; t < WIN; t++) for (let b = 0; b < OVERLAP; b++) {
+      const sa = vertical ? (t * WIN + STRIDE + b) * 3 : ((STRIDE + b) * WIN + t) * 3;
+      const sb = vertical ? (t * WIN + b) * 3 : (b * WIN + t) * 3;
+      cost[t * OVERLAP + b] = Math.abs(A[sa] - B[sb]) + Math.abs(A[sa + 1] - B[sb + 1]) + Math.abs(A[sa + 2] - B[sb + 2]);
+    }
+    // the feather around the cut must fit in the band; the cut may move 1 px per step
+    const lo = SEAM_FEATHER, hi = OVERLAP - SEAM_FEATHER;
+    const acc = new Float32Array(WIN * OVERLAP).fill(Infinity), from = new Int8Array(WIN * OVERLAP);
+    for (let b = lo; b < hi; b++) acc[b] = cost[b];
+    for (let t = 1; t < WIN; t++) for (let b = lo; b < hi; b++) {
+      let best = acc[(t - 1) * OVERLAP + b], d = 0;
+      if (b > lo && acc[(t - 1) * OVERLAP + b - 1] < best) { best = acc[(t - 1) * OVERLAP + b - 1]; d = -1; }
+      if (b < hi - 1 && acc[(t - 1) * OVERLAP + b + 1] < best) { best = acc[(t - 1) * OVERLAP + b + 1]; d = 1; }
+      acc[t * OVERLAP + b] = best + cost[t * OVERLAP + b]; from[t * OVERLAP + b] = d;
+    }
+    const path = new Int16Array(WIN);
+    let b = lo;
+    for (let k = lo; k < hi; k++) if (acc[(WIN - 1) * OVERLAP + k] < acc[(WIN - 1) * OVERLAP + b]) b = k;
+    for (let t = WIN - 1; t >= 0; t--) { path[t] = b; b += from[t * OVERLAP + b]; }
+    seams.set(key, path);
+    return path;
+  };
+  /** 0 → 1 across the cut at band position `cut` (the far window's share) */
+  const across = (b: number, cut: number) => Math.min(1, Math.max(0, (b - cut + SEAM_FEATHER / 2 + 0.5) / SEAM_FEATHER));
+  const isPainted = (i: number, j: number) => existsSync(winFile(i, j));
+  /** per-pixel weight map of window (i,j): cut against each painted neighbour (Tel Aviv: the fixed ramp) */
+  const weightCache = new Map<string, Promise<Float32Array>>();
+  const windowWeights = (i: number, j: number) => {
+    const key = `${i}_${j}`;
+    if (!weightCache.has(key)) {
+      if (weightCache.size >= 48) weightCache.delete(weightCache.keys().next().value!);
+      weightCache.set(key, (async () => {
+      const w = new Float32Array(WIN * WIN);
+      for (let y = 0; y < WIN; y++) for (let x = 0; x < WIN; x++) w[y * WIN + x] = HARMONISE ? 1 : ramp[x] * ramp[y];
+      if (!HARMONISE) return w;
+      const L = isPainted(i - 1, j) ? await seam(i - 1, j, true) : null, R = isPainted(i + 1, j) ? await seam(i, j, true) : null;
+      const U = isPainted(i, j - 1) ? await seam(i, j - 1, false) : null, D = isPainted(i, j + 1) ? await seam(i, j, false) : null;
+      for (let y = 0; y < WIN; y++) for (let x = 0; x < WIN; x++) {
+        let v = 1;
+        if (L && x < OVERLAP) v *= across(x, L[y]);
+        if (R && x >= STRIDE) v *= 1 - across(x - STRIDE, R[y]);
+        if (U && y < OVERLAP) v *= across(y, U[x]);
+        if (D && y >= STRIDE) v *= 1 - across(y - STRIDE, D[x]);
+        w[y * WIN + x] = v;
+      }
+      return w;
+    })());
+    }
+    return weightCache.get(key)!;
+  };
+
   mkdirSync(join(base, `paint${SUFFIX}`), { recursive: true });
   let written = 0;
   for (const k of tileSet) {
@@ -518,7 +715,7 @@ async function assemble(all = false) {
     for (let j = Math.floor((ty * T - WIN) / STRIDE) + 1; j * STRIDE < (ty + 1) * T; j++)
       for (let i = Math.floor((tx * T - WIN) / STRIDE) + 1; i * STRIDE < (tx + 1) * T; i++) covering.push([i, j]);
     // a tile only partly covered (the edge of a painted patch) fades from the paint into the render
-    const painted = covering.filter(([i, j]) => existsSync(winFile(i, j)));
+    const painted = covering.filter(([i, j]) => isPainted(i, j));
     if (!painted.length || (painted.length < covering.length && !existsSync(renderFile(tx, ty)))) continue;
     const tile = join(base, `paint${SUFFIX}`, `${tx}_${ty}.png`);
     // rebuilt when any covering window was repainted (or, for a partial tile, the render re-rendered) since
@@ -530,25 +727,12 @@ async function assemble(all = false) {
       for (let d = 0; d < T * T; d++) { for (let c = 0; c < 3; c++) acc[d * 3 + c] = px[d * 3 + c] * 1e-6; wsum[d] = 1e-6; }
     }
     for (const [i, j] of painted) {
-      const px = await sharp(winFile(i, j)).resize(WIN, WIN).removeAlpha().raw().toBuffer();
-      const fix = seaFix.get(`${i}_${j}`);
-      if (fix) { // bilinear cell weights × colour offset
-        const [w, off] = fix, m = WIN / CELL;
-        for (let y = 0; y < WIN; y++) {
-          const fy = Math.min(m - 1, Math.max(0, (y + 0.5) / CELL - 0.5)), y0 = Math.floor(fy), y1 = Math.min(m - 1, y0 + 1), ay = fy - y0;
-          for (let x = 0; x < WIN; x++) {
-            const fx = Math.min(m - 1, Math.max(0, (x + 0.5) / CELL - 0.5)), x0 = Math.floor(fx), x1 = Math.min(m - 1, x0 + 1), ax = fx - x0;
-            const a = (w[y0 * m + x0] * (1 - ax) + w[y0 * m + x1] * ax) * (1 - ay) + (w[y1 * m + x0] * (1 - ax) + w[y1 * m + x1] * ax) * ay;
-            if (a <= 0) continue;
-            const s = (y * WIN + x) * 3;
-            for (let c = 0; c < 3; c++) px[s + c] = Math.max(0, Math.min(255, px[s + c] + off[c] * a));
-          }
-        }
-      }
+      const px = await windowPixels(i, j), ww = await windowWeights(i, j);
       const ox = i * STRIDE - tx * T, oy = j * STRIDE - ty * T;
       for (let y = Math.max(0, oy); y < Math.min(T, oy + WIN); y++)
         for (let x = Math.max(0, ox); x < Math.min(T, ox + WIN); x++) {
-          const wx = x - ox, wy = y - oy, w = ramp[wx] * ramp[wy], s = (wy * WIN + wx) * 3, d = y * T + x;
+          const wx = x - ox, wy = y - oy, w = ww[wy * WIN + wx], s = (wy * WIN + wx) * 3, d = y * T + x;
+          if (w <= 0) continue;
           acc[d * 3] += px[s] * w; acc[d * 3 + 1] += px[s + 1] * w; acc[d * 3 + 2] += px[s + 2] * w;
           wsum[d] += w;
         }
@@ -570,7 +754,7 @@ async function main() {
   let wins = windows();
   if (args.near) {
     const [lat, lon] = args.near.split(",").map(Number);
-    const [x, y] = llhToPixel(lat, lon, REGIONS[AREA.region].groundH);
+    const [x, y] = await groundPixel(join(base, "height"), lat, lon);
     const ci = Math.floor(x / STRIDE), cj = Math.floor(y / STRIDE), r = Number(args.radius);
     wins = wins.filter(([i, j]) => Math.abs(i - ci) <= r && Math.abs(j - cj) <= r);
   }
@@ -585,7 +769,7 @@ async function main() {
   // centre first: square rings around the city centre. Each ring runs in two passes over its
   // perimeter (even, then odd positions) so every window continues its painted inner/ring neighbours.
   const [cx, cy] = args.center.split(",").map(Number);
-  const [px, py] = llhToPixel(cx, cy, REGIONS[AREA.region].groundH);
+  const [px, py] = await groundPixel(join(base, "height"), cx, cy);
   const ci = Math.floor(px / STRIDE), cj = Math.floor(py / STRIDE);
   const have = new Set(wins.map(([i, j]) => `${i}_${j}`));
   const maxR = Math.max(...wins.map(([i, j]) => Math.max(Math.abs(i - ci), Math.abs(j - cj))));

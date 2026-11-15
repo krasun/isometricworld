@@ -9,14 +9,16 @@
  *   npx tsx src/aerial.ts stuttgart-core --near 48.7905,9.1846 --radius 1 [--source city|lgl]
  *
  * Writes data/derived/<area>/aerial-<source>/<tx>_<ty>.png; orthophoto cells are cached in data/raw/aerial/.
+ * Also writes data/derived/<area>/mask/<tx>_<ty>.png (255 = keep the render: streets, rails, squares, water,
+ * bridge decks; from ground/features.json), which paint.ts --aerial-input uses.
  */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import sharp from "sharp";
 import { openArea } from "./areas.ts";
-import { CAMERA, axes, enuToLlh, llhToPixel } from "./camera.ts";
-import { readHeights } from "./heights.ts";
+import { CAMERA, axes, enuToLlh } from "./camera.ts";
+import { groundPixel, readHeights } from "./heights.ts";
 import { DERIVED, RAW } from "./paths.ts";
 import { toUtm } from "./utm.ts";
 
@@ -51,7 +53,10 @@ openArea(areaName);
 const base = join(DERIVED, areaName);
 const outDir = join(base, `aerial-${args.source}`);
 const cacheDir = join(RAW, "aerial", args.source!);
+/** data mask (render wins): independent of the photo source */
+const maskDir = join(base, "mask");
 mkdirSync(outDir, { recursive: true });
+mkdirSync(maskDir, { recursive: true });
 mkdirSync(cacheDir, { recursive: true });
 
 // ---- camera inverse: art pixel + ENU height -> ENU east/north -------------------------------------
@@ -110,12 +115,57 @@ async function sample(east: number, north: number, out: Buffer, o: number) {
   for (let c = 0; c < 3; c++) out[o + c] = Math.round(acc[c]);
 }
 
+// ---- data mask: where the render's OSM geometry beats the photo --------------------------------------
+// Streets, rails, squares and water are exact in the render (OSM) but blurred in the photo by trees, shadows,
+// market stalls and lean; tunnel portals and bus loops vanish. These pixels keep the render in the paint input.
+type P2 = [number, number];
+interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; b?: 1 }
+const MASK_RES = 0.25; // m per mask pixel
+const ELEVATED = 2.5;  // m above the terrain: a roof or a tree crown, not the street surface
+/** stroke width (m) of a line feature in the mask: the renderer's road plus kerbs and pavements */
+const LINE_W: Record<string, (w: number) => number> = {
+  street: (w) => w + 6, highway: (w) => w + 2, lane: (w) => w + 2, plaza: (w) => w + 1, rail: () => 4,
+};
+/** area kinds the render draws exactly: paved squares, water */
+const AREA_KINDS = new Set(["paving", "water", "pool"]);
+const groundDir = join(base, "ground");
+const gmeta = JSON.parse(readFileSync(join(groundDir, "meta.json"), "utf8"));
+const gb = readFileSync(join(groundDir, "height.bin"));
+const terrain = new Float32Array(gb.buffer, gb.byteOffset, gb.byteLength / 4);
+function terrainAt(x: number, y: number) {
+  const fx = Math.min(gmeta.nx - 1.001, Math.max(0, (x - gmeta.x0) / gmeta.step));
+  const fy = Math.min(gmeta.ny - 1.001, Math.max(0, (y - gmeta.y0) / gmeta.step));
+  const ix = Math.floor(fx), iy = Math.floor(fy), ax = fx - ix, ay = fy - iy, i = iy * gmeta.nx + ix;
+  return (terrain[i] * (1 - ax) + terrain[i + 1] * ax) * (1 - ay) + (terrain[i + gmeta.nx] * (1 - ax) + terrain[i + gmeta.nx + 1] * ax) * ay;
+}
+const maskFeatures = (JSON.parse(readFileSync(join(groundDir, "features.json"), "utf8")) as Feature[])
+  .filter((f) => (f.l && LINE_W[f.k]) || (f.r && AREA_KINDS.has(f.k)))
+  .map((f) => {
+    const pts = f.l ?? f.r!.flat();
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    return { f, bb: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
+  });
+const svgPath = (pts: P2[], close: boolean) => pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(2)} ${y.toFixed(2)}`).join("") + (close ? "Z" : "");
+/** Rasterise features into an ENU-aligned grey mask over [e0,n0]-[e1,n1]; bridges: only bridge decks, else only ground features. */
+async function rasterMask(e0: number, n0: number, e1: number, n1: number, bridges: boolean) {
+  const W = Math.ceil((e1 - e0) / MASK_RES), H = Math.ceil((n1 - n0) / MASK_RES);
+  const parts: string[] = [];
+  for (const { f, bb } of maskFeatures) {
+    if (!!f.b !== bridges || bb[2] < e0 - 30 || bb[0] > e1 + 30 || bb[3] < n0 - 30 || bb[1] > n1 + 30) continue;
+    if (f.l) parts.push(`<path d="${svgPath(f.l, false)}" fill="none" stroke="#fff" stroke-width="${LINE_W[f.k](f.w ?? 0)}"/>`);
+    else parts.push(`<path d="${f.r!.map((r) => svgPath(r, true)).join("")}" fill="#fff" fill-rule="evenodd"/>`);
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><rect width="${W}" height="${H}"/>`
+    + `<g transform="scale(${1 / MASK_RES},${-1 / MASK_RES}) translate(${-e0},${-n1})" stroke-linecap="round" stroke-linejoin="round">${parts.join("")}</g></svg>`;
+  return { W, H, px: await sharp(Buffer.from(svg)).removeAlpha().extractChannel(0).raw().toBuffer() };
+}
+
 async function tile(tx: number, ty: number) {
-  const hf = join(base, "height", `${tx}_${ty}.png`), of = join(outDir, `${tx}_${ty}.png`);
+  const hf = join(base, "height", `${tx}_${ty}.png`), of = join(outDir, `${tx}_${ty}.png`), mf = join(maskDir, `${tx}_${ty}.png`);
   if (!existsSync(hf)) return;
-  if (existsSync(of) && !args.force) return;
+  const doPhoto = !existsSync(of) || args.force, doMask = !existsSync(mf) || args.force;
+  if (!doPhoto && !doMask) return;
   const h = await readHeights(hf);
-  const out = Buffer.alloc(T * T * 3);
   // per height sample: visible surface height in ENU, and whether it is a wall
   const U = new Float32Array(HS * HS), wall = new Uint8Array(HS * HS);
   for (let sy = 0; sy < HS; sy++) for (let sx = 0; sx < HS; sx++) {
@@ -131,25 +181,59 @@ async function tile(tx: number, ty: number) {
     const up = sy > 0 ? U[k - HS] : NaN, dn = sy < HS - 1 ? U[k + HS] : NaN;
     if (U[k] - dn > WALL && (Number.isNaN(up) || up - U[k] > WALL)) wall[k] = 1;
   }
+  // ground point (ENU east/north) of every visible non-wall pixel
+  const E = new Float32Array(T * T).fill(NaN), N = new Float32Array(T * T);
+  let e0 = Infinity, n0 = Infinity, e1 = -Infinity, n1 = -Infinity;
   for (let y = 0; y < T; y++) {
     const sy = Math.min(HS - 1, Math.floor(y / K));
     for (let x = 0; x < T; x++) {
-      const sx = Math.min(HS - 1, Math.floor(x / K)), k = sy * HS + sx, o = (y * T + x) * 3;
-      if (Number.isNaN(U[k])) continue;
-      if (wall[k]) { out[o] = out[o + 1] = out[o + 2] = WALL_GREY; continue; }
+      const sx = Math.min(HS - 1, Math.floor(x / K)), k = sy * HS + sx, p = y * T + x;
+      if (Number.isNaN(U[k]) || wall[k]) continue;
       const [e, n] = pixelToEN(tx * T + x + 0.5, ty * T + y + 0.5, U[k]);
-      const [lat, lon] = enuToLlh([e, n, U[k]]);
-      const [ue, un] = toUtm(lat, lon);
-      await sample(ue, un, out, o);
+      E[p] = e; N[p] = n;
+      e0 = Math.min(e0, e); n0 = Math.min(n0, n); e1 = Math.max(e1, e); n1 = Math.max(n1, n);
     }
   }
-  await sharp(out, { raw: { width: T, height: T, channels: 3 } }).png().toFile(of);
-  console.log(`  ${tx}_${ty}`);
+  if (doPhoto) {
+    const out = Buffer.alloc(T * T * 3);
+    for (let y = 0; y < T; y++) {
+      const sy = Math.min(HS - 1, Math.floor(y / K));
+      for (let x = 0; x < T; x++) {
+        const sx = Math.min(HS - 1, Math.floor(x / K)), k = sy * HS + sx, p = y * T + x, o = p * 3;
+        if (Number.isNaN(U[k])) continue;
+        if (wall[k]) { out[o] = out[o + 1] = out[o + 2] = WALL_GREY; continue; }
+        const [lat, lon] = enuToLlh([E[p], N[p], U[k]]);
+        const [ue, un] = toUtm(lat, lon);
+        await sample(ue, un, out, o);
+      }
+    }
+    await sharp(out, { raw: { width: T, height: T, channels: 3 } }).png().toFile(of);
+  }
+  if (doMask) {
+    const mask = Buffer.alloc(T * T);
+    if (e0 < e1) {
+      const [g, b] = await Promise.all([rasterMask(e0, n0, e1, n1, false), rasterMask(e0, n0, e1, n1, true)]);
+      for (let y = 0; y < T; y++) {
+        const sy = Math.min(HS - 1, Math.floor(y / K));
+        for (let x = 0; x < T; x++) {
+          const p = y * T + x;
+          if (Number.isNaN(E[p])) continue;
+          const mx = Math.floor((E[p] - e0) / MASK_RES), my = Math.floor((n1 - N[p]) / MASK_RES);
+          if (mx < 0 || my < 0 || mx >= g.W || my >= g.H) continue;
+          const q = my * g.W + mx;
+          const elevated = U[Math.min(HS - 1, Math.floor(x / K)) + sy * HS] - terrainAt(E[p], N[p]) > ELEVATED;
+          if (b.px[q] > 127 || (g.px[q] > 127 && !elevated)) mask[p] = 255;
+        }
+      }
+    }
+    await sharp(mask, { raw: { width: T, height: T, channels: 1 } }).png().toFile(mf);
+  }
+  console.log(`  ${tx}_${ty}${doPhoto ? " photo" : ""}${doMask ? " mask" : ""}`);
 }
 
 async function main() {
   const [lat, lon] = args.near!.split(",").map(Number);
-  const [px, py] = llhToPixel(lat, lon, 300);
+  const [px, py] = await groundPixel(join(base, "height"), lat, lon);
   const ci = Math.floor(px / STRIDE), cj = Math.floor(py / STRIDE), rad = Number(args.radius);
   const tiles = new Set<string>();
   for (let j = cj - rad; j <= cj + rad; j++) for (let i = ci - rad; i <= ci + rad; i++)

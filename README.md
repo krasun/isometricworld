@@ -161,6 +161,30 @@ npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/tel-aviv-
   - `--tag <name>` sends windows/work/paint to `<dir>-<name>` folders that export never reads: use it for experiments.
   - Known gaps: the photo (2023) and LoD2 disagree in places; the photo wins on surfaces, so render-only details
     (pools, some trees) disappear, and a building newer than LoD2 shows as a flat roof texture. ~2–5 min per window.
+  - `--look simple` (being tested at the airport) uses `style/reference-simple.png` (a crop of the styled render)
+    as the style reference, median-flattens the photo instead of boosting it (no CLAHE), and asks for flat
+    surfaces, low-poly trees and no aircraft or vehicles (the map animates both). Why: in the default look,
+    close up the painted tiles look washed out and noisy next to the render, and zoomed out the detail turns to
+    mush; painted AVIF tiles are ~1.9× the bytes of rendered ones (z8: 43 KB vs 23 KB).
+  - Windows are colour-matched before assembly (one RGB offset per window, least squares over the overlap
+    strips), then joined along a seam cut: per neighbour pair, the cheapest path (least colour difference)
+    through the overlap band, feathered over 8 px. Outside Tel Aviv only (Tel Aviv keeps the 128 px cross-fade,
+    which ghosted streets and trees where two windows disagreed). The cut does not fix a seam inside a window
+    where a pasted neighbour strip ends and the model painted a different material.
+  - Map mask: `aerial.ts` also writes `mask/<tx>_<ty>.png` (white = keep the render): streets (+ kerbs),
+    rails, squares, paving, water and bridge decks from `ground/features.json`, rasterised at 0.25 m and
+    applied only where the surface is within 2.5 m of the terrain (or on a bridge deck). The hybrid input
+    keeps the render there instead of the photo, and the prompt treats those flat shapes as exact geometry, so
+    the model keeps streets, tunnel mouths, turning loops, fountains and rail where the map has them.
+  - Building uses: `pois.ts` cuts OSM amenity/shop/tourism/leisure features (fast food with brand, fuel,
+    churches, stations, car parks, schools, …) from the extract into `data/raw/<area>/pois.json` (delete it to
+    re-cut). Up to 12 per window go into the prompt with their pixel position, most distinctive first.
+  - `--near`/`--center`/`aerial.ts` find the window via `groundPixel` (height pass), so high ground (the
+    airport, ~440 m) lands on the right window.
+  - Known misreads in the library patch: Mailänder Platz (pedestrian square, fountains) came out as a street,
+    because the photo's sun shadow plus the grey wall fill look like asphalt (the photo is not a true ortho;
+    buildings lean). The Wolframstraße underpass under the rail bridge shows cars and no portal:
+    `hideUnderBridges` (export.ts) only checks road under road, and `portals.ts` only handles tunnel-tagged ways.
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).
