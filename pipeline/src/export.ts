@@ -14,6 +14,7 @@
  *   data/borders.<hash>.json           OSM city borders in art-pixel space, on real terrain
  *   data/roads.<hash>.json             drivable roads for traffic (columnar, delta-coded: encodeRoads)
  *   data/trains.<hash>.json            rail lines and their tracks for the trains (exportTrains)
+ *   data/airport.<hash>.json           the airport's taxi network and stands (airport.ts)
  *   preview/<city>-<land|port>.<hash>.avif  the city's opening view, shown until the tiles are in
  * Content-hashed names never change, so browsers keep them for a year; world.json says which are current.
  * The legacy data/tiles.json + .webp tiles stay on R2 untouched: the viewer's fallback without AVIF.
@@ -34,6 +35,7 @@ import { HOSTING } from "./hosting.ts";
 import { DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
 import { CITIES, REGIONS } from "./places.ts";
 import { readHeights } from "./heights.ts";
+import { airportNetwork } from "./airport.ts";
 import { deckHeight, isBridge } from "./bridges.ts";
 
 const TS = 512;                  // web tile size
@@ -406,6 +408,14 @@ async function onGround(heights: Heights, lat: number, lon: number) {
     [x, y] = llhToPixel(lat, lon, h);
   }
   return { x, y, h };
+}
+
+/** The airport's taxi network (airport.ts) on the rendered ground. */
+async function exportAirport(heights: Heights) {
+  const net = await airportNetwork(REGIONS[activeRegion()], async (lat, lon) => (await placePoint(heights, lat, lon, null)).e);
+  if (!net) return;
+  writeData("airport", JSON.stringify(net));
+  console.log(`  airport: ${net.n.length / 3} nodes, ${net.w.length} ways, ${net.s.length} stands`);
 }
 
 async function exportBorders(heights: Heights) {
@@ -928,6 +938,7 @@ async function main() {
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
   }
   await exportBorders(heights);
+  await exportAirport(heights);
   const previews = await exportPreviews();
   // OpenSeadragon wants non-negative tile indices at every level: origin aligned to a min-zoom tile
   const block = TS * 2 ** (NATIVE_Z - MIN_Z);
@@ -943,7 +954,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains") },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), airport: dataFile("airport") },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {

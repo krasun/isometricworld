@@ -25,7 +25,15 @@ export interface Region {
    * threshold ellipsoid height (default 0) and the stretch drawn in metres before the threshold
    * (default 22000 → 7000; negative = past it, on the runway). web/src/scripts/sky.ts.
    */
-  airport?: { lat: number; lon: number; runwayHeadingDeg: number; h?: number; from?: number; to?: number };
+  airport?: {
+    lat: number; lon: number; runwayHeadingDeg: number; h?: number; from?: number; to?: number;
+    /**
+     * Ground traffic (web/src/scripts/airport.ts): bbox [s, w, n, e] of the OSM taxi network that export
+     * writes to data/airport.<hash>.json, and the stand refs jets park at (regex). Then airliners land, taxi
+     * to a stand, push back and take off from the threshold end of the same runway instead of fading out.
+     */
+    ground?: { bbox: [number, number, number, number]; stands: string };
+  };
   /** Small airfield with light aircraft taking off, flying its routes and landing (optional). web/src/scripts/sky.ts. */
   airfield?: Airfield;
   /** Credit lines (video mode and footer). */
@@ -129,7 +137,11 @@ export const REGIONS: Record<string, Region> = {
     // Stuttgart Airport (EDDS) runway 25: threshold and true heading from OSM (way 164016757, node 10710079299),
     // threshold ground 359.9 m NHN from LGL DGM1 (+ geoid 48.4). Planes come in from the east over the faded
     // edge, cross the threshold at 30 m and roll out on the runway (the outline's airport box).
-    airport: { lat: 48.6940216, lon: 9.2438069, runwayHeadingDeg: 254, h: 408.3, from: 6000, to: -2500 },
+    // Ground traffic: exits, taxiways and the stands of apron north (9–75; 1–8 and 100+ are GA, US and cargo).
+    airport: {
+      lat: 48.6940216, lon: 9.2438069, runwayHeadingDeg: 254, h: 408.3, from: 6000, to: -2500,
+      ground: { bbox: [48.676, 9.17, 48.702, 9.252], stands: "^(9|[1-9]\\d)A?$" },
+    },
     // Pattonville (EDTQ) runway 28: ends from OSM (way 100261665), ground from LGL DGM1 (273.1 / 282.1 m NHN)
     // + geoid 48.4. No standard circuit (noise abatement): departures fly 305° to the reporting point
     // AUTOKINO and on to WASSERTURM, arrivals come via OEFFINGEN on 305°; the circuit is the unofficial

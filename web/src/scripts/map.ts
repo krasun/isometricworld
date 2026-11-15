@@ -4,6 +4,7 @@ import type { Traffic } from "./traffic.ts";
 import type { Trains } from "./trains.ts";
 import type { Cats } from "./cats.ts";
 import type { Planes, Parrots, Airport, LightAircraft } from "./sky.ts";
+import type { AirportTraffic } from "./airport.ts";
 import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
@@ -22,7 +23,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; borders?: string; roads?: string; trains?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; borders?: string; roads?: string; trains?: string; airport?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -123,7 +124,7 @@ let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
 let trains: Trains | null = null;
 let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, planes: Planes | null = null;
-let lightAircraft: LightAircraft | null = null;
+let lightAircraft: LightAircraft | null = null, airport: AirportTraffic | null = null;
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
@@ -133,10 +134,14 @@ function loadAnimations() {
     import("./traffic.ts"), import("./cats.ts"), import("./sky.ts"), import("./roads.ts"),
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
     files.trains ? Promise.all([import("./trains.ts"), fetch(`${BASE}/data/${files.trains}`).then((r) => (r.ok ? r.json() : null))]) : null,
-  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, LightAircraft }, { decodeRoads }, data, rail]) => {
+    files.airport ? Promise.all([import("./airport.ts"), fetch(`${BASE}/data/${files.airport}`).then((r) => (r.ok ? r.json() : null))]) : null,
+  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, LightAircraft }, { decodeRoads }, data, rail, ground]) => {
     const roads = decodeRoads(data, !files.trains); // no trains: exported before terrain road heights
     if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)]);
-    if (world.airport) planes = new Planes(world.enu2px, world.airport);
+    // with the taxi network the airliners land, park and take off again; without it they fade out on the runway
+    const ap = REGIONS[REGION]?.airport;
+    if (ground?.[1] && ap) airport = new ground[0].AirportTraffic(world.enu2px, ap, ground[1]);
+    else if (world.airport) planes = new Planes(world.enu2px, world.airport);
     const airfield = REGIONS[REGION]?.airfield; // from places.ts directly: no re-export of world.json needed
     if (airfield) lightAircraft = new LightAircraft(world.enu2px, airfield);
     if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)]);
@@ -148,7 +153,7 @@ function loadAnimations() {
       }
       parrots = new Parrots(world.enu2px, a);
     }
-    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes, __lightAircraft: lightAircraft });
+    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes, __lightAircraft: lightAircraft, __airport: airport });
   });
 }
 setTimeout(loadAnimations, 6000); // slow connection: don't wait for every tile forever
@@ -221,6 +226,7 @@ function frame(t: number) {
   }
   if (showTraffic) { // sky above everything: parakeets, light aircraft, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
+    if (airport) { airport.step(dt); airport.draw(ctx, toScreen, [0, 0, w, hgt]); }
     if (lightAircraft) { lightAircraft.step(dt); lightAircraft.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (planes) { planes.step(dt); planes.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
   }
