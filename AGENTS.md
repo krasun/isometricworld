@@ -96,6 +96,9 @@ not from the render itself (flat massing and aerial photos were both rejected).
   black bands or patches. Never accept a painting that invents or moves streets.
 - **A new climate** (desert, snow, northern trees) may need its own tree sheet, and possibly a region-specific
   style addendum in the prompt; keep `reference.png` as the one house style.
+- **From aerial photos** (Stuttgart): where an open orthophoto exists, drape it with `aerial.ts` and paint with
+  `--aerial <source> --aerial-input` (README "Stuttgart" has the steps); credit the photos like any source. Use
+  `--tag` for experiments so nothing reaches `paint/`.
 - **Order:** paint a small test patch first, review it with the user, then the rest (`--center` picks where
   the rings start). Painting a whole city takes many hours; run it in the background and re-export as you go
   (`pipeline/watch-export.sh`), previewing with `npm run dev`.

@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import sharp, { type OverlayOptions } from "sharp";
 import { openArea } from "./areas.ts";
+import { REGIONS } from "./places.ts";
 import { CAMERA, llhToPixel } from "./camera.ts";
 import { DERIVED, PIPELINE, readJson, writeAtomic } from "./paths.ts";
 import { seaH, readHeights } from "./heights.ts";
@@ -33,7 +34,7 @@ const MIN_MATCH = 0.45;
 /** Below this share of strong edges in the render (sea, sand, empty lots) the match check is skipped. */
 const MIN_TEXTURE = 0.05;
 
-const PROMPT = `Use your image generation tool. Four images are attached:
+const PROMPT = `Use your image generation tool. {count} images are attached:
 1. input.png: an orthographic aerial render (camera tilted 45° down, no perspective) of a simple 3D model \
 of {title}, {country}, built from map data. ~256 m across. {render}
 2. height.png: the height map from the SAME camera, pixel-aligned with image 1. Black = ground \
@@ -41,7 +42,7 @@ of {title}, {country}, built from map data. ~256 m across. {render}
 building footprints, edges and heights; open black areas are streets/plazas, not trees.
 3. style.png: the STYLE REFERENCE.
 4. trees.png: what each tree species looks like ({treesOf} street and park trees), in the same style.
-
+{aerialImage}
 Redraw image 1 as detailed isometric pixel-art-style city illustration in EXACTLY the style of image 3: \
 clean crisp 3D blocks with straight vertical walls, every facade drawn with regular window grids and \
 balconies, flat roofs with rooftop details, saturated but natural colours, realistic varied trees \
@@ -59,7 +60,7 @@ no cars in the driving lanes).
 bridge deck is continuous and on top, and whatever passes underneath is hidden beneath it — never draw \
 rails or lane markings across a bridge deck.
 - Image 3 is only for style. Do not copy its buildings, layout or architecture.
-{continuation}Output: one square 1024x1024 image, no text, no labels, no border, no vignette.
+{aerialRule}{facades}{continuation}Output: one square 1024x1024 image, no text, no labels, no border, no vignette.
 
 When done, copy the final PNG to {out} and reply only with that path.
 `;
@@ -102,6 +103,42 @@ Tall towers stay tall.`,
   },
 };
 
+/** Optional image 5: a real orthophoto draped onto the same view (aerial.ts). */
+const AERIAL_IMAGE = `5. aerial.png: a real aerial photo of the same place, draped onto the SAME camera view and pixel-aligned \
+with image 1. Flat mid-grey areas are walls (the photo has no information there); black = nothing.
+`;
+const AERIAL_RULE = `- Image 5 is a guide for COLOURS AND MATERIALS of roofs and ground only: copy roof colours (clay tile, slate, \
+copper, gravel, green roofs), solar panels, skylights, rooftop plant rooms, courtyard planting, paving colours and \
+patterns, and where trees and lawns really are. Where it disagrees with images 1 and 2 about geometry \
+(buildings, roof outlines, streets), images 1 and 2 win. Never copy its photographic look: no blur, haze, \
+noise, photo shadows, smeared edges or tiny cars. Walls and facades come from image 1, drawn in the style of image 3.
+`;
+
+/** --aerial-input: roofs, ground and trees of image 1 are the draped orthophoto, walls the render. */
+const HYBRID_RENDER = `Walls and facades come from the 3D model (exact \
+geometry; their colours and window patterns are stylised hints). Everything seen from above (roofs, streets, \
+squares, courtyards, lawns, tree crowns) is a REAL AERIAL PHOTO draped onto that model, so its colours and \
+materials are true: green roofs, gravel roofs, solar panel arrays, skylights, rooftop plant rooms, paving, \
+planting. The photo part is hazy and blurred and has photographic shadows, parked and moving cars and slightly \
+ragged roof edges: none of that is wanted.`;
+const HYBRID_RULE = `- Keep the real colours and materials of every roof and ground surface in image 1 (a green roof stays a \
+green roof, a solar array stays a solar array in the same place, gravel stays gravel, lawns stay lawns) but redraw \
+them crisply in the style of image 3, with clean straight roof edges from image 2. No photo shadows, haze, blur or \
+noise; cars only parked along kerbs.
+`;
+
+/**
+ * Facades the render can't know (no OSM colour/material, invisible from above): named in the prompt when the
+ * building's footprint centre (OSM) falls inside the window.
+ */
+const FACADES: Array<{ region: string; name: string; lat: number; lon: number; facade: string }> = [
+  {
+    region: "stuttgart", name: "Stadtbibliothek am Mailänder Platz", lat: 48.79016, lon: 9.18312,
+    facade: "a plain cube; all four facades are pale grey-white concrete with a strict grid of identical small square \
+glass-block windows, no balconies, no colour",
+  },
+];
+
 const CONTINUATION = `- The strip(s) along the {edges} edge(s) of image 1 are ALREADY-PAINTED neighbouring artwork. \
 Reproduce them unchanged and continue the same palette and detail seamlessly into the rest.
 `;
@@ -119,6 +156,12 @@ const { values: args, positionals } = parseArgs({
     assemble: { type: "boolean", default: false }, // only rebuild every art tile from the windows
     j: { type: "string", default: "3" },
     center: { type: "string", default: "32.0715,34.7745" }, // lat,lon painted first (Rothschild / Dizengoff / beach)
+    // aerial source (aerial.ts): add its draped orthophoto as image 5 (colour/material guide)
+    aerial: { type: "string" },
+    // with --aerial: bake the orthophoto into image 1 (roofs/ground/trees) instead of attaching it as image 5
+    "aerial-input": { type: "boolean", default: false },
+    // experiments: windows/paint/work go to <dir>-<tag> (export only reads paint/)
+    tag: { type: "string" },
   },
 });
 const areaName = positionals[0] ?? "tlv-core";
@@ -132,7 +175,8 @@ const mtime = (f: string) => (existsSync(f) ? statSync(f).mtimeMs : 0);
 /** painted in the current style (with --older, windows painted before the cut-off don't count) */
 const current = (i: number, j: number) => existsSync(winFile(i, j)) && mtime(winFile(i, j)) >= OLDER;
 const tileSet = new Set<string>(manifest.tiles.map((t: any) => `${t.x}_${t.y}`));
-const winDir = join(base, "windows");
+const SUFFIX = args.tag ? `-${args.tag}` : "";
+const winDir = join(base, `windows${SUFFIX}`);
 mkdirSync(winDir, { recursive: true });
 
 const renderFile = (tx: number, ty: number) => join(base, "render", `${tx}_${ty}.png`);
@@ -188,11 +232,27 @@ function windows(): Array<[number, number]> {
   return [...out].map((s) => s.split("_").map(Number) as [number, number]);
 }
 
+const HYBRID = !!args.aerial && args["aerial-input"];
+/** Hybrid paintings follow the photo, not the render, so they correlate less with it (0.48-0.57 when right). */
+const minMatch = HYBRID ? 0.35 : MIN_MATCH;
+/** Render tile with the draped orthophoto on every surface that isn't a wall (aerial.ts marks walls 128 grey). */
+async function hybridTile(tx: number, ty: number): Promise<Buffer | null> {
+  if (!existsSync(renderFile(tx, ty))) return null;
+  const af = join(base, `aerial-${args.aerial}`, `${tx}_${ty}.png`);
+  if (!existsSync(af)) return sharp(renderFile(tx, ty)).png().toBuffer();
+  const r = await sharp(renderFile(tx, ty)).removeAlpha().raw().toBuffer(), a = await sharp(af).removeAlpha().raw().toBuffer();
+  for (let k = 0; k < a.length; k += 3) {
+    const wall = a[k] === 128 && a[k + 1] === 128 && a[k + 2] === 128, none = !a[k] && !a[k + 1] && !a[k + 2];
+    if (!wall && !none) { r[k] = a[k]; r[k + 1] = a[k + 1]; r[k + 2] = a[k + 2]; }
+  }
+  return sharp(r, { raw: { width: T, height: T, channels: 3 } }).png().toBuffer();
+}
+
 async function composeInput(i: number, j: number, file: string, heightFile: string) {
   const ground = await windowGround(i * STRIDE, j * STRIDE);
   await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, (tx, ty) => heightTile(tx, ty, ground))).png().toFile(heightFile);
   // lift baked photogrammetry shadows so footprints and streets read clearly
-  const lifted = await sharp(await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN)).png().toBuffer())
+  const lifted = await sharp(await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, HYBRID ? hybridTile : undefined)).png().toBuffer())
     .removeAlpha().clahe({ width: 128, height: 128, maxSlope: 2 }).modulate({ saturation: 1.1 }).png().toBuffer();
   const img = sharp(lifted);
   const comps: OverlayOptions[] = [];
@@ -237,7 +297,8 @@ function limitWait(log: string) {
 function codex(cwd: string, prompt: string): Promise<void> {
   return new Promise((resolve) => {
     const log = openSync(join(cwd, "codex.log"), "w");
-    const p = spawn("codex", ["exec", "--skip-git-repo-check", "-s", "workspace-write", "-C", cwd, "-i", "input.png", "-i", "height.png", "-i", "style.png", "-i", "trees.png", "-"],
+    const images = ["input.png", "height.png", "style.png", "trees.png", ...(args.aerial && !HYBRID ? ["aerial.png"] : [])].flatMap((f) => ["-i", f]);
+    const p = spawn("codex", ["exec", "--skip-git-repo-check", "-s", "workspace-write", "-C", cwd, ...images, "-"],
       { stdio: ["pipe", log, log] });
     const timer = setTimeout(() => p.kill("SIGTERM"), 900_000);
     p.on("close", () => { clearTimeout(timer); closeSync(log); resolve(); });
@@ -289,6 +350,17 @@ async function dropDarkWindows(wins: Array<[number, number]>) {
   if (n) console.log(`  dropped ${n} windows with black patches`);
 }
 
+async function facadeNotes(i: number, j: number) {
+  const here = FACADES.filter((f) => f.region === AREA.region);
+  if (!here.length) return "";
+  const ground = await windowGround(i * STRIDE, j * STRIDE);
+  return here.map((f) => {
+    const [x, y] = llhToPixel(f.lat, f.lon, ground), lx = Math.round(x - i * STRIDE), ly = Math.round(y - j * STRIDE);
+    return lx >= 0 && ly >= 0 && lx < WIN && ly < WIN
+      ? `- The building whose footprint is centred at about (${lx}, ${ly}) px in image 1 is the ${f.name}: ${f.facade}.\n` : "";
+  }).join("");
+}
+
 async function paintWindow(i: number, j: number) {
   if (existsSync(winFile(i, j)) && !args.force && !(OLDER && !current(i, j))) return;
   // open sea: reuse the painted sea texture (mirrored per window so repeats don't line up)
@@ -300,14 +372,22 @@ async function paintWindow(i: number, j: number) {
     console.log(`  ${i}_${j}: sea texture`);
     return;
   }
-  const work = join(base, "work", `${i}_${j}`);
+  const work = join(base, `work${SUFFIX}`, `${i}_${j}`);
   mkdirSync(work, { recursive: true });
   const edges = await composeInput(i, j, join(work, "input.png"), join(work, "height.png"));
   copyFileSync(STYLE, join(work, "style.png"));
   copyFileSync(local.trees, join(work, "trees.png"));
-  const prompt = PROMPT.replace("{title}", title).replace("{country}", local.country).replace("{render}", local.render)
+  if (args.aerial && !HYBRID) {
+    const dir = join(base, `aerial-${args.aerial}`);
+    const load = async (tx: number, ty: number) => (existsSync(join(dir, `${tx}_${ty}.png`)) ? sharp(join(dir, `${tx}_${ty}.png`)).png().toBuffer() : null);
+    await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, load)).removeAlpha().png().toFile(join(work, "aerial.png"));
+  }
+  const prompt = PROMPT.replace("{title}", title).replace("{country}", local.country).replace("{render}", HYBRID ? HYBRID_RENDER : local.render)
     .replace("{treesOf}", local.treesOf).replace("{treeHint}", local.treeHint).replace("{materials}", local.materials).replace("{ground}", local.ground).replace("{out}", join(work, "out.png"))
-    .replace("{continuation}", edges.length ? CONTINUATION.replace("{edges}", edges.join(" and ")) : "");
+    .replace("{continuation}", edges.length ? CONTINUATION.replace("{edges}", edges.join(" and ")) : "")
+    .replace("{count}", args.aerial && !HYBRID ? "Five" : "Four").replace("{aerialImage}", args.aerial && !HYBRID ? AERIAL_IMAGE : "")
+    .replace("{facades}", await facadeNotes(i, j))
+    .replace("{aerialRule}", HYBRID ? HYBRID_RULE : args.aerial ? AERIAL_RULE : "");
   for (let attempt = 1; attempt <= 3; attempt++) {
     while (Date.now() < resumeAt) await sleep(Math.min(60_000, resumeAt - Date.now()));
     rmSync(join(work, "out.png"), { force: true });
@@ -332,8 +412,8 @@ async function paintWindow(i: number, j: number) {
         continue;
       }
       const structured = r.texture >= MIN_TEXTURE; // open sea / empty land: correlation is meaningless
-      if (structured && r.score < MIN_MATCH && attempt < 3) {
-        console.warn(`  ${i}_${j}: match ${r.score.toFixed(2)} < ${MIN_MATCH}, repainting`);
+      if (structured && r.score < minMatch && attempt < 3) {
+        console.warn(`  ${i}_${j}: match ${r.score.toFixed(2)} < ${minMatch}, repainting`);
         continue;
       }
       const warp = structured && r.score > r.identity + 0.01;
@@ -341,14 +421,14 @@ async function paintWindow(i: number, j: number) {
       console.log(`  ${i}_${j}: ${((Date.now() - t0) / 1000).toFixed(0)}s edges=${edges.join("+") || "-"} match=${r.score.toFixed(2)}`
         + (structured ? "" : " (low texture)") + (warp ? ` shift=(${r.dx},${r.dy}) scale=${r.scale.toFixed(2)}` : ""));
       // keep qa.json + codex.log for debugging; the images are ~6 MB per window
-      for (const f of ["input.png", "height.png", "style.png", "trees.png", "out.png"]) rmSync(join(work, f), { force: true });
+      for (const f of ["input.png", "height.png", "style.png", "trees.png", "aerial.png", "out.png"]) rmSync(join(work, f), { force: true });
       return;
     }
     console.error(`  ${i}_${j}: attempt ${attempt} failed, see ${join(work, "codex.log")}`);
   }
 }
 
-/** Feather-blend painted windows into 1024 art tiles; only tiles fully covered are written. */
+/** Feather-blend painted windows into 1024 art tiles; partly covered tiles fade into the render. */
 // ---- sea colour harmonisation -------------------------------------------------------------------
 // Codex paints open water in slightly different blues per window, which shows as window-sized
 // rectangles. In each window, deep water (sea level, far from land) is shifted to the median
@@ -430,19 +510,26 @@ async function assemble(all = false) {
   // 0 → 1 across a FEATHER-wide band centred in the overlap (complementary for neighbours)
   const edge = (k: number) => Math.min(1, Math.max(0, (k + 0.5 - (OVERLAP - FEATHER) / 2) / FEATHER));
   for (let k = 0; k < WIN; k++) ramp[k] = Math.min(edge(k), edge(WIN - 1 - k));
-  mkdirSync(join(base, "paint"), { recursive: true });
+  mkdirSync(join(base, `paint${SUFFIX}`), { recursive: true });
   let written = 0;
   for (const k of tileSet) {
     const [tx, ty] = k.split("_").map(Number);
     const covering: Array<[number, number]> = [];
     for (let j = Math.floor((ty * T - WIN) / STRIDE) + 1; j * STRIDE < (ty + 1) * T; j++)
       for (let i = Math.floor((tx * T - WIN) / STRIDE) + 1; i * STRIDE < (tx + 1) * T; i++) covering.push([i, j]);
-    if (!covering.every(([i, j]) => existsSync(winFile(i, j)))) continue;
-    const tile = join(base, "paint", `${tx}_${ty}.png`);
-    // rebuilt when any covering window was repainted since
-    if (existsSync(tile) && !args.force && !all && covering.every(([i, j]) => mtime(winFile(i, j)) <= mtime(tile))) continue;
+    // a tile only partly covered (the edge of a painted patch) fades from the paint into the render
+    const painted = covering.filter(([i, j]) => existsSync(winFile(i, j)));
+    if (!painted.length || (painted.length < covering.length && !existsSync(renderFile(tx, ty)))) continue;
+    const tile = join(base, `paint${SUFFIX}`, `${tx}_${ty}.png`);
+    // rebuilt when any covering window was repainted (or, for a partial tile, the render re-rendered) since
+    const inputs = painted.map(([i, j]) => winFile(i, j)).concat(painted.length < covering.length ? [renderFile(tx, ty)] : []);
+    if (existsSync(tile) && !args.force && !all && inputs.every((f) => mtime(f) <= mtime(tile))) continue;
     const acc = new Float32Array(T * T * 3), wsum = new Float32Array(T * T);
-    for (const [i, j] of covering) {
+    if (painted.length < covering.length) { // the render underneath with a negligible weight: shows only where no paint reaches
+      const px = await sharp(renderFile(tx, ty)).removeAlpha().raw().toBuffer();
+      for (let d = 0; d < T * T; d++) { for (let c = 0; c < 3; c++) acc[d * 3 + c] = px[d * 3 + c] * 1e-6; wsum[d] = 1e-6; }
+    }
+    for (const [i, j] of painted) {
       const px = await sharp(winFile(i, j)).resize(WIN, WIN).removeAlpha().raw().toBuffer();
       const fix = seaFix.get(`${i}_${j}`);
       if (fix) { // bilinear cell weights × colour offset
@@ -468,7 +555,7 @@ async function assemble(all = false) {
     }
     const out = Buffer.alloc(T * T * 3);
     for (let d = 0; d < T * T; d++) for (let c = 0; c < 3; c++) out[d * 3 + c] = acc[d * 3 + c] / Math.max(wsum[d], 1e-6);
-    await writeAtomic(sharp(out, { raw: { width: T, height: T, channels: 3 } }).png(), join(base, "paint", `${tx}_${ty}.png`));
+    await writeAtomic(sharp(out, { raw: { width: T, height: T, channels: 3 } }).png(), join(base, `paint${SUFFIX}`, `${tx}_${ty}.png`));
     written++;
   }
   console.log(`  assembled ${written} art tiles`);
@@ -483,7 +570,7 @@ async function main() {
   let wins = windows();
   if (args.near) {
     const [lat, lon] = args.near.split(",").map(Number);
-    const [x, y] = llhToPixel(lat, lon, 25);
+    const [x, y] = llhToPixel(lat, lon, REGIONS[AREA.region].groundH);
     const ci = Math.floor(x / STRIDE), cj = Math.floor(y / STRIDE), r = Number(args.radius);
     wins = wins.filter(([i, j]) => Math.abs(i - ci) <= r && Math.abs(j - cj) <= r);
   }
@@ -498,7 +585,7 @@ async function main() {
   // centre first: square rings around the city centre. Each ring runs in two passes over its
   // perimeter (even, then odd positions) so every window continues its painted inner/ring neighbours.
   const [cx, cy] = args.center.split(",").map(Number);
-  const [px, py] = llhToPixel(cx, cy, 25);
+  const [px, py] = llhToPixel(cx, cy, REGIONS[AREA.region].groundH);
   const ci = Math.floor(px / STRIDE), cj = Math.floor(py / STRIDE);
   const have = new Set(wins.map(([i, j]) => `${i}_${j}`));
   const maxR = Math.max(...wins.map(([i, j]) => Math.max(Math.abs(i - ci), Math.abs(j - cj))));
@@ -540,7 +627,7 @@ async function main() {
   }
   await harmoniseSea(); // then every tile with open water is rebuilt with the harmonised sea
   await assemble(!args.window);
-  writeFileSync(join(base, "paint.json"), JSON.stringify({ updated: new Date().toISOString() }));
+  writeFileSync(join(base, `paint${SUFFIX}.json`), JSON.stringify({ updated: new Date().toISOString() }));
 }
 
 main();

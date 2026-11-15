@@ -140,8 +140,27 @@ npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/tel-aviv-
   DGM1 bare-earth terrain, and tree crowns found in the nDOM1 surface model (`canopy.ts`).
 - OSM comes from a Geofabrik extract via osmium (`osmExtract`, `osmlocal.ts`; `brew install osmium-tool`),
   not from Overpass.
-- Look: not painted. The renderer draws a styled look itself (facade and roof materials, hillshade, outlines,
-  ambient occlusion, paper grain; `STYLED` in `renderer.ts`).
+- Look: the renderer draws a styled look itself (facade and roof materials, hillshade, outlines, ambient
+  occlusion, paper grain; `STYLED` in `renderer.ts`). Selected patches of the centre are painted over it from
+  aerial photos (below); export shows paint where it exists and the styled render everywhere else.
+- Painting from aerial photos (the Stadtbibliothek / Europaviertel patch, windows 4..6 × -1..1 of `stuttgart-core`):
+  1. `npx tsx src/aerial.ts <area> --near <lat>,<lon> --radius <r> --source city` drapes the city's 2023
+     orthophotos (CC BY 4.0, cached in `data/raw/aerial/`) onto the render's view: every non-wall pixel gets the
+     photo colour of the ground point it shows (camera inverted at the height-pass height); walls stay grey 128.
+     Writes `data/derived/<area>/aerial-city/`. `--source lgl` (LGL DOP20) is newer but hazier.
+  2. `npm run paint -- <area> --near <lat>,<lon> --radius <r> --center <lat>,<lon> --aerial city --aerial-input`
+     bakes the photo into image 1 (walls from the render, roofs/ground/trees from the photo) and tells Codex to
+     keep its real colours and materials. Attaching the photo as an extra image instead (`--aerial` alone) was
+     tried and ignored by the model.
+  3. Photos can't show facades: add landmarks to `FACADES` in `paint.ts` (name, lat/lon, facade text); a note is
+     added to the prompt for every window it falls in. Without one the model guesses (the library came out beige).
+  4. QA: hybrid paintings follow the photo, not the render, so they match it less (0.41–0.61 when right);
+     the repaint threshold is 0.35 in this mode instead of 0.45.
+  5. Partly covered tiles at the patch edge fade from the paint into the render (64 px), so a patch needs no
+     full-tile alignment. Export as usual (all areas of the region).
+  - `--tag <name>` sends windows/work/paint to `<dir>-<name>` folders that export never reads: use it for experiments.
+  - Known gaps: the photo (2023) and LoD2 disagree in places; the photo wins on surfaces, so render-only details
+    (pools, some trees) disappear, and a building newer than LoD2 shows as a flat roof texture. ~2–5 min per window.
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).

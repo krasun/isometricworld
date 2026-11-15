@@ -124,6 +124,7 @@ export const REGIONS: Record<string, Region> = {
     credits: [
       "Map data © OpenStreetMap contributors · Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (verändert)",
       "Buildings: LGL LoD2 · Terrain: LGL DGM1, Copernicus DEM © DLR, Airbus DS · Trees: LGL nDOM1",
+      "Luftbilder: Landeshauptstadt Stuttgart, Stadtmessungsamt, CC BY 4.0 (verändert) · Centre painted with AI",
     ],
     // Stuttgart Airport (EDDS) runway 25: threshold and true heading from OSM (way 164016757, node 10710079299),
     // threshold ground 359.9 m NHN from LGL DGM1 (+ geoid 48.4). Planes come in from the east over the faded

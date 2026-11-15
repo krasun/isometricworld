@@ -315,7 +315,8 @@ document.getElementById("credits")!.innerHTML = [
   `© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>`,
   // the region's own data sources
   ...(REGION === "stuttgart"
-    ? [`Datenquelle: <a href="https://www.lgl-bw.de">LGL</a>, <a href="https://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a> (verändert)`]
+    ? [`Datenquelle: <a href="https://www.lgl-bw.de">LGL</a>, <a href="https://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a> (verändert)`,
+      `<a href="https://opendata.stuttgart.de/dataset/luftbilder-2021">Luftbilder: Landeshauptstadt Stuttgart</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> (verändert)`]
     : [`<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`]),
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
   // the method to recreate the derived database (ODbL) and the code
