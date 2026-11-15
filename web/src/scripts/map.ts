@@ -3,7 +3,7 @@ import OpenSeadragon from "openseadragon";
 import type { Traffic } from "./traffic.ts";
 import type { Trains } from "./trains.ts";
 import type { Cats } from "./cats.ts";
-import type { Planes, Parrots, Airport } from "./sky.ts";
+import type { Planes, Parrots, Airport, LightAircraft } from "./sky.ts";
 import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
@@ -123,6 +123,7 @@ let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
 let trains: Trains | null = null;
 let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, planes: Planes | null = null;
+let lightAircraft: LightAircraft | null = null;
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
@@ -132,10 +133,12 @@ function loadAnimations() {
     import("./traffic.ts"), import("./cats.ts"), import("./sky.ts"), import("./roads.ts"),
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
     files.trains ? Promise.all([import("./trains.ts"), fetch(`${BASE}/data/${files.trains}`).then((r) => (r.ok ? r.json() : null))]) : null,
-  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots }, { decodeRoads }, data, rail]) => {
+  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, LightAircraft }, { decodeRoads }, data, rail]) => {
     const roads = decodeRoads(data, !files.trains); // no trains: exported before terrain road heights
     if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)]);
     if (world.airport) planes = new Planes(world.enu2px, world.airport);
+    const airfield = REGIONS[REGION]?.airfield; // from places.ts directly: no re-export of world.json needed
+    if (airfield) lightAircraft = new LightAircraft(world.enu2px, airfield);
     if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)]);
     if (roads.length) cats = new Cats(roads, world.enu2px);
     if (roads.length && REGION === "israel-center") { // Tel Aviv's feral parakeets roam over the streets' extent
@@ -145,7 +148,7 @@ function loadAnimations() {
       }
       parrots = new Parrots(world.enu2px, a);
     }
-    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes });
+    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes, __lightAircraft: lightAircraft });
   });
 }
 setTimeout(loadAnimations, 6000); // slow connection: don't wait for every tile forever
@@ -216,8 +219,9 @@ function frame(t: number) {
     cats.step(dt);
     cats.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
-  if (showTraffic) { // sky above everything: parakeets, then the airliner
+  if (showTraffic) { // sky above everything: parakeets, light aircraft, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
+    if (lightAircraft) { lightAircraft.step(dt); lightAircraft.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (planes) { planes.step(dt); planes.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
   }
   if (showBorders || k / dpr < 0.05) drawBorders(dpr); // borders appear automatically far out

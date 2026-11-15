@@ -8,6 +8,7 @@ type Vec3 = [number, number, number];
 type ToScreen = (x: number, y: number) => [number, number];
 
 import { ecefToEnu, llhToEcef } from "../../../pipeline/src/camera.ts";
+import type { Airfield } from "../../../pipeline/src/places.ts";
 
 /** The region's airport: runway threshold and heading (places.ts, passed on in world.json). */
 export interface Airport {
@@ -24,7 +25,7 @@ function frame(ctx: CanvasRenderingContext2D, M: number[][], toScreen: ToScreen,
   const proj = (q: Vec3) => toScreen(M[0][0] * q[0] + M[0][1] * q[1] + M[0][2] * q[2], M[1][0] * q[0] + M[1][1] * q[1] + M[1][2] * q[2]);
   const o = proj(p), f = proj([p[0] + d[0], p[1] + d[1], p[2]]), s = proj([p[0] + d[1], p[1] - d[0], p[2]]);
   const ex = [(f[0] - o[0]) * scale, (f[1] - o[1]) * scale], ey = [(s[0] - o[0]) * scale, (s[1] - o[1]) * scale];
-  return { o, set: () => ctx.setTransform(ex[0], ex[1], ey[0], ey[1], o[0], o[1]) };
+  return { o, set: () => ctx.setTransform(ex[0], ex[1], ey[0], ey[1], o[0], o[1]), perM: Math.hypot(f[0] - o[0], f[1] - o[1]) };
 }
 
 const inView = (o: [number, number], view: number[], m: number) => o[0] > view[0] - m && o[1] > view[1] - m && o[0] < view[2] + m && o[1] < view[3] + m;
@@ -159,4 +160,165 @@ export class Parrots {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
   }
+}
+
+// ---- light aircraft at a small airfield (places.ts `airfield`) ------------------------------------
+
+/** a flight path: smoothed ENU points with the target speed (m/s) at each, and how its ends fade */
+interface Route { pts: Vec3[]; v: number[]; cum: number[]; len: number; fadeIn: number; fadeOut: number; ground: number }
+interface Wp { p: Vec3; v: number; sharp?: boolean }
+type Kind = "echo" | "ul";
+interface Flight { r: Route; s: number; kind: Kind; livery: number; landing: boolean }
+
+const GA_EVERY = 70, LIFTOFF = 280, TOUCHDOWN = 120, STOP = 480, TURN = 300;
+const LIVERIES: Record<Kind, Array<[string, string]>> = { // body, trim
+  echo: [["#f6f6f2", "#c8322b"], ["#f6f6f2", "#2a5aa8"], ["#efe6cf", "#7a4a26"]],
+  ul: [["#f8f8f8", "#e8b21c"], ["#f8f8f8", "#2f8f5b"], ["#f8f8f8", "#d04a2a"]],
+};
+
+/**
+ * Echo-class planes (~C172) and ultralights take off from the airfield, fly its published routes and
+ * land again: departures leave over the map edge, arrivals come in over it, circuits do both.
+ */
+export class LightAircraft {
+  private flights: Flight[] = [];
+  private t = GA_EVERY - 8;
+  private n = 0;
+  private seed = 11;
+  private takeoff: Wp[]; private landing: Wp[];
+  private ground: number;
+  private enu: (f: number[]) => Vec3;
+
+  constructor(private M: number[][], private a: Airfield) {
+    const [T, F] = a.runway.map(([lat, lon, h]) => ecefToEnu(llhToEcef(lat, lon, h)) as Vec3);
+    this.ground = T[2];
+    this.enu = ([lat, lon, agl]) => ecefToEnu(llhToEcef(lat, lon, a.runway[0][2] + (agl ?? a.agl))) as Vec3;
+    const L = Math.hypot(F[0] - T[0], F[1] - T[1]);
+    // along the runway from the threshold (negative: before it on the extended centre line), up `agl`
+    const along = (d: number, agl: number): Vec3 => {
+      const f = d / L;
+      return [T[0] + (F[0] - T[0]) * f, T[1] + (F[1] - T[1]) * f, T[2] + (F[2] - T[2]) * Math.max(0, Math.min(1, f)) + agl];
+    };
+    this.takeoff = [
+      { p: along(0, 0), v: 3, sharp: true }, { p: along(LIFTOFF, 0), v: 28, sharp: true },
+      { p: along(L + 300, 40), v: 36, sharp: true },
+    ];
+    this.landing = [
+      { p: along(-1000, 60), v: 32, sharp: true }, { p: along(0, 15), v: 30, sharp: true },
+      { p: along(TOUCHDOWN, 0), v: 27, sharp: true }, { p: along(STOP, 0), v: 4, sharp: true },
+    ];
+    // two in the air already when the map opens
+    this.spawn("circuit", 0.45); this.spawn("arrival", 0.3);
+  }
+
+  private rnd() { this.seed = (this.seed * 16807) % 2147483647; return this.seed / 2147483647; }
+  private pick<T>(xs: T[]) { return xs[Math.floor(this.rnd() * xs.length)]; }
+
+  private spawn(type: "departure" | "arrival" | "circuit", at = 0) {
+    const a = this.a, fix = (f: number[]): Wp => ({ p: this.enu(f), v: 45 });
+    let wps: Wp[];
+    if (type === "departure") wps = [...this.takeoff, ...a.out.map(fix), ...this.pick(a.exits).map(fix)];
+    else if (type === "arrival") wps = [...this.pick(a.entries).map(fix), ...a.in.map(fix), ...this.landing];
+    else wps = [...this.takeoff, ...a.out.map(fix), ...a.circuit.map(fix), ...a.in.map(fix), ...this.landing];
+    const r = route(wps, type === "arrival" ? 1500 : 40, type === "departure" ? 1500 : 60, this.ground);
+    const kind: Kind = this.rnd() < 0.55 ? "echo" : "ul";
+    this.flights.push({ r, s: at * r.len, kind, livery: Math.floor(this.rnd() * 3), landing: type !== "departure" });
+  }
+
+  /** the runway is busy: someone is on short final, rolling out or taking off */
+  private runwayBusy() {
+    return this.flights.some((f) => (f.landing && f.r.len - f.s < 2500) || (f.r.fadeIn < 100 && f.s < 700));
+  }
+
+  step(dt: number) {
+    dt = Math.min(dt, 0.1);
+    this.t += dt;
+    if (this.t >= GA_EVERY) {
+      const type = (["circuit", "departure", "arrival", "circuit", "arrival", "departure"] as const)[this.n % 6];
+      if (type === "arrival" || !this.runwayBusy()) { this.spawn(type); this.n++; this.t = 0; } // else hold short
+    }
+    for (const f of this.flights) f.s += speedAt(f.r, f.s) * (f.kind === "ul" ? 0.8 : 1) * dt;
+    this.flights = this.flights.filter((f) => f.s < f.r.len);
+  }
+
+  draw(ctx: CanvasRenderingContext2D, toScreen: ToScreen, _px: number, view: number[]) {
+    for (const f of this.flights) {
+      const { p, d } = poseAt(f.r, f.s);
+      // never under ~22 screen px long (a 1:1 Cessna is a speck next to the 20 m runway even zoomed in)
+      const scale = Math.max(1, 22 / (8.5 * frame(ctx, this.M, toScreen, p, d, 1).perM));
+      const alpha = Math.min(1, f.s / f.r.fadeIn, (f.r.len - f.s) / f.r.fadeOut);
+      const above = p[2] - f.r.ground;
+      const sh = frame(ctx, this.M, toScreen, [p[0] + above * 0.25, p[1] + above * 0.35, f.r.ground], d, scale);
+      const pl = frame(ctx, this.M, toScreen, p, d, scale);
+      if (!inView(pl.o, view, 200) && !inView(sh.o, view, 200)) continue;
+      const [body, trim] = LIVERIES[f.kind][f.livery];
+      ctx.globalAlpha = alpha * 0.2; sh.set(); this.shape(ctx, f.kind, "#000", "#000", false);
+      ctx.globalAlpha = alpha; pl.set(); this.shape(ctx, f.kind, body, trim, true);
+      const tip = f.kind === "echo" ? 5.5 : 5.35;
+      ctx.fillStyle = "#ff3b30"; ctx.fillRect(-0.4, -tip, 0.4, 0.4);
+      ctx.fillStyle = "#34c759"; ctx.fillRect(-0.4, tip - 0.4, 0.4, 0.4);
+      if ((performance.now() + f.livery * 400) % 1500 < 100) { ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(-0.2, -tip, 0.5, 0, Math.PI * 2); ctx.arc(-0.2, tip, 0.5, 0, Math.PI * 2); ctx.fill(); }
+      ctx.globalAlpha = 1;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+  }
+
+  /** from above, nose at +x, metres: Echo ~ Cessna 172 (high wing, 8.3 m long, 11 m span), UL slim low-wing (6.5 m, 10.7 m) */
+  private shape(ctx: CanvasRenderingContext2D, kind: Kind, body: string, trim: string, detail: boolean) {
+    const poly = (pts: number[], color: string, mirror = true) => {
+      ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(pts[0], pts[1]);
+      for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+      if (mirror) for (let i = pts.length - 2; i >= 0; i -= 2) ctx.lineTo(pts[i], -pts[i + 1]);
+      ctx.closePath(); ctx.fill();
+    };
+    if (kind === "echo") {
+      poly([4.2, 0.35, 3.4, 0.6, 0.8, 0.62, -2.2, 0.4, -4.3, 0.15], body);          // fuselage
+      poly([-3.4, 0.3, -3.6, 1.7, -4.4, 1.7, -4.4, 0], body);                         // tailplane
+      if (detail) poly([3.4, 0.15, -3.8, 0.15], trim);                                // cheat line
+      poly([1.3, 0, 1.3, 5.5, -0.15, 5.5, -0.15, 0], body);                           // high wing on top
+      if (detail) { poly([1.3, 4.6, 1.3, 5.5, -0.15, 5.5, -0.15, 4.6], trim, false); poly([1.3, -4.6, 1.3, -5.5, -0.15, -5.5, -0.15, -4.6], trim, false); }
+    } else {
+      poly([0.6, 0, 0.35, 5.35, -0.3, 5.35, -0.55, 0], body);                         // low wing below
+      poly([-3.6, 0.2, -3.75, 1.3, -4.15, 1.3, -4.15, 0], body);                      // T-tail
+      poly([2.4, 0.2, 1.6, 0.5, 0.2, 0.5, -1.6, 0.3, -4.1, 0.1], body);              // teardrop fuselage
+      if (detail) { poly([0.35, 4.5, 0.3, 5.35, -0.3, 5.35, -0.35, 4.5], trim, false); poly([0.35, -4.5, 0.3, -5.35, -0.3, -5.35, -0.35, -4.5], trim, false); poly([-2.5, 0.12, -4.1, 0.1], trim); }
+    }
+    if (!detail) return;
+    ctx.fillStyle = "rgba(40,60,80,0.75)"; ctx.beginPath(); ctx.ellipse(kind === "echo" ? 2 : 1.2, 0, 0.7, 0.38, 0, 0, Math.PI * 2); ctx.fill(); // windows / canopy
+    ctx.fillStyle = "rgba(60,60,60,0.25)"; ctx.beginPath(); ctx.ellipse(kind === "echo" ? 4.3 : 2.5, 0, 0.08, 0.95, 0, 0, Math.PI * 2); ctx.fill(); // propeller disc
+  }
+}
+
+/** smooth the corners (cut each non-sharp corner `TURN` m back, three times), then measure */
+function route(wps: Wp[], fadeIn: number, fadeOut: number, ground: number): Route {
+  for (let k = 0; k < 3; k++) {
+    const out: Wp[] = [];
+    wps.forEach((w, i) => {
+      if (w.sharp || i === 0 || i === wps.length - 1) { out.push(w); return; }
+      for (const n of [wps[i - 1], wps[i + 1]]) {
+        const len = Math.hypot(n.p[0] - w.p[0], n.p[1] - w.p[1]), f = Math.min(0.25, TURN / Math.max(1, len) / (k + 1));
+        const q: Wp = { p: [w.p[0] + (n.p[0] - w.p[0]) * f, w.p[1] + (n.p[1] - w.p[1]) * f, w.p[2] + (n.p[2] - w.p[2]) * f], v: w.v + (n.v - w.v) * f };
+        out.push(q);
+      }
+    });
+    wps = out;
+  }
+  const cum = [0];
+  for (let i = 1; i < wps.length; i++) cum.push(cum[i - 1] + Math.hypot(wps[i].p[0] - wps[i - 1].p[0], wps[i].p[1] - wps[i - 1].p[1], wps[i].p[2] - wps[i - 1].p[2]));
+  return { pts: wps.map((w) => w.p), v: wps.map((w) => w.v), cum, len: cum.at(-1)!, fadeIn, fadeOut, ground };
+}
+
+function segAt(r: Route, s: number) {
+  let i = 1;
+  while (i < r.cum.length - 1 && r.cum[i] < s) i++;
+  return { i, f: Math.max(0, Math.min(1, (s - r.cum[i - 1]) / Math.max(1e-6, r.cum[i] - r.cum[i - 1]))) };
+}
+function speedAt(r: Route, s: number) {
+  const { i, f } = segAt(r, s);
+  return Math.max(3, r.v[i - 1] + (r.v[i] - r.v[i - 1]) * f);
+}
+function poseAt(r: Route, s: number): { p: Vec3; d: [number, number] } {
+  const { i, f } = segAt(r, s), a = r.pts[i - 1], b = r.pts[i];
+  const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
+  return { p: [a[0] + dx * f, a[1] + dy * f, a[2] + (b[2] - a[2]) * f], d: [dx / l, dy / l] };
 }

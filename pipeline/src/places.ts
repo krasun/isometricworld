@@ -26,6 +26,8 @@ export interface Region {
    * (default 22000 → 7000; negative = past it, on the runway). web/src/scripts/sky.ts.
    */
   airport?: { lat: number; lon: number; runwayHeadingDeg: number; h?: number; from?: number; to?: number };
+  /** Small airfield with light aircraft taking off, flying its routes and landing (optional). web/src/scripts/sky.ts. */
+  airfield?: Airfield;
   /** Credit lines (video mode and footer). */
   credits: string[];
   /** Geoid undulation at the origin (EGM2008, m): sea level as ellipsoid height. */
@@ -52,6 +54,23 @@ export interface Region {
    * outer border (not along borders between the relations). Default: the areas' bboxes.
    */
   outline?: { relations: number[]; add?: Array<[number, number, number, number]> };
+}
+
+/** [lat, lon] or [lat, lon, metres above the field (default `agl`)] */
+type Fix = [number, number] | [number, number, number];
+
+/**
+ * A small airfield (Echo-class planes and ultralights), one runway direction. A flight is one of:
+ *   departure  take off, `out`, one of `exits` (fades out)
+ *   arrival    one of `entries` (fades in), `in`, land
+ *   circuit    take off, `out`, `circuit`, `in`, land
+ */
+export interface Airfield {
+  /** threshold of the landing/take-off direction and the far runway end: [lat, lon, ellipsoid h] */
+  runway: [[number, number, number], [number, number, number]];
+  /** height of the route legs above the threshold (m) */
+  agl: number;
+  out: Fix[]; exits: Fix[][]; circuit: Fix[]; in: Fix[]; entries: Fix[][];
 }
 
 export interface City {
@@ -110,6 +129,19 @@ export const REGIONS: Record<string, Region> = {
     // threshold ground 359.9 m NHN from LGL DGM1 (+ geoid 48.4). Planes come in from the east over the faded
     // edge, cross the threshold at 30 m and roll out on the runway (the outline's airport box).
     airport: { lat: 48.6940216, lon: 9.2438069, runwayHeadingDeg: 254, h: 408.3, from: 6000, to: -2500 },
+    // Pattonville (EDTQ) runway 28: ends from OSM (way 100261665), ground from LGL DGM1 (273.1 / 282.1 m NHN)
+    // + geoid 48.4. No standard circuit (noise abatement): departures fly 305° to the reporting point
+    // AUTOKINO and on to WASSERTURM, arrivals come via OEFFINGEN on 305°; the circuit is the unofficial
+    // loop WASSERTURM → A81/B27 junction → BUND-Teich → OEFFINGEN around Ludwigsburg.
+    airfield: {
+      runway: [[48.8635017, 9.2291335, 321.5], [48.8649051, 9.2202219, 330.5]],
+      agl: 300,
+      out: [[48.8750, 9.1900, 200], [48.8717, 9.1383]], // AUTOKINO 48°52.5' 9°11.4', WASSERTURM 48°52.3' 9°08.3'
+      exits: [[[48.8897, 9.0741, 450]], [[48.8528, 9.1260, 450]]], // west, south
+      circuit: [[48.9029, 9.1549], [48.9200, 9.1567], [48.9279, 9.2323], [48.9233, 9.2767], [48.8836, 9.2933], [48.8612, 9.2842]], // A81/B27 48°55.2' 9°09.4', BUND-Teich 48°55.4' 9°16.6'
+      in: [[48.8483, 9.2683, 250]], // OEFFINGEN 48°50.9' 9°16.1'
+      entries: [[[48.8498, 9.3218, 400]], [[48.8350, 9.2840, 400]]], // from the east, from the south
+    },
     osmExtract: "https://download.geofabrik.de/europe/germany/baden-wuerttemberg/stuttgart-regbez-latest.osm.pbf",
     geoidM: 48.4, // EGM2008 at Schlossplatz (GeographicLib GeoidEval: 48.373 m)
     groundH: 300, // Kessel floor ~245 m NHN + geoid
