@@ -21,6 +21,8 @@ import { areaTiles, openArea } from "./areas.ts";
 import { CAMERA, camera, llhToPixel } from "./camera.ts";
 import { CHROME, CHROME_ARGS, DERIVED, PIPELINE, writeAtomic } from "./paths.ts";
 import { REGIONS } from "./places.ts";
+import { styleOf } from "./styles.ts";
+import type { TileObjects } from "../page/renderer.ts";
 
 const { values: args, positionals } = parseArgs({
   allowPositionals: true,
@@ -78,11 +80,30 @@ async function openPage(browser: Awaited<ReturnType<typeof chromium.launch>>, di
   return page;
 }
 
+/** Styled regions whose preset casts sun shadows (styles.ts): casters come from the neighbouring tiles too. */
+const SHADOWS = REGIONS[area.region].look === "styled" && styleOf(REGIONS[area.region].style).castShadow !== null;
+
+/** A tile's objects and its 8 neighbours' (each once): everything that can cast a shadow into the tile. */
+function withNeighbours(outDir: string, tx: number, ty: number) {
+  const out: Record<string, unknown[]> = { b: [], t: [], m: [] }, seen = new Set<string>();
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const f = join(outDir, "scene", `${tx + dx}_${ty + dy}.json`);
+    if (!existsSync(f)) continue;
+    const bin = JSON.parse(readFileSync(f, "utf8"));
+    for (const k of ["b", "t", "m"]) for (const e of bin[k] ?? []) {
+      const id = `${k}${JSON.stringify(e)}`;
+      if (!seen.has(id)) { seen.add(id); out[k].push(e); }
+    }
+  }
+  return out as unknown as TileObjects;
+}
+
 async function renderOne(page: Page, tx: number, ty: number, outDir: string) {
   const t0 = Date.now();
   const binFile = join(outDir, "scene", `${tx}_${ty}.json`);
   const objects = existsSync(binFile) ? JSON.parse(readFileSync(binFile, "utf8")) : undefined;
-  const r = await page.evaluate(([x, y, o]) => window.renderTile(x, y, o), [tx, ty, objects] as const);
+  const casters = SHADOWS ? withNeighbours(outDir, tx, ty) : undefined;
+  const r = await page.evaluate(([x, y, o, c]) => window.renderTile(x, y, o, c), [tx, ty, objects, casters] as const);
   const color = Buffer.from(r.color.split(",")[1], "base64");
   await writeAtomic(sharp(color).resize(T, T, { kernel: "lanczos3" }).png({ compressionLevel: 6 }), join(outDir, "render", `${tx}_${ty}.png`));
   // GL rows are bottom-up; flip so row 0 is the top of the tile.

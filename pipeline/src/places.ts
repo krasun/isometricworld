@@ -9,6 +9,8 @@
  * A CITY is a named view into a region: /<city-slug> opens the region centred on it.
  */
 
+import type { StyleName } from "./styles.ts";
+
 export interface Region {
   title: string;
   /** ENU origin. Fixed forever once tiles exist: changing it moves every tile of the region. */
@@ -56,6 +58,8 @@ export interface Region {
    * Only the styled look draws LoD2 meshes, so a region with LoD2 buildings ("lgl") needs "styled".
    */
   look?: "painted" | "styled";
+  /** look "styled": the preset in styles.ts (shadows, palettes…; default "stuttgart"). */
+  style?: StyleName;
   /** OSM from this Geofabrik .osm.pbf extract (osmlocal.ts) instead of the Overpass API. */
   osmExtract?: string;
   /**
@@ -154,6 +158,7 @@ export const REGIONS: Record<string, Region> = {
     sources: "gugik",
     teryt: ["1219", "1261"], // powiat wielicki; Kraków (across the A4, in the ring around the town)
     look: "styled",
+    style: "poland",
     // gmina Wieliczka (OSM relation 2662713, admin_level 7: the town and its villages) and Kraków (449696,
     // north of the A4), cut further by the areas: the town (relation 2751961) and the A4 stay clear of the
     // faded edge, the villages and Kraków's edge around them fade out

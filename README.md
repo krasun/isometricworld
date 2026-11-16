@@ -164,6 +164,7 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   not from Overpass.
 - Look: not painted (`look: "styled"`, independent of `sources`). The renderer draws a styled look itself
   (facade and roof materials, hillshade, outlines, ambient occlusion, paper grain; `STYLED` in `renderer.ts`).
+  Variants of it are presets in `pipeline/src/styles.ts` (`style`; Stuttgart uses the default "stuttgart").
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).

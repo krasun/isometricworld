@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { CAMERA, axes, ecefToEnu, llhToEcef, tileCamera, useRegion } from "../src/camera.ts";
 import { REGIONS } from "../src/places.ts";
+import { styleOf } from "../src/styles.ts";
 import { drawGround, type Feature } from "./ground.ts";
 import { deckHeight } from "../src/bridges.ts";
 
@@ -14,6 +15,10 @@ const REGION = params.get("region") ?? "israel-center";
 useRegion(REGION); // before any projection below
 /** Styled regions (places.ts `look`) get the finished procedural look (no paint step): LoD2 roofs, hillshade, outlines. */
 const STYLED = REGIONS[REGION].look === "styled";
+/** The styled look's preset (styles.ts). */
+const STYLE = styleOf(REGIONS[REGION].style);
+/** Sun shadows cast by buildings and trees (preset `castShadow`; styled look only, tested in the post pass). */
+const SHADOWS = STYLED && STYLE.castShadow !== null;
 /** Ellipsoid height the height pass counts from (heights.ts). */
 const HEIGHT_BASE = REGIONS[REGION].heightBase ?? 0;
 const SS = Number(params.get("ss") ?? 2); // supersampling
@@ -139,7 +144,8 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   // LoD2 footprints cast the same contact shadows as extruded buildings
   const shadows = { b: [...(data?.b ?? []), ...(data?.m ?? []).filter((m) => !m[9] || m[9] < 2).map((m) => [m[4], m[5], m[0], null] as [P2[], number, number, null])], t: data?.t ?? [] };
   const ctx = cv.getContext("2d")!;
-  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, shadows, ground, STYLED ? SHADOW : undefined);
+  // regions with cast shadows (post pass) skip the short contact shadows, which would point the same way
+  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, SHADOWS ? { b: [], t: [] } : shadows, ground, STYLED ? SHADOW : undefined);
   buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h);
   if (STYLED) deckShadows(ctx, data);
   groundTexture.needsUpdate = true;
@@ -909,8 +915,12 @@ const colorTarget = new THREE.WebGLRenderTarget(SIZE, SIZE, {
 const postMaterial = new THREE.ShaderMaterial({
   vertexShader: /* glsl */ `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: /* glsl */ `
-    uniform sampler2D tColor, tDepth;
+    uniform sampler2D tColor, tDepth, tShadow;
     uniform float near, far, px, size;   // px: metres per supersampled pixel
+    uniform bool shadows;                 // cast sun shadows (preset castShadow): tShadow is the depth seen from the sun
+    uniform mat4 sunMatrix;               // ENU -> sun clip space
+    uniform vec3 camPos, camRight, camUp, camDir, sun, shade;  // shade: a fully shaded surface's colour factor
+    uniform float halfW;                  // half the tile camera's width (m)
     uniform vec2 origin;                  // global art pixel of the tile's top-left corner
     uniform float ss;
     varying vec2 vUv;
@@ -943,6 +953,23 @@ const postMaterial = new THREE.ShaderMaterial({
         occ += max(0.0, dot(n, v / max(d, 1e-3)) - 0.2) * (1.0 - smoothstep(1.0, 3.0, d));
       }
       occ = clamp(occ / 12.0 * 2.2, 0.0, 1.0);
+      // sun shadows: is this surface point seen from the sun? (only surfaces facing it: the others are shaded already)
+      if (shadows) {
+        vec3 nw = normalize(camRight * n.x + camUp * n.y + camDir * n.z);
+        if (dot(nw, sun) > 0.02) {
+          vec3 w = camPos + camRight * ((vUv.x - 0.5) * 2.0 * halfW) + camUp * ((vUv.y - 0.5) * 2.0 * halfW) + camDir * z;
+          vec4 q = sunMatrix * vec4(w + nw * 0.2, 1.0);   // a normal offset keeps a surface from shadowing itself
+          vec3 s = q.xyz / q.w * 0.5 + 0.5;
+          if (all(greaterThan(s.xy, vec2(0.0))) && all(lessThan(s.xy, vec2(1.0)))) {
+            float lit = 0.0;
+            for (int i = 0; i < 16; i++) {                  // soft edge: 16 taps on a ~0.3 m disc
+              float a = float(i) * 2.39996, r = sqrt(float(i) + 0.5) * 0.4;
+              lit += step(s.z - 0.00001, texture2D(tShadow, s.xy + vec2(cos(a), sin(a)) * r / 4096.0).x);
+            }
+            c *= mix(shade, vec3(1.0), lit / 16.0);
+          }
+        }
+      }
       c *= 1.0 - 0.38 * occ;
       c = mix(c, c * vec3(0.42, 0.40, 0.42), edge * 0.75);
       // paper: soft blotches over a few hundred art pixels + fine grain, continuous across tiles
@@ -958,12 +985,60 @@ const postMaterial = new THREE.ShaderMaterial({
     tColor: { value: colorTarget.texture }, tDepth: { value: colorTarget.depthTexture },
     near: { value: 1 }, far: { value: 6000 }, px: { value: CAMERA.mpp / SS }, size: { value: SIZE },
     origin: { value: new THREE.Vector2() }, ss: { value: SS },
+    tShadow: { value: null }, shadows: { value: false }, sunMatrix: { value: new THREE.Matrix4() },
+    camPos: { value: new THREE.Vector3() }, camRight: { value: new THREE.Vector3() }, camUp: { value: new THREE.Vector3() },
+    camDir: { value: new THREE.Vector3() }, sun: { value: SUN.clone() }, halfW: { value: 1 },
+    shade: { value: new THREE.Vector3(...(STYLE.castShadow ?? [1, 1, 1])) },
   },
   depthTest: false, depthWrite: false,
 });
 const postScene = new THREE.Scene();
 postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMaterial));
 const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+// ---- sun shadows (preset castShadow): depth seen from the sun, tested per pixel in the post pass ------------------
+/** Shadow map texels sit on one fixed grid in sun space, so neighbouring tiles agree along their seams. */
+const SM = 4096, SM_TEXEL = 0.2;
+const shadowTarget = new THREE.WebGLRenderTarget(SM, SM, {
+  colorSpace: THREE.NoColorSpace, depthBuffer: true, generateMipmaps: false,
+  depthTexture: new THREE.DepthTexture(SM, SM, THREE.UnsignedIntType),
+});
+const sunCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20000);
+sunCamera.position.set(SUN.x * 10000, SUN.y * 10000, SUN.z * 10000);
+sunCamera.up.set(0, 0, 1);
+sunCamera.lookAt(0, 0, 0);
+sunCamera.updateMatrixWorld(true);
+const casterMaterial = new THREE.MeshBasicMaterial({ colorWrite: false });
+
+/** Frame the sun camera on what the tile camera sees (ground … 80 m above it), snapped to the texel grid. */
+function placeSun(tx: number, ty: number) {
+  const [fx0, fy0, fx1, fy1] = footprint(tx, ty);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i <= 16; i++) for (let j = 0; j <= 16; j++) {
+    const g = ground(fx0 + ((fx1 - fx0) * i) / 16, fy0 + ((fy1 - fy0) * j) / 16);
+    lo = Math.min(lo, g); hi = Math.max(hi, g);
+  }
+  const r = new THREE.Vector3(), u = new THREE.Vector3(), d = new THREE.Vector3(), p = new THREE.Vector3();
+  camera.matrixWorld.extractBasis(r, u, d);
+  d.negate(); // a camera looks down its -z
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const Z of [lo - 5, hi + 80]) {
+    const x = sx * camera.right, y = sy * camera.top, t = (Z - camera.position.z - r.z * x - u.z * y) / d.z;
+    p.copy(camera.position).addScaledVector(r, x).addScaledVector(u, y).addScaledVector(d, t).applyMatrix4(sunCamera.matrixWorldInverse);
+    x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+  }
+  const span = SM * SM_TEXEL;
+  if (x1 - x0 > span || y1 - y0 > span) console.warn(`shadow map too small for ${tx}_${ty}: ${(x1 - x0).toFixed(0)} × ${(y1 - y0).toFixed(0)} m`);
+  sunCamera.left = Math.floor(((x0 + x1) / 2 - span / 2) / SM_TEXEL) * SM_TEXEL;
+  sunCamera.right = sunCamera.left + span;
+  sunCamera.bottom = Math.floor(((y0 + y1) / 2 - span / 2) / SM_TEXEL) * SM_TEXEL;
+  sunCamera.top = sunCamera.bottom + span;
+  sunCamera.updateProjectionMatrix();
+  const u_ = postMaterial.uniforms;
+  u_.sunMatrix.value.multiplyMatrices(sunCamera.projectionMatrix, sunCamera.matrixWorldInverse);
+  u_.camPos.value.copy(camera.position); u_.camRight.value.copy(r); u_.camUp.value.copy(u); u_.camDir.value.copy(d);
+  u_.halfW.value = camera.right;
+}
 
 function placeCamera(tx: number, ty: number) {
   const c = tileCamera(tx, ty);
@@ -977,10 +1052,23 @@ function placeCamera(tx: number, ty: number) {
   camera.updateMatrixWorld(true);
 }
 
-async function renderTile(tx: number, ty: number, data?: TileObjects) {
+/** `casters`: the tile's objects and its neighbours' (render.ts, presets with cast shadows): they shadow this tile too. */
+async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: TileObjects) {
   placeCamera(tx, ty);
-  buildObjects(data ?? { b: [], t: [] });
+  buildObjects((SHADOWS && casters) || data || { b: [], t: [] });
   buildGround(tx, ty, data);
+  if (SHADOWS) {
+    placeSun(tx, ty);
+    groundMesh.visible = false; // the ground receives, it does not cast (hillshade lights the slopes)
+    scene.overrideMaterial = casterMaterial;
+    renderer.setRenderTarget(shadowTarget);
+    renderer.clear(true, true, true);
+    renderer.render(scene, sunCamera);
+    scene.overrideMaterial = null;
+    groundMesh.visible = true;
+    postMaterial.uniforms.tShadow.value = shadowTarget.depthTexture;
+    postMaterial.uniforms.shadows.value = true;
+  }
   if (STYLED) {
     renderer.setRenderTarget(colorTarget);
     renderer.render(scene, camera);
