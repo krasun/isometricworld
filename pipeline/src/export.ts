@@ -935,14 +935,14 @@ async function main() {
   shape = outlinePixels();
   // areas overlap: each tile from the area it lies deepest inside (its scene has the most context around it)
   const depth = new Map<string, number>();
-  const photo = new Map<Key, string>(), art = new Map<Key, string>();
+  const photo = new Map<Key, string>(), art = new Map<Key, string>(), cut = new Map<Key, string>(); // cut: cutout.ts landmarks
   const attributions = new Set<string>();
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const a of areas) {
     const dir = join(DERIVED, a);
     const m = readJson(join(dir, "manifest.json"));
     (m.attributions as string[]).flatMap((s) => s.split(";")).map((s) => s.trim()).filter(Boolean).forEach((s) => attributions.add(s));
-    for (const [layer, map] of [["render", photo], ["paint", art]] as const) {
+    for (const [layer, map] of [["render", photo], ["cutout", cut], ["paint", art]] as const) {
       if (!existsSync(join(dir, layer))) continue;
       for (const f of readdirSync(join(dir, layer)).filter((f) => f.endsWith(".png"))) {
         const [tx, ty] = parse(f.replace(".png", ""));
@@ -959,7 +959,7 @@ async function main() {
   await exportRoads(areas, heights); // first: the bridge decks are drawn into the painted tiles
   await exportTrains(areas, heights);
   if (!process.argv.includes("--data-only")) {
-    await exportLayer("map", new Map([...photo, ...art])); // painted wins
+    await exportLayer("map", new Map([...photo, ...cut, ...art])); // painted patches win over cutouts, cutouts over the render
     await exportLayer("photo", photo);
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
   }
