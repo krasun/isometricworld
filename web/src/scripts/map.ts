@@ -5,6 +5,7 @@ import type { Trains } from "./trains.ts";
 import type { Cats } from "./cats.ts";
 import type { Planes, Parrots, Airport } from "./sky.ts";
 import { TiltShift } from "./tiltshift.ts";
+import type { Pigeons } from "./pigeons.ts";
 import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
@@ -123,22 +124,31 @@ const globalToViewport = (x: number, y: number) => base().imageToViewportCoordin
 let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
 let trains: Trains | null = null;
-let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, planes: Planes | null = null;
+let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, planes: Planes | null = null, pigeons: Pigeons | null = null;
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
   if (animationsRequested) return;
   animationsRequested = true;
   Promise.all([
-    import("./traffic.ts"), import("./cats.ts"), import("./sky.ts"), import("./roads.ts"),
+    import("./traffic.ts"), import("./cats.ts"), import("./sky.ts"), import("./roads.ts"), import("./pigeons.ts"),
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
     files.trains ? Promise.all([import("./trains.ts"), fetch(`${BASE}/data/${files.trains}`).then((r) => (r.ok ? r.json() : null))]) : null,
-  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots }, { decodeRoads }, data, rail]) => {
+  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots }, { decodeRoads }, { Pigeons: PigeonFlocks }, data, rail]) => {
     const roads = decodeRoads(data, !files.trains); // no trains: exported before terrain road heights
     if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)]);
     if (world.airport) planes = new Planes(world.enu2px, world.airport);
-    if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)]);
+    const life = REGIONS[REGION]?.life;
+    if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)], 1, { detailed: life?.vehicles === "detailed", coaches: life?.coaches });
     if (roads.length) cats = new Cats(roads, world.enu2px);
+    if (roads.length && life?.pigeons?.length) { // the paving's height: the nearest road sample's
+      const ground = (x: number, y: number) => {
+        let best = Infinity, z = 0;
+        for (const r of roads) for (let i = 0; i < r.s.length; i += 4) { const d = Math.hypot(r.s[i] - x, r.s[i + 1] - y); if (d < best) { best = d; z = r.s[i + 2]; } }
+        return z;
+      };
+      pigeons = new PigeonFlocks(world.enu2px, life.pigeons, ground, [Math.sin(heading), Math.cos(heading)]);
+    }
     if (roads.length && REGION === "israel-center") { // Tel Aviv's feral parakeets roam over the streets' extent
       const a = [Infinity, Infinity, -Infinity, -Infinity];
       for (const r of roads) for (let i = 0; i < r.s.length; i += 4) {
@@ -146,7 +156,7 @@ function loadAnimations() {
       }
       parrots = new Parrots(world.enu2px, a);
     }
-    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes });
+    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes, __pigeons: pigeons });
   });
 }
 setTimeout(loadAnimations, 6000); // slow connection: don't wait for every tile forever
@@ -217,6 +227,10 @@ function frame(t: number) {
   if (cats && showTraffic && px >= 0.6) {
     cats.step(dt);
     cats.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+  }
+  if (pigeons && showTraffic) { // they keep pecking (and taking off) out of sight too: cheap
+    pigeons.step(dt);
+    pigeons.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
   if (showTraffic) { // sky above everything: parakeets, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }

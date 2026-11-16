@@ -33,6 +33,18 @@ export interface Region {
    * edges blurred (tiltshift.ts; a button and M switch it).
    */
   effects?: { tiltShift?: boolean };
+  /**
+   * Life on the map (web/src/scripts). `vehicles: "detailed"`: cars drawn as body and cabin with windows and
+   * lights (hatchbacks, saloons, SUVs, vans), buses with their window band, shadows cast like the render's
+   * (traffic.ts). `coaches`: a tourist site's coach parks, each a row of parked coaches as measured on the
+   * orthophoto (its centre, the coaches' heading and the row's direction in compass °, how many, metres
+   * apart); coaches drive to and from them on the roads. `pigeons`: squares with a flock (pigeons.ts).
+   */
+  life?: {
+    vehicles?: "detailed";
+    coaches?: Array<{ name: string; at: [number, number]; heading: number; row: number; count: number; step: number }>;
+    pigeons?: Array<{ name: string; at: [number, number]; r: number; count: number }>;
+  };
   /** Credit lines (video mode and footer). */
   credits: string[];
   /** Geoid undulation at the origin (EGM2008, m): sea level as ellipsoid height. */
@@ -165,6 +177,15 @@ export const REGIONS: Record<string, Region> = {
     look: "styled",
     style: "poland",
     effects: { tiltShift: true },
+    life: {
+      vehicles: "detailed",
+      // the salt mine's coach parks by Szyb Daniłowicza, the rows as parked on the 2025 orthophoto
+      coaches: [
+        { name: "parking autokarowy, ul. Daniłowicza", at: [49.98425, 20.054817], heading: 0.8, row: 76, count: 7, step: 4.3 },
+        { name: "Parking 1 Wieliczka", at: [49.98483, 20.053309], heading: 138.3, row: 180.8, count: 4, step: 6 },
+      ],
+      pigeons: [{ name: "Rynek Górny", at: [49.982359, 20.060181], r: 18, count: 26 }], // the paved square, 54 × 52 m
+    },
     // gmina Wieliczka (OSM relation 2662713, admin_level 7: the town and its villages) and Kraków (449696,
     // north of the A4), cut further by the areas: the town (relation 2751961) and the A4 stay clear of the
     // faded edge, the villages and Kraków's edge around them fade out
