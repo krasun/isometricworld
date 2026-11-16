@@ -445,14 +445,29 @@ async function exportBorders(heights: Heights) {
  * the grids. A road's height is the ground under it, not the lowest surface nearby (that is the track bed
  * next to a cutting or below an embankment).
  */
-/** bridge deck end heights (OSM way id -> [start, end]) that ground.ts computed for these areas (bridges.ts bridgeEnds) */
+/**
+ * Bridge deck end heights (OSM way id -> [start, end]) that ground.ts computed per area (bridges.ts bridgeEnds).
+ * Areas overlap and each solves only the roads it fetched, so near its border an area gets a bridge wrong
+ * (cut-off joints, terrain off its grid): take each way from the area it lies deepest inside, which is also
+ * the area whose render the map shows there (export picks tiles the same way).
+ */
 function bridgeEndsOf(areas: string[]) {
-  const m = new Map<number, [number, number]>();
-  for (const a of areas) {
+  const per = areas.map((a) => {
     const f = join(DERIVED, a, "ground", "bridge-ends.json");
-    if (existsSync(f)) for (const [id, e] of Object.entries(readJson(f))) m.set(Number(id), e as [number, number]);
-  }
-  return m;
+    return { bbox: AREAS[a].bbox, ends: existsSync(f) ? (readJson(f) as Record<string, [number, number]>) : {} };
+  });
+  const depth = ([s, w, n, e]: number[], g: Array<{ lat: number; lon: number }>) =>
+    Math.min(...g.map((p) => Math.min((p.lat - s) * 111e3, (n - p.lat) * 111e3, (p.lon - w) * 73e3, (e - p.lon) * 73e3)));
+  return (id: number, g: Array<{ lat: number; lon: number }>) => {
+    let best: [number, number] | undefined, bd = -Infinity;
+    for (const a of per) {
+      const v = a.ends[id];
+      if (!v) continue;
+      const d = depth(a.bbox, g);
+      if (d > bd) { bd = d; best = v; }
+    }
+    return best;
+  };
 }
 
 function terrainSampler(areas: string[]) {
@@ -516,7 +531,7 @@ async function exportRoads(areas: string[], heights: Heights) {
       const width = roadWidth(t);
       // bridges: on the deck the render builds (bridges.ts), from the whole way's ends, by arc length
       const line: Array<[number, number]> = el.geometry.map((p: any) => { const e = ecefToEnu(llhToEcef(p.lat, p.lon, 0)); return [e[0], e[1]]; });
-      const deck = isBridge(t) ? deckHeight(line, terrainU, ends.get(el.id)) : null;
+      const deck = isBridge(t) ? deckHeight(line, terrainU, ends(el.id, el.geometry)) : null;
       let start = 0;
       for (let end = 1; end < el.nodes.length; end++) {
         if (end < el.nodes.length - 1 && (use.get(el.nodes[end]) ?? 0) < 2) continue;
@@ -545,7 +560,18 @@ async function exportRoads(areas: string[], heights: Heights) {
       }
     }
   }
-  occluded += hideUnderBridges(ways);
+  // rail bridges cover the roads under them too (a street through an underpass below the tracks)
+  const covers: Array<{ y: number; w: number; a: number; b: number; s: number[] }> = [];
+  for (const a of areas) {
+    const f = join(RAW, a, "rails.json");
+    if (!existsSync(f)) continue;
+    for (const el of readJson(f).elements) {
+      const t = el.tags ?? {};
+      if (!isBridge(t) || !t.railway || !(el.geometry?.length >= 2)) continue;
+      covers.push({ y: Number(t.layer) || 1, w: 5, a: -1, b: -1, s: el.geometry.flatMap((q: any) => [...latLonEnu(q.lat, q.lon), 0, 1]) });
+    }
+  }
+  occluded += hideUnderBridges(ways, covers);
   // nothing drives or walks in the faded margin outside the painted map
   for (const w of ways) for (let k = 0; k < w.s.length; k += 4) {
     if (!w.s[k + 3]) continue;
@@ -656,7 +682,7 @@ async function exportTrains(areas: string[], heights: Heights) {
     if (index.has(id)) continue;
     const w = ways.get(id), t = w.tags ?? {}, line = lineOf(w);
     const tunnel = /^(yes|building_passage|covered)$/.test(t.tunnel ?? "") || t.covered === "yes";
-    const deck = isBridge(t) ? deckHeight(line, terrainU, ends.get(id)) : null;
+    const deck = isBridge(t) ? deckHeight(line, terrainU, ends(id, w.geometry)) : null;
     const g = w.geometry, samples: number[] = [];
     let cum = 0;
     for (let i = 0; i < g.length - 1; i++) {
@@ -758,13 +784,13 @@ function encodeRoads(ways: Array<{ c: number; o: number; l: number; w: number; a
 }
 
 /**
- * Vehicles on a road passing under a bridge (a road on a higher layer) must disappear beneath its
+ * Vehicles on a road passing under a bridge (a road or, in `covers`, a railway on a higher layer) must disappear beneath its
  * deck: mark those samples hidden. Returns how many samples were hidden.
  */
-function hideUnderBridges(ways: Array<{ y: number; w: number; a: number; b: number; s: number[] }>) {
+function hideUnderBridges(ways: Array<{ y: number; w: number; a: number; b: number; s: number[] }>, covers: typeof ways = []) {
   type Seg = [number, number, number, number, number, number, number, number]; // a, b, half width, layer, way ends
   const CELL = 20, grid = new Map<string, Seg[]>();
-  for (const w of ways) {
+  for (const w of [...ways, ...covers]) {
     if (w.y <= 0) continue;
     for (let k = 0; k + 4 < w.s.length; k += 4) {
       const seg: Seg = [w.s[k], w.s[k + 1], w.s[k + 4], w.s[k + 5], w.w / 2 + 1.5, w.y, w.a, w.b];

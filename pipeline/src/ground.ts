@@ -13,7 +13,7 @@
  *         data/derived/<area>/ground/features.json drawable features in ENU (see Feature)
  */
 import { bridgeEnds, isBridge, type GraphWay } from "./bridges.ts";
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
 import { openArea } from "./areas.ts";
@@ -370,12 +370,20 @@ for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
 writeFileSync(join(out, "height.bin"), Buffer.from(h.buffer));
 writeFileSync(join(out, "meta.json"), JSON.stringify({ ...grid, step: STEP }));
 // bridge decks: heights at both ends, joints between bridge ways interpolated (bridges.ts)
+// off the grid: unknown (clamping to the edge gave decks the height of a hillside kilometres away)
 const sample = (x: number, y: number) => {
-  const fx = Math.min(grid.nx - 1.001, Math.max(0, (x - grid.x0) / STEP)), fy = Math.min(grid.ny - 1.001, Math.max(0, (y - grid.y0) / STEP));
+  const fx = (x - grid.x0) / STEP, fy = (y - grid.y0) / STEP;
+  if (fx < 0 || fy < 0 || fx > grid.nx - 1.001 || fy > grid.ny - 1.001) return null;
   const ix = Math.floor(fx), iy = Math.floor(fy), ax = fx - ix, ay = fy - iy, i = iy * grid.nx + ix;
   return (h[i] * (1 - ax) + h[i + 1] * ax) * (1 - ay) + (h[i + grid.nx] * (1 - ax) + h[i + grid.nx + 1] * ax) * ay;
 };
-const ends = bridgeEnds(graph, sample);
+// tunnel ends (ground.json has no tunnels; the raw roads/rails files do): decks running into a tunnel
+const portals = new Set<number>();
+for (const f of ["roads.json", "rails.json"]) {
+  if (!existsSync(join(RAW, name, f))) continue;
+  for (const e of readJson(join(RAW, name, f)).elements) if (e.tags?.tunnel === "yes" && e.nodes?.length) portals.add(e.nodes[0]).add(e.nodes.at(-1));
+}
+const ends = bridgeEnds(graph, sample, portals);
 for (const [id, e] of ends) { const f = deckFeatures.get(id); if (f) f.e = e; }
 writeFileSync(join(out, "bridge-ends.json"), JSON.stringify(Object.fromEntries(ends)));
 writeFileSync(join(out, "features.json"), JSON.stringify(features));

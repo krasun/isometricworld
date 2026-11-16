@@ -501,10 +501,7 @@ for (const ac of arcades) {
 if (region.sources === "lgl") {
   const ways = ["roads.json", "rails.json", "ground.json"].filter((f) => existsSync(join(raw, f)))
     .flatMap((f) => readJson(join(raw, f)).elements.filter((e: any) => e.type === "way"));
-  const groups = groupEnds(tunnelEnds(ways, (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }));
-  for (const g of groups) meshes.push(...portal(g, groundAt).map(fromPiece));
-  console.log(`  tunnel portals: ${groups.length}`);
-  // named bridges (bridgemodels.ts) on their OSM outline
+  // bridge decks: floor of the tunnel portals they run into, and the deck of the named bridge models
   const ends = existsSync(join(DERIVED, name, "ground", "bridge-ends.json")) ? readJson(join(DERIVED, name, "ground", "bridge-ends.json")) : {};
   const bridgeWays: Array<{ l: P2[]; dh: ReturnType<typeof deckHeight> }> = [];
   for (const e of ways) {
@@ -513,8 +510,8 @@ if (region.sources === "lgl") {
     const l = e.geometry.map((q: any) => { const p = toEnu(q.lon, q.lat); return [p[0], p[1]] as P2; });
     bridgeWays.push({ l, dh: deckHeight(l, groundAt, ends[e.id]) });
   }
-  const deckAt = (p: P2) => {
-    let best = 12, z: number | null = null;
+  const deckAt = (p: P2, within = 12) => {
+    let best = within, z: number | null = null;
     for (const { l, dh } of bridgeWays) for (let i = 1; i < l.length; i++) {
       const a = l[i - 1], b = l[i], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
       const f = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2)), dist = Math.hypot(p[0] - a[0] - f * dx, p[1] - a[1] - f * dy);
@@ -522,6 +519,11 @@ if (region.sources === "lgl") {
     }
     return z;
   };
+  // tunnel portals (portals.ts); a road coming in on a bridge has the deck as its floor
+  const groups = groupEnds(tunnelEnds(ways, (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }));
+  for (const g of groups) meshes.push(...portal(g, groundAt, (x, y) => deckAt([x, y], 6) ?? groundAt(x, y)).map(fromPiece));
+  console.log(`  tunnel portals: ${groups.length}`);
+  // named bridges (bridgemodels.ts) on their OSM outline
   for (const e of ways) {
     const model = BRIDGES[e.tags?.wikidata ?? ""];
     if (!model || e.tags.man_made !== "bridge" || !(e.geometry?.length >= 4)) continue;

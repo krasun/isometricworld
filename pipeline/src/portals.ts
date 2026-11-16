@@ -67,9 +67,10 @@ export function groupEnds(ends: End[]): End[][] {
  * One portal: a 1 m concrete headwall across the approach at the tunnel mouth, an opening per tube
  * (overlapping openings merge) with a dark void just inside, a lintel over each, and wing walls as high as
  * the ground beside the approach, down to road level. Named tunnels get their own look (see below).
- * `ground(x, y)` is the terrain height.
+ * `ground(x, y)` is the terrain height; `floor(x, y)` the approach surface (a bridge deck where the road comes in
+ * on one, else the terrain).
  */
-export function portal(group: End[], ground: (x: number, y: number) => number): Piece[] {
+export function portal(group: End[], ground: (x: number, y: number) => number, floor = ground): Piece[] {
   let dx = 0, dy = 0;
   for (const e of group) { dx += e.d[0]; dy += e.d[1]; }
   const dl = Math.hypot(dx, dy) || 1, d: P2 = [dx / dl, dy / dl], v: P2 = [-d[1], d[0]];
@@ -83,8 +84,8 @@ export function portal(group: End[], ground: (x: number, y: number) => number): 
   for (const s of spans) { const last = open.at(-1); if (last && s[0] <= last[1] + 1) last[1] = Math.max(last[1], s[1]); else open.push([...s]); }
   const H = Math.max(...group.map((e) => e.h));
   const at0 = (a: number, b: number): P2 => [o[0] + d[0] * a + v[0] * b, o[1] + d[1] * a + v[1] * b];
-  // the approach is the floor: lowest ground 2–4 m in front of the openings
-  const base = Math.min(...open.flatMap(([b0, b1]) => [b0, (b0 + b1) / 2, b1].flatMap((b) => [2, 4].map((a) => ground(...at0(-a, b))))));
+  // the approach is the floor: lowest ground (or deck) 2–4 m in front of the openings
+  const base = Math.min(...open.flatMap(([b0, b1]) => [b0, (b0 + b1) / 2, b1].flatMap((b) => [2, 4].map((a) => floor(...at0(-a, b))))));
   // the wall reaches the terrain behind it (the tunnel lid), at least 1.2 m above the openings; no rise
   // behind (an underpass under an embankment or a bridge) gets no portal
   const behind = open.flatMap(([b0, b1]) => [b0, (b0 + b1) / 2, b1].flatMap((b) => [6, 8, 10].map((a) => ground(...at0(a, b))))).sort((x, y) => x - y);
