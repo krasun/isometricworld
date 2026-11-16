@@ -49,7 +49,7 @@ const MARGIN = 16; // neighbour pixels used when building each zoomed-out tile
 /** Soft map edge: tiles fade out toward the areas' true outline instead of ending in tile steps.
  *  Fully transparent within EDGE0 of the outline (half a render tile's diagonal: the staircase
  *  never shows), fully opaque from EDGE1 in. */
-const EDGE0 = 760, EDGE1 = EDGE0 + 1800;
+let EDGE0 = 760, EDGE1 = EDGE0 + 1800;
 let outlines: Array<Array<[number, number]>> = [];
 /** the region's own shape (outline.ts), if it has one: the edge follows it inside the areas */
 let shape: Array<Array<[number, number]>> | null = null;
@@ -941,6 +941,11 @@ async function main() {
   console.log(`  ${activeRegion()}: ${from ? `changes since ${from === pendingFile() ? "the last (unpublished) export" : "the published state"}` : "no published state: building everything"}`);
   outlines = areas.map((a) => areaPolygon(AREAS[a].bbox));
   buildUnionEdges();
+  // a small area (a test patch) would never reach full opacity: shrink the fade so EDGE1 is at most
+  // 60% of the way from the edge to the area's centre. City-sized areas keep the full fade.
+  const inradius = Math.max(...outlines.map((o) => insideDistance([o.reduce((t, p) => t + p[0], 0) / o.length, o.reduce((t, p) => t + p[1], 0) / o.length], o)));
+  const fade = Math.min(1, (0.6 * inradius) / EDGE1);
+  EDGE0 *= fade; EDGE1 *= fade;
   shape = outlinePixels();
   // areas overlap: each tile from the area it lies deepest inside (its scene has the most context around it)
   const depth = new Map<string, number>();
