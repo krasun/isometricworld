@@ -760,7 +760,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
   for (const [style, roofKind, roof, wall, footprint, , seed, osmRoof, osmWall, bare] of data.m ?? []) {
     const j = (seed % 97) / 97 - 0.5; // per-building tint
-    const walls = WALL_BY_STYLE[style] ?? WALLS_STR, w = (osmWall ?? walls[seed % walls.length]).map((v) => Math.min(1, v * (1 + 0.04 * j)));
+    const walls = STYLE.walls?.[style] ?? WALL_BY_STYLE[style] ?? WALLS_STR, w = (osmWall ?? walls[seed % walls.length]).map((v) => Math.min(1, v * (1 + 0.04 * j)));
     // OSM roof:colour / roof:material where mapped (scene.ts), else the palette by roof kind
     const tileRoof = (osmRoof ?? ROOFS_STR[Math.floor(roofKind / 10)]).map((v) => v * (1 + 0.14 * j));
     const flatRoof = (osmRoof && roofKind % 10 !== 6 ? osmRoof : ROOFS_STR[roofKind % 10]).map((v) => v * (1 + 0.08 * j));
