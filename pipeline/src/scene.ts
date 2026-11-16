@@ -565,7 +565,7 @@ for (const b of buildings) {
 const c2 = (v: number) => Math.round(v * 100) / 100;
 // 3b. Tall towers from OSM: replace the LoD2 mesh with the tower's building:parts (or its outline), extruded
 // from min_height to height; colours straight from the part's tags.
-type Mesh = (typeof meshes)[number] & { look?: { roof: number[] | null; wall: number[] | null; style: number } };
+type Mesh = (typeof meshes)[number] & { look?: { roof: number[] | null; wall: number[] | null; style: number | null; bare?: boolean | 1 | 2 | 3 } };
 function prism(ring: P2[], base: number, min: number, h: number, look: Mesh["look"]): Mesh {
   const c = centre(ring), roof: number[] = [], wall: number[] = [];
   let along = 0;
@@ -677,13 +677,82 @@ for (const { rings, structure, t } of structures) {
   dropCrowns((p) => rings.outer.some((r) => inside(p, r)));
   console.log(`  structure ${t.name ?? t.man_made}: model`);
 }
+/**
+ * Cut the solid LoD2 block within r m of c (a headframe's stand-in) off the building at the height of the roofs
+ * around it, and cap the stump level there: roof triangles wholly inside go, walls wholly inside are cut at that
+ * height (keeping what is below). The roofs around: the inner corners of roof triangles that reach into the circle.
+ */
+function cutBlock(c: P2, r: number): { mesh: Mesh; cap: number } | null {
+  const near = (b: number[], i: number) => Math.hypot(b[i] - c[0], b[i + 1] - c[1]) < r;
+  let mesh: Mesh | null = null, top = -Infinity;
+  for (const b of meshes as Mesh[]) for (let i = 0; i < b.roof.length; i += 9)
+    if (near(b.roof, i) && near(b.roof, i + 3) && near(b.roof, i + 6)) {
+      const z = Math.max(b.roof[i + 2], b.roof[i + 5], b.roof[i + 8]);
+      if (z > top) { top = z; mesh = b; }
+    }
+  if (!mesh) return null;
+  const b = mesh;
+  let foot = -Infinity;
+  for (let i = 0; i < b.roof.length; i += 9) {
+    const ins = [0, 3, 6].filter((k) => near(b.roof, i + k));
+    if (ins.length && ins.length < 3) for (const k of ins) foot = Math.max(foot, b.roof[i + k + 2]);
+  }
+  if (!Number.isFinite(foot)) { // a block standing on its own: its lowest wall
+    foot = Infinity;
+    for (let i = 0; i < b.wall.length; i += 5) if (near(b.wall, i)) foot = Math.min(foot, b.wall[i + 2]);
+  }
+  const cap = foot + 0.1, roof: number[] = [], wall: number[] = [], rim: P2[] = [];
+  for (let i = 0; i < b.roof.length; i += 9) {
+    const t = b.roof.slice(i, i + 9);
+    if (!(near(t, 0) && near(t, 3) && near(t, 6)) || Math.min(t[2], t[5], t[8]) < cap) roof.push(...t);
+  }
+  for (let i = 0; i + 14 < b.wall.length; i += 15) {
+    const tr = [0, 1, 2].map((k) => b.wall.slice(i + k * 5, i + k * 5 + 5));
+    if (!tr.every((v) => Math.hypot(v[0] - c[0], v[1] - c[1]) < r)) { for (const v of tr) wall.push(...v); continue; }
+    // the part below the cap (Sutherland–Hodgman on z), fan-triangulated
+    const lo: number[][] = [];
+    for (let k = 0; k < 3; k++) {
+      const p = tr[k], q = tr[(k + 1) % 3], fp = p[2] - cap, fq = q[2] - cap;
+      if (fp <= 0) lo.push(p);
+      if ((fp < 0 && fq > 0) || (fp > 0 && fq < 0)) { const f = fp / (fp - fq), x = p.map((v, j) => v + (q[j] - v) * f); lo.push(x); rim.push([x[0], x[1]]); }
+      else if (fp === 0) rim.push([p[0], p[1]]);
+    }
+    for (let k = 1; k + 1 < lo.length; k++) for (const v of [lo[0], lo[k], lo[k + 1]]) wall.push(...v);
+  }
+  // the cap: the convex hull of where the walls were cut, level
+  const hull = convexHull(rim);
+  for (let k = 1; k + 1 < hull.length; k++) for (const q of [hull[0], hull[k], hull[k + 1]]) roof.push(q[0], q[1], cap);
+  b.roof.splice(0, b.roof.length, ...roof);
+  b.wall.splice(0, b.wall.length, ...wall);
+  let h = 0;
+  for (let i = 2; i < b.roof.length; i += 3) h = Math.max(h, b.roof[i] - b.base);
+  b.height = h;
+  return { mesh: b, cap };
+}
+/** Convex hull, counter-clockwise (monotone chain). */
+function convexHull(pts: P2[]): P2[] {
+  const p = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (p.length < 3) return p;
+  const turn = (o: P2, a: P2, b: P2) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: P2[] = [], upper: P2[] = [];
+  for (const q of p) { while (lower.length >= 2 && turn(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop(); lower.push(q); }
+  for (const q of [...p].reverse()) { while (upper.length >= 2 && turn(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop(); upper.push(q); }
+  return [...lower.slice(0, -1), ...upper.slice(0, -1)];
+}
 for (const pl of PLACED) {
   const [la, lo] = pl.at;
   if (la < bbox[0] - 0.002 || la > bbox[2] + 0.002 || lo < bbox[1] - 0.002 || lo > bbox[3] + 0.002) continue;
   const e = toEnu(lo, la), c: P2 = [e[0], e[1]];
-  meshes.push(...pl.model(c, groundAt(...c)).map(fromPiece));
+  let base = groundAt(...c), ground = base, note = "model";
+  if (pl.cut) {
+    const hit = cutBlock(c, pl.cut);
+    if (!hit) { console.log(`  landmark ${pl.name}: no LoD2 block within ${pl.cut} m, skipped`); continue; }
+    base = hit.cap; ground = hit.mesh.base; note = `LoD2 block cut at ${(hit.cap - ground).toFixed(1)} m -> model`;
+    if (pl.walls) hit.mesh.look = { ...lookAt(centre(hit.mesh.footprint)), wall: pl.walls };
+  }
+  meshes.push(...pl.model(c, base, ground).map(fromPiece));
   dropCrowns((p) => Math.hypot(p[0] - c[0], p[1] - c[1]) < pl.clear);
-  console.log(`  landmark ${pl.name}: model`);
+  console.log(`  landmark ${pl.name}: ${note}`);
 }
 for (const b of meshes as Mesh[]) {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;

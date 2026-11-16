@@ -90,6 +90,16 @@ export const STRUCTURES: Structure[] = [
   // the wall itself, mapped as a building (an attraction's fenced grounds carry the tag too, without building)
   { ql: `["man_made"="graduation_tower"]["building"]`, match: (t) => t.man_made === "graduation_tower" && !!t.building, model: graduationTower },
 ];
-/** Models at a measured point (lat, lon), for parts OSM does not map on their own; tree crowns within `clear` m go. */
-export type Placed = { name: string; at: [number, number]; clear: number; model: (c: P2, base: number) => Piece[] };
+/**
+ * Models at a measured point (lat, lon), for parts OSM does not map on their own; tree crowns within `clear` m go.
+ * The model stands on `base` (the ground there); `ground` is the ground level too, or with `cut` the building's.
+ *
+ * `cut` replaces a solid LoD2 block (a headframe's stand-in): the LoD2 walls and roofs within `cut` m of the point
+ * that rise above the roofs around them are cut off and capped level there, and the model stands on the cap;
+ * `walls` recolours that building's plaster, when OSM's outline of it does not cover the LoD2 building (LOOKS).
+ */
+export type Placed = {
+  name: string; at: [number, number]; clear: number; cut?: number; walls?: number[];
+  model: (c: P2, base: number, ground: number) => Piece[];
+};
 export const PLACED: Placed[] = [...wieliczka.PLACED];
