@@ -749,10 +749,13 @@ for (const pl of PLACED) {
     if (!hit) { console.log(`  landmark ${pl.name}: no LoD2 block within ${pl.cut} m, skipped`); continue; }
     base = hit.cap; ground = hit.mesh.base; note = `LoD2 block cut at ${(hit.cap - ground).toFixed(1)} m -> model`;
     under = hit.mesh;
-  } else if (pl.building) under = (meshes as Mesh[]).find((m) => inside(c, m.footprint));
+  } else if (pl.building) {
+    under = (meshes as Mesh[]).find((m) => inside(c, m.footprint));
+    if (under) ground = under.base;
+  }
   if (under && pl.building) {
     const look = lookAt(centre(under.footprint));
-    under.look = { ...look, wall: pl.building.wall ?? look.wall, roof: pl.building.roof ?? look.roof };
+    under.look = { ...look, wall: pl.building.wall ?? look.wall, roof: pl.building.roof ?? look.roof, style: pl.building.style ?? look.style };
   }
   meshes.push(...pl.model(c, base, ground).map(fromPiece));
   dropCrowns((p) => Math.hypot(p[0] - c[0], p[1] - c[1]) < pl.clear);

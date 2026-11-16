@@ -25,12 +25,13 @@ export function quad(p: Piece, v: Array<[number, number, number, number, number]
   for (const k of [0, 1, 2, 0, 2, 3]) p.wall.push(...v[k]);
 }
 
-/** surface of revolution around c: rings [z, r] from bottom to top, n sides, heights above `base` */
-export function lathe(p: Piece, c: P2, rings: Array<[number, number]>, n: number) {
+/** surface of revolution around c: rings [z, r] from bottom to top, n sides (the first corner `turn` radians
+ *  counter-clockwise from east), heights above `base` */
+export function lathe(p: Piece, c: P2, rings: Array<[number, number]>, n: number, turn = 0) {
   for (let k = 0; k + 1 < rings.length; k++) {
     const [z0, r0] = rings[k], [z1, r1] = rings[k + 1];
     for (let i = 0; i < n; i++) {
-      const a0 = (i / n) * 2 * Math.PI, a1 = ((i + 1) / n) * 2 * Math.PI;
+      const a0 = turn + (i / n) * 2 * Math.PI, a1 = turn + ((i + 1) / n) * 2 * Math.PI;
       const at = (a: number, r: number, z: number, s: number): [number, number, number, number, number] =>
         [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a), p.base + z, s, z];
       quad(p, [at(a0, r0, z0, a0 * r0), at(a1, r0, z0, a1 * r0), at(a1, r1, z1, a1 * r1), at(a0, r1, z1, a0 * r1)]);

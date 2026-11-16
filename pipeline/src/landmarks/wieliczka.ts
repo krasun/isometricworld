@@ -229,6 +229,70 @@ function kosciuszkoSilos(c: P2, base: number): Piece[] {
   return out;
 }
 
+const LARCH_BOARDS = [0.82, 0.58, 0.36], SHINGLE = [0.36, 0.31, 0.28], PATINA = [0.34, 0.47, 0.42], PATINA_DARK = [0.27, 0.37, 0.34], GILT = [0.80, 0.66, 0.30];
+
+/**
+ * The turret (sygnaturka) on the nave ridge of St Sebastian's, a larch church of 1581–98: a square base and a
+ * bell-shaped cap in green patinated copper, an open lantern on four posts, an onion cupola, a gilt ball and a
+ * cross. Not in LoD2; its place and height from NMPT − NMT (a 20.1 m peak on the ridge, which is at ≈ 13 m
+ * there), the shape from a photo. On the nave's axis (76°); heights above the ground at the point.
+ */
+function sebastianTurret(c: P2, base: number): Piece[] {
+  const turn = ((90 - 76 + 45) * Math.PI) / 180, R = (h: number) => h * Math.SQRT2; // square on the axis: corner radius
+  const body = piece(c, base, 1.7, 20.1, { roof: PATINA, wall: PATINA_DARK, style: CLAD, bare: 1 });
+  // the base from inside the roof, then the bell-shaped cap, closed at the lantern's floor
+  lathe(body, c, [[10.5, R(1.15)], [15.0, R(1.15)], [15.4, R(1.05)], [16.1, R(0.8)], [16.7, R(0.62)], [16.75, 0.01]], 4, turn);
+  lathe(body, c, [[17.95, R(0.75)], [18.15, R(0.75)], [18.15, R(0.5)]], 4, turn); // the lantern's cornice
+  const posts = piece(c, base, 0.8, 18.0, { roof: PATINA, wall: PATINA, style: CLAD, bare: 1 });
+  const at = frame(c, 76);
+  for (const [u, v] of [[-0.55, -0.55], [0.55, -0.55], [0.55, 0.55], [-0.55, 0.55]]) { const q = at(u, v); beam(posts, [q[0], q[1], 16.6], [q[0], q[1], 18.0], 0.16); }
+  const onion = piece(c, base, 0.9, 19.6, { roof: PATINA, wall: PATINA, style: CLAD, bare: 1 });
+  lathe(onion, c, [[18.15, 0.45], [18.45, 0.8], [18.85, 0.7], [19.25, 0.3], [19.55, 0.08]], 10);
+  const gilt = piece(c, base, 0.3, 20.1, { roof: GILT, wall: GILT, style: CLAD, bare: 1 });
+  lathe(gilt, c, [[19.55, 0.05], [19.62, 0.17], [19.75, 0.2], [19.88, 0.17], [19.95, 0.05]], 8);
+  beam(gilt, [c[0], c[1], 19.95], [c[0], c[1], 20.9], 0.08);
+  const q0 = at(0, -0.3), q1 = at(0, 0.3);
+  beam(gilt, [q0[0], q0[1], 20.55], [q1[0], q1[1], 20.55], 0.07);
+  return [body, posts, onion, gilt];
+}
+
+const STONE = [0.84, 0.82, 0.78], BASZTA_ROOF = [0.60, 0.29, 0.21], TIMBER = [0.33, 0.22, 0.16];
+
+/**
+ * Baszta, the castle's 14th-century tower (8.0 × 6.8 m, eaves ≈ 17–18 m, a steep pyramid to 23.7 m in LoD2):
+ * on its LoD2 block, plain rubble stone without the window rows of the house style, a dark timber balcony and
+ * an outside stair to the door on the courtyard side (east-south-east), a ball and a weathervane on the apex.
+ * The balcony and stair from the photos; their heights above the ground at the tower's centre.
+ */
+function basztaDetails(c: P2, base: number, ground: number): Piece[] {
+  const at = frame(c, 23), face = 2.75; // u along the courtyard face (23°), v out of it (113°)
+  const wood = part([at(-2, face), at(2, face), at(2, face + 2), at(-2, face + 2)], base, 10.6, { roof: TIMBER, wall: TIMBER, style: CLAD, bare: 1 });
+  const deck: P2[] = [at(-0.4, face), at(2.8, face), at(2.8, face + 0.9), at(-0.4, face + 0.9)];
+  prism(wood, deck, 9.4, 9.6);
+  railing(wood, [deck[1], deck[2], deck[3], deck[0]], 9.6, 1.0);
+  // the stair: a flight along the face up to a landing at the door (4.7 m), on two timber posts
+  const land: P2[] = [at(-1.6, face), at(-0.4, face), at(-0.4, face + 1.2), at(-1.6, face + 1.2)];
+  prism(wood, land, 4.5, 4.7);
+  for (const q of [land[1], land[2]]) beam(wood, [q[0], q[1], 0], [q[0], q[1], 4.5], 0.2);
+  const f0 = at(-6.0, face + 0.1), f1 = at(-6.0, face + 1.1), f2 = at(-1.6, face + 1.1), f3 = at(-1.6, face + 0.1);
+  roofFace(wood, [[f0[0], f0[1], 0.1], [f1[0], f1[1], 0.1], [f2[0], f2[1], 4.7], [f3[0], f3[1], 4.7]]);
+  beam(wood, [f1[0], f1[1], 1.0], [f2[0], f2[1], 5.6], 0.12); // handrail
+  // ball and weathervane on the apex
+  const top = part([at(-0.5, -0.5), at(0.5, -0.5), at(0.5, 0.5), at(-0.5, 0.5)], base, 25.6, { roof: PATINA, wall: PATINA, style: CLAD, bare: 1 });
+  const apex = at(-0.32, -0.08), az = 23.7 - (base - ground); // LoD2: 23.7 m over its base, 0.2 m W, 0.26 m S of the centre
+  lathe(top, apex, [[az + 0.55, 0.05], [az + 0.65, 0.25], [az + 0.85, 0.3], [az + 1.05, 0.25], [az + 1.15, 0.05]], 8);
+  beam(top, [apex[0], apex[1], az + 1.15], [apex[0], apex[1], az + 2.4], 0.07);
+  panel(top, [apex, at(0.38, -0.08)], az + 1.9, az + 2.3, false);
+  return [wood, top];
+}
+
+/** Named buildings whose OSM tags give no look (merged over their tags, scene.ts): the salt works castle. */
+export const LOOKS: Record<string, Record<string, string>> = {
+  // pale butter-yellow plaster, red tiles (the orthophoto's roofing class)
+  "Zamek Żupny": { "building:colour": "yellow" },
+  "Zamek Południowy": { "building:colour": "yellow" },
+};
+
 /** Models at a measured point, for parts OSM does not map on their own. */
 export const PLACED: Placed[] = [
   // centre of the round part of the graduation tower's OSM outline (a circle fitted to its outer and inner arcs,
@@ -240,6 +304,10 @@ export const PLACED: Placed[] = [
   { name: "Szyb Kinga", at: [49.983251, 20.051488], clear: 4, cut: 4.4, building: { wall: OCHRE }, model: kingaHeadframe },
   // not in LoD2: the centre of the NMPT − NMT area above 18 m
   { name: "Szyb Kościuszko", at: [49.982752, 20.045126], clear: 6, building: { roof: HALL_ROOF }, model: kosciuszkoHeadframe },
+  // the tower's LoD2 footprint centre; its stone without window rows
+  { name: "Baszta (Zamek Żupny)", at: [49.984007, 20.058908], clear: 3, building: { wall: STONE, roof: BASZTA_ROOF, style: CLAD }, model: basztaDetails },
+  // the turret: the NMPT − NMT peak on the nave ridge; the church's honey larch boards and dark shingles
+  { name: "Kościół św. Sebastiana: sygnaturka", at: [49.978003, 20.066010], clear: 3, building: { wall: LARCH_BOARDS, roof: SHINGLE, style: CLAD }, model: sebastianTurret },
   // the silos on the orthophoto, offsets from here
   { name: "Szyb Kościuszko: silosy", at: [49.982735, 20.045266], clear: 5.5, model: kosciuszkoSilos },
 ];

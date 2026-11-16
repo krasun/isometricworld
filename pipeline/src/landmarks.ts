@@ -74,7 +74,7 @@ export function arcade(b: { wall: number[]; base: number; footprint: P2[]; heigh
 }
 
 /** Looks for named landmarks whose OSM tags are missing or off: merged over the building's OSM tags (scene.ts). */
-export const LOOKS: Record<string, Record<string, string>> = { ...stuttgart.LOOKS };
+export const LOOKS: Record<string, Record<string, string>> = { ...stuttgart.LOOKS, ...wieliczka.LOOKS };
 /** Colonnades carved into LoD2 blocks (arcade). */
 export const ARCADES: Record<string, Arcade> = { ...stuttgart.ARCADES };
 /** Towers and monuments replaced as a whole: model at the centre of the OSM outline, standing on `base`. */
@@ -92,15 +92,17 @@ export const STRUCTURES: Structure[] = [
 ];
 /**
  * Models at a measured point (lat, lon), for parts OSM does not map on their own; tree crowns within `clear` m go.
- * The model stands on `base` (the ground there); `ground` is the ground level too, or with `cut` the building's.
+ * The model stands on `base` (the ground there); `ground` is the same, or the LoD2 building's base (its lowest
+ * ground) with `cut` or `building`.
  *
  * `cut` replaces a solid LoD2 block (a headframe's stand-in): the LoD2 walls and roofs within `cut` m of the point
  * that rise above the roofs around them are cut off and capped level there, and the model stands on the cap.
- * `building` sets the wall and roof colour of that LoD2 building (without `cut`: the one under the point), where
- * OSM's outline does not cover it (LOOKS) or the orthophoto reads its roof wrong (the headframe's shadow on it).
+ * `building` sets the wall and roof colour (and façade style) of that LoD2 building (without `cut`: the one under
+ * the point), where OSM's outline does not cover it (LOOKS), the orthophoto reads its roof wrong (the headframe's
+ * shadow on it) or a colour must stay as strong as it is (OSM building:colour is lightened to the house style).
  */
 export type Placed = {
-  name: string; at: [number, number]; clear: number; cut?: number; building?: { wall?: number[]; roof?: number[] };
+  name: string; at: [number, number]; clear: number; cut?: number; building?: { wall?: number[]; roof?: number[]; style?: number };
   model: (c: P2, base: number, ground: number) => Piece[];
 };
 export const PLACED: Placed[] = [...wieliczka.PLACED];
