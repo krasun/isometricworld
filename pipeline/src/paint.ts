@@ -318,6 +318,8 @@ const LIMIT = /usage limit|rate.?limit|too many requests|\b429\b|quota/i;
 
 /** How long a limit message asks us to wait (ms); falls back to exponential backoff 5 → 60 min. */
 function limitWait(log: string) {
+  const resets = log.match(/resets_in_seconds\\?":\s*(\d+)/); // image tool: JSON error with the exact reset
+  if (resets) return Number(resets[1]) * 1000 + 60_000;
   const at = log.match(/try again at ([0-9]{1,2}:[0-9]{2}\s*(?:[AP]M)?)/i);
   if (at) {
     const [, t] = at, [h, m] = t.match(/\d+/g)!.map(Number), pm = /pm/i.test(t), am = /am/i.test(t);
@@ -759,9 +761,9 @@ async function main() {
     wins = wins.filter(([i, j]) => Math.abs(i - ci) <= r && Math.abs(j - cj) <= r);
   }
   if (args.window) wins = [args.window.split(",").map(Number) as [number, number]];
-  if (OLDER) { // only land windows (sea-texture windows have no trees) painted before the cut-off
+  if (OLDER) { // windows painted before the cut-off or not yet at all (skip sea-texture windows: no trees)
     const old: Array<[number, number]> = [];
-    for (const [i, j] of wins) if (existsSync(winFile(i, j)) && !current(i, j) && !(await looksLikeSea(winFile(i, j)))) old.push([i, j]);
+    for (const [i, j] of wins) if (!current(i, j) && !(existsSync(winFile(i, j)) && await looksLikeSea(winFile(i, j)))) old.push([i, j]);
     wins = old;
   }
   if (args.plan) return console.log(`${wins.length} windows`);
