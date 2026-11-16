@@ -38,9 +38,11 @@ const area = openArea(areaName);
 
 const COPERNICUS = "Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA";
 /** Sources of the render manifest, per region data source (places.ts `sources`). */
-export const ATTRIBUTIONS = REGIONS[area.region].sources === "lgl"
-  ? ["© OpenStreetMap contributors (ODbL)", "Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (LoD2, DGM1, nDOM1; verändert)", COPERNICUS]
-  : ["© OpenStreetMap contributors (ODbL)", "Tel Aviv-Yafo Municipality open data", COPERNICUS];
+const SOURCE: Record<string, string> = {
+  lgl: "Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (LoD2, DGM1, nDOM1; verändert)",
+  gugik: "Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK: modele 3D budynków LoD1/LoD2, BDOT10k, NMT, NMPT)",
+};
+export const ATTRIBUTIONS = ["© OpenStreetMap contributors (ODbL)", SOURCE[REGIONS[area.region].sources ?? ""] ?? "Tel Aviv-Yafo Municipality open data", COPERNICUS];
 
 const T = CAMERA.tile;
 

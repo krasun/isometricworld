@@ -41,9 +41,13 @@ export interface Region {
    * Where buildings, trees and terrain come from beyond OSM (data only; how they are drawn is `look`):
    *   "tlv"  Tel Aviv-Yafo municipal GIS (buildings + canopy), Copernicus GLO-30 terrain
    *   "lgl"  LGL Baden-Württemberg open data: LoD2 buildings, nDOM1 tree crowns, DGM1 terrain
+   *   "gugik" GUGiK (Poland) open data: LoD2 + LoD1 2024 buildings with their BDOT10k function, tree crowns
+   *          from NMPT − NMT, NMT terrain (gugik.ts; the powiats in `teryt`)
    *   unset  OSM buildings and trees, Copernicus GLO-30 terrain
    */
-  sources?: "tlv" | "lgl";
+  sources?: "tlv" | "lgl" | "gugik";
+  /** sources "gugik": TERYT codes of the powiats (counties) whose buildings the areas need, e.g. ["1219"]. */
+  teryt?: string[];
   /**
    * How the map is drawn:
    *   "painted"  (default) the render is only the input: every window is repainted by the image model (paint.ts)

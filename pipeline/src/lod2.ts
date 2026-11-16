@@ -60,6 +60,8 @@ export interface Lod2Source {
   dz?: number;
   /** building functions to skip (bridges, tunnels…) */
   skip?: (fn: string) => boolean;
+  /** LoD1 solids without surface types: the lowest flat face is the ground, the highest the roof, the rest walls */
+  lod1?: boolean;
 }
 
 const POLY = /<gml:Polygon[^>]*>([\s\S]*?)<\/gml:Polygon>/g;
@@ -115,6 +117,17 @@ export function parseLod2(xml: string, bbox: number[], geoid: number, source: Lo
         if (!rings.length || rings[0].length < 9) continue;
         surfaces.push({ kind: s[1], rings });
         if (s[1] === "GroundSurface") for (let i = 0; i < rings[0].length; i += 3) { se += rings[0][i]; sn += rings[0][i + 1]; cnt++; }
+      }
+    }
+    if (!surfaces.length && source.lod1) {
+      const solid = [...b.matchAll(POLY)].map((p) => ringsOf(p[1])).filter((r) => r.length && r[0].length >= 9);
+      const zs = solid.flatMap((r) => r[0].filter((_, i) => i % 3 === 2));
+      const lo = Math.min(...zs), hi = Math.max(...zs);
+      for (const rings of solid) {
+        const z = rings[0].filter((_, i) => i % 3 === 2), flat = z.every((v) => v === z[0]);
+        const kind = flat && z[0] === lo ? "GroundSurface" : flat && z[0] === hi ? "RoofSurface" : "WallSurface";
+        surfaces.push({ kind, rings });
+        if (kind === "GroundSurface") for (let i = 0; i < rings[0].length; i += 3) { se += rings[0][i]; sn += rings[0][i + 1]; cnt++; }
       }
     }
     if (!surfaces.length) continue;

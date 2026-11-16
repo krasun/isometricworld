@@ -24,11 +24,12 @@ import { ARCADES, arcade, LOOKS, type Piece, TOPS, TOWERS } from "./landmarks.ts
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
 import { deckHeight } from "./bridges.ts";
+import { fromPuwg, gugikBuildings, gugikNdom, toPuwg } from "./gugik.ts";
 import { lod2Files, rasterSampler } from "./lgl.ts";
 import { alkisKind, type Lod2Building, parseLod2 } from "./lod2.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
-import { fromUtm } from "./utm.ts";
+import { fromUtm, toUtm } from "./utm.ts";
 
 type P2 = [number, number];
 const T = CAMERA.tile;
@@ -177,6 +178,8 @@ const bbox = area.bbox;
 const region = REGIONS[area.region];
 /** Styled look (places.ts `look`): OSM looks and landmarks on the LoD2 meshes, tunnel portals, bridge models. */
 const STYLED = region.look === "styled";
+/** Buildings are LoD2 meshes and tree crowns come from a surface model (LGL, GUGiK), not from OSM. */
+const LOD2 = region.sources === "lgl" || region.sources === "gugik";
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height. */
 const GEOID = region.geoidM;
 const raw = join(RAW, name);
@@ -330,18 +333,26 @@ if (region.sources === "tlv" && existsSync(join(raw, "osm_parts.json")) && PARTS
   console.log(`  osm 3D: ${swapped.length} of ${cands.length} candidate buildings swapped (--parts ${PARTS_N})`);
 }
 
-// 1b. LGL LoD2 buildings (real roofs) and nDOM1 tree crowns.
-if (region.sources === "lgl") {
+// 1b. LoD2 buildings (real roofs) and tree crowns from a surface model: LGL (LoD2, nDOM1) or GUGiK
+// (LoD2 + LoD1 2024, NMPT − NMT).
+if (LOD2) {
   const m = 0.002; // buildings whose centre is just outside still reach into edge tiles
   const box = [bbox[0] - m, bbox[1] - m, bbox[2] + m, bbox[3] + m];
-  for (const f of lod2Files(box)) {
-    const bs = parseLod2(f.xml, box, GEOID);
-    meshes.push(...bs);
-    process.stdout.write(`\r  lod2: ${meshes.length} buildings (${f.name.split("/").pop()})        `);
+  let ndom: (x: number, y: number) => number, toXy = toUtm, fromXy = fromUtm;
+  if (region.sources === "lgl") {
+    for (const f of lod2Files(box)) {
+      const bs = parseLod2(f.xml, box, GEOID);
+      meshes.push(...bs);
+      process.stdout.write(`\r  lod2: ${meshes.length} buildings (${f.name.split("/").pop()})        `);
+    }
+    process.stdout.write("\n");
+    ndom = (await rasterSampler("ndom1", box)).px;
+  } else {
+    meshes.push(...gugikBuildings(region.teryt ?? [], box, GEOID));
+    ndom = gugikNdom(box);
+    toXy = toPuwg; fromXy = fromPuwg;
   }
-  process.stdout.write("\n");
-  const ndom = await rasterSampler("ndom1", box);
-  const cs = crowns(ndom.px, box, meshes.flatMap((b) => b.xy));
+  const cs = crowns(ndom, box, meshes.flatMap((b) => b.xy), toXy);
   // On rail land and building sites the surface model is mostly masts, trains, cranes and containers:
   // keep only crowns that are clearly trees there (wide and tall).
   const noTrees: Array<{ r: P2[]; b: number[] }> = [];
@@ -380,12 +391,12 @@ if (region.sources === "lgl") {
   const overWater = (p: P2) => over.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && r.filter((q) => inside(p, q)).length % 2 === 1);
   let masked = 0, bridged = 0;
   for (const c of cs) {
-    const [lat, lon] = fromUtm(c.e, c.n), p = toEnu(lon, lat);
+    const [lat, lon] = fromXy(c.e, c.n), p = toEnu(lon, lat);
     if (onDeck([p[0], p[1]]) || overWater([p[0], p[1]])) { bridged++; continue; }
     if ((c.r < 4 || c.h < 8) && noTrees.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && inside([p[0], p[1]], r))) { masked++; continue; }
     trees.push([p[0], p[1], c.r, Math.max(c.r * 0.6 + 1, c.h - c.r * 0.85)]);
   }
-  console.log(`  ndom1 tree crowns: ${cs.length - masked - bridged} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water)`);
+  console.log(`  ${region.sources === "lgl" ? "ndom1" : "nmpt − nmt"} tree crowns: ${cs.length - masked - bridged} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water)`);
 }
 
 // 2. OSM buildings where the municipal layer has nothing (Ramat Gan, Givatayim, Bnei Brak…).
@@ -411,13 +422,13 @@ const parts: Array<{ ring: P2[]; h: number; min: number; t: Record<string, strin
 const looks: Array<{ ring: P2[]; area: number; roof: number[] | null; style: number | null; wall: number[] | null; bare?: boolean }> = [];
 for (const el of osm.elements) {
   const t = { ...el.tags, ...(LOOKS[el.tags?.name] ?? {}) };
-  if (t.amenity === "fountain" && region.sources === "lgl") { // nDOM reads fountain sculptures as tree crowns
+  if (t.amenity === "fountain" && LOD2) { // nDOM reads fountain sculptures as tree crowns
     if (el.type === "node") { const q = toEnu(el.lon, el.lat); fountains.push({ at: [q[0], q[1]] }); }
     else if (el.type === "way" && el.geometry?.length >= 4) { const ring = ringFromLonLat(el.geometry.map((q: any) => [q.lon, q.lat])); if (ring) fountains.push({ ring }); }
     if (!t.building) continue;
   }
   if (el.type === "node" && t.natural === "tree") {
-    if (region.sources === "lgl") continue; // the nDOM crowns include them
+    if (LOD2) continue; // the surface model's crowns include them
     const p = toEnu(el.lon, el.lat); trees.push([p[0], p[1], 3, 6]); continue;
   }
   const monument = STYLED && !t.building && !t["building:part"] && el.type === "way" && (t.name ?? "") in TOWERS; // Jubiläumssäule
@@ -437,7 +448,7 @@ for (const el of osm.elements) {
     if (t["building:part"] && h) parts.push({ ring, h, min: parseFloat(t.min_height) || 0, t });
     looks.push({ ring, area: Math.abs(area2(ring)), roof: roofRgb(t), ...wallLook(t), bare: t.name in LOOKS }); // landmarks: no solar panels etc.
   }
-  if (region.sources === "lgl") continue; // the buildings are LoD2 meshes: OSM footprints only carry their looks
+  if (LOD2) continue; // the buildings are LoD2 meshes: OSM footprints only carry their looks
   const c: P2 = [ring.reduce((a, p) => a + p[0], 0) / ring.length, ring.reduce((a, p) => a + p[1], 0) / ring.length];
   if (covered(c)) continue;
   const levels = parseFloat(t["building:levels"]);

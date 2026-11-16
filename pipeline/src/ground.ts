@@ -19,6 +19,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { openArea } from "./areas.ts";
 import { ecefToEnu, enuToLlh, llhToEcef } from "./camera.ts";
+import { gugikTerrain } from "./gugik.ts";
 import { rasterSampler, toUtm } from "./lgl.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
@@ -37,8 +38,8 @@ export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
 const region = REGIONS[area.region];
-/** 1 m bare-earth terrain (LGL DGM1): a finer grid, no filtering, rivers at their surveyed level. */
-const DGM = region.sources === "lgl";
+/** 1 m bare-earth terrain (LGL DGM1, GUGiK NMT): a finer grid, no filtering, rivers at their surveyed level. */
+const DGM = region.sources === "lgl" || region.sources === "gugik";
 /** Styled look (places.ts `look`): meadows, vineyards, allotments and orchards drawn as their own kinds. */
 const STYLED = region.look === "styled";
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
@@ -319,18 +320,20 @@ async function loadDem() {
 }
 
 const dem = await loadDem();
-const dgm = DGM ? await rasterSampler("dgm1", tb) : null;
+/** 1 m bare earth at (lat, lon), NaN where it has no data */
+const bare = region.sources === "lgl" ? await rasterSampler("dgm1", tb).then((s) => (lat: number, lon: number) => s.at(...toUtm(lat, lon)))
+  : region.sources === "gugik" ? gugikTerrain(tb).atLatLon : null;
 const n = grid.nx * grid.ny;
 let h = new Float32Array(n);
 const fine = new Uint8Array(n); // 1: bare-earth DGM1 (no filtering needed)
 for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
   const x = grid.x0 + ix * STEP, y = grid.y0 + iy * STEP, i = iy * grid.nx + ix;
   const [lat, lon] = enuToLlh([x, y, 0]);
-  const v = dgm ? dgm.at(...toUtm(lat, lon)) : NaN;
+  const v = bare ? bare(lat, lon) : NaN;
   if (Number.isFinite(v)) { h[i] = v; fine[i] = 1; } else h[i] = dem(lat, lon);
 }
 const fineShare = fine.reduce((a, b) => a + b, 0) / n;
-if (DGM) console.log(`  terrain: DGM1 on ${(fineShare * 100).toFixed(1)}% of the grid, Copernicus elsewhere`);
+if (DGM) console.log(`  terrain: ${region.sources === "lgl" ? "DGM1" : "NMT"} on ${(fineShare * 100).toFixed(1)}% of the grid, Copernicus elsewhere`);
 /** Separable min / max / box filter with radius r grid cells. */
 function filter(a: Float32Array, r: number, op: "min" | "max" | "mean") {
   const pass = (src: Float32Array, horiz: boolean) => {

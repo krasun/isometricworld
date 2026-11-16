@@ -16,6 +16,8 @@
  * data/raw/dem/*.tif                     Copernicus GLO-30 elevation (1°×1° tiles, AWS open data)
  * data/raw/lgl/{dgm1,ndom1,lod2}/*.zip    LGL Baden-Württemberg terrain, surface heights, LoD2 buildings
  *                                        (regions with sources "lgl"; see lgl.ts)
+ * data/raw/gugik/                        GUGiK LoD2, LoD1 2024, BDOT10k (per powiat), NMT and NMPT sheets
+ *                                        (regions with sources "gugik"; see gugik.ts)
  *
  * The Tel Aviv-Yafo layers are fetched only for regions with sources "tlv".
  */
@@ -24,6 +26,7 @@ import { join } from "node:path";
 import { openArea } from "./areas.ts";
 import { LOOKS, TOWERS } from "./landmarks.ts";
 import { download } from "./lgl.ts";
+import { fetchGugik } from "./gugik.ts";
 import { FILTERS, downloadExtract, localOsm, type OsmFilter } from "./osmlocal.ts";
 import { overpass } from "./overpass.ts";
 import { RAW } from "./paths.ts";
@@ -76,7 +79,7 @@ const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
 const sources = REGIONS[area.region].sources;
 /** Buildings come from LoD2 and tree crowns from a surface model (data), not from OSM. */
-const LOD2 = sources === "lgl";
+const LOD2 = sources === "lgl" || sources === "gugik";
 /** Styled look (places.ts `look`): OSM roof/facade colours, tall towers and landmarks on top of the LoD2 meshes. */
 const STYLED = REGIONS[area.region].look === "styled";
 const extract = REGIONS[area.region].osmExtract;
@@ -100,6 +103,7 @@ if (sources === "lgl") {
   await download("ndom1", [s - m, w - m, n + m, e + m]);
   await download("dgm1", [s - g, w - g, n + g, e + g]);
 }
+if (sources === "gugik") await fetchGugik(REGIONS[area.region].teryt ?? [], area.bbox);
 if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;
   const b = `(${s},${w},${n},${e})`;
