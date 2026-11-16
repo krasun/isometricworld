@@ -252,6 +252,65 @@ class Ortho {
   }
 }
 
+/**
+ * Which surface-model crowns (canopy.ts, PUWG 1992 metres) the orthophoto shows as foliage. The surface model
+ * reads anything tall that LoD2 leaves out as a crown: fuel station canopies, shop entrance roofs, the edge of
+ * a hall. A crown stays if some disc of 0.6 × its radius, shifted by up to 1 m + 0.3 × its height (≤ 6 m: the
+ * photo leans tall things off their place), is ≥ 30 % green (excess green (2G − R − B) / (R + G + B) > 0.05).
+ * Per 1024 m chunk a green mask at 0.5 m with an integral image; a chunk where over half its crowns would go is
+ * taken for leaf-off imagery and kept whole. Crowns outside the downloaded chunks stay.
+ */
+export async function foliageSeen(crowns: Array<{ e: number; n: number; r: number; h: number }>): Promise<boolean[]> {
+  const keep = crowns.map(() => true), byChunk = new Map<string, number[]>();
+  crowns.forEach((c, i) => { const k = orthoKey(c.e, c.n); (byChunk.get(k) ?? byChunk.set(k, []).get(k)!).push(i); });
+  const M = 8, CELL = 0.5, SIDE = Math.round((ORTO_KM + 2 * M) / CELL), cache = new Map<string, Buffer | null>();
+  const chunk = async (key: string) => {
+    if (!cache.has(key)) { const f = orthoFile(key); cache.set(key, existsSync(f) ? await sharp(f).removeAlpha().raw().toBuffer() : null); }
+    return cache.get(key)!;
+  };
+  const keys = [...byChunk.keys()].sort((a, b) => { const [ea, na] = a.split("_").map(Number), [eb, nb] = b.split("_").map(Number); return na - nb || ea - eb; });
+  for (const key of keys) {
+    const ids = byChunk.get(key)!, [E, N] = key.split("_").map(Number);
+    for (const k of cache.keys()) if (Number(k.split("_")[1]) < N - ORTO_KM) cache.delete(k); // rows done: 50 MB each
+    if (!(await chunk(key))) continue;
+    // green mask over the chunk and a margin (from the neighbouring chunks), as an integral image
+    const sum = new Int32Array((SIDE + 1) * (SIDE + 1)), x0 = E - M, y1 = N + ORTO_KM + M;
+    const near: Array<Buffer | null> = []; // 3 × 3 chunks, west to east, south to north
+    for (const dy of [-1, 0, 1]) for (const dx of [-1, 0, 1]) near.push(await chunk(`${E + dx * ORTO_KM}_${N + dy * ORTO_KM}`));
+    for (let j = 0; j < SIDE; j++) {
+      const n = y1 - (j + 0.5) * CELL, cy = Math.floor((n - N) / ORTO_KM), y = Math.floor((N + (cy + 1) * ORTO_KM - n) / ORTO_M);
+      let row = 0;
+      for (let i = 0; i < SIDE; i++) {
+        const e = x0 + (i + 0.5) * CELL, cx = Math.floor((e - E) / ORTO_KM), d = near[(cy + 1) * 3 + cx + 1];
+        let g = 0;
+        if (d) {
+          const o = (y * ORTO_PX + Math.floor((e - E - cx * ORTO_KM) / ORTO_M)) * 3, R = d[o], G = d[o + 1], B = d[o + 2];
+          g = (2 * G - R - B) / (R + G + B + 1) > 0.05 ? 1 : 0;
+        }
+        row += g;
+        sum[(j + 1) * (SIDE + 1) + i + 1] = sum[j * (SIDE + 1) + i + 1] + row;
+      }
+    }
+    const share = (e: number, n: number, a: number) => { // green share of the square of half-side a around (e, n)
+      const i0 = Math.max(0, Math.floor((e - a - x0) / CELL)), i1 = Math.min(SIDE, Math.ceil((e + a - x0) / CELL));
+      const j0 = Math.max(0, Math.floor((y1 - n - a) / CELL)), j1 = Math.min(SIDE, Math.ceil((y1 - n + a) / CELL));
+      const area = (i1 - i0) * (j1 - j0);
+      return area > 0 ? (sum[j1 * (SIDE + 1) + i1] - sum[j0 * (SIDE + 1) + i1] - sum[j1 * (SIDE + 1) + i0] + sum[j0 * (SIDE + 1) + i0]) / area : 1;
+    };
+    const gone: number[] = [];
+    for (const id of ids) {
+      const c = crowns[id], a = Math.max(0.75, 0.6 * c.r * 0.886), T = Math.min(6, 1 + 0.3 * c.h); // square of a disc's area
+      let seen = share(c.e, c.n, a) >= 0.3;
+      for (let ox = -T; ox <= T && !seen; ox += 1) for (let oy = -T; oy <= T && !seen; oy += 1)
+        if (ox * ox + oy * oy <= T * T) seen = share(c.e + ox, c.n + oy, a) >= 0.3;
+      if (!seen) gone.push(id);
+    }
+    if (gone.length > ids.length / 2) continue; // leaf-off imagery here: no evidence either way
+    for (const id of gone) keep[id] = false;
+  }
+  return keep;
+}
+
 /** Roof colours of the house style (the renderer's roof palette), one per roofing a photo can tell apart. */
 const ROOFS: Record<string, number[]> = {
   red: [0.76, 0.36, 0.25], orange: [0.84, 0.52, 0.30], brown: [0.60, 0.36, 0.26], darkBrown: [0.44, 0.29, 0.23],

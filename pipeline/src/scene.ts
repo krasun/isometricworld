@@ -25,7 +25,7 @@ import { ARCADES, arcade, LOOKS, PLACED, type Piece, type Rings, STRUCTURES, typ
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
 import { deckHeight } from "./bridges.ts";
-import { fromPuwg, gugikBuildings, gugikNdom, toPuwg } from "./gugik.ts";
+import { foliageSeen, fromPuwg, gugikBuildings, gugikNdom, toPuwg } from "./gugik.ts";
 import { lod2Files, rasterSampler } from "./lgl.ts";
 import { alkisKind, type Lod2Building, parseLod2 } from "./lod2.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
@@ -382,6 +382,8 @@ if (LOD2) {
     toXy = toPuwg; fromXy = fromPuwg;
   }
   const cs = crowns(ndom, box, meshes.flatMap((b) => b.xy), toXy);
+  // GUGiK: crowns the orthophoto shows no foliage at are structures LoD2 leaves out (canopies, entrance roofs)
+  const foliage = region.sources === "gugik" ? await foliageSeen(cs) : null;
   // On rail land and building sites the surface model is mostly masts, trains, cranes and containers:
   // keep only crowns that are clearly trees there (wide and tall).
   const noTrees: Array<{ r: P2[]; b: number[] }> = [];
@@ -418,14 +420,15 @@ if (LOD2) {
     over.push({ r: rings, b: [Math.min(...all.map((q) => q[0])), Math.min(...all.map((q) => q[1])), Math.max(...all.map((q) => q[0])), Math.max(...all.map((q) => q[1]))] });
   }
   const overWater = (p: P2) => over.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && r.filter((q) => inside(p, q)).length % 2 === 1);
-  let masked = 0, bridged = 0;
-  for (const c of cs) {
+  let masked = 0, bridged = 0, bare = 0;
+  for (const [i, c] of cs.entries()) {
+    if (foliage && !foliage[i]) { bare++; continue; }
     const [lat, lon] = fromXy(c.e, c.n), p = toEnu(lon, lat);
     if (onDeck([p[0], p[1]]) || overWater([p[0], p[1]])) { bridged++; continue; }
     if ((c.r < 4 || c.h < 8) && noTrees.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && inside([p[0], p[1]], r))) { masked++; continue; }
     trees.push([p[0], p[1], c.r, Math.max(c.r * 0.6 + 1, c.h - c.r * 0.85)]);
   }
-  console.log(`  ${region.sources === "lgl" ? "ndom1" : "nmpt − nmt"} tree crowns: ${cs.length - masked - bridged} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water)`);
+  console.log(`  ${region.sources === "lgl" ? "ndom1" : "nmpt − nmt"} tree crowns: ${cs.length - masked - bridged - bare} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water${foliage ? `, ${bare} with no foliage on the orthophoto` : ""})`);
 }
 
 // 2. OSM buildings where the municipal layer has nothing (Ramat Gan, Givatayim, Bnei Brak…).
