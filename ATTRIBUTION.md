@@ -24,6 +24,10 @@ Stuttgart (region `stuttgart`, rendered procedurally, not painted):
 
 > Map data © OpenStreetMap contributors · Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (verändert) · Terrain: LGL DGM1, Copernicus DEM © DLR, Airbus DS
 
+Wieliczka (region `wieliczka`, rendered procedurally, not painted):
+
+> Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK) · Buildings: GUGiK 3D models, BDOT10k · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Trees: GUGiK NMPT
+
 Each region lists its own credit lines in `pipeline/src/places.ts` (`credits`).
 
 ## Data sources

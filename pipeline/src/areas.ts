@@ -63,6 +63,9 @@ export const AREAS: Record<string, Area> = {
   "metro-west-north-2": { title: "Leonberg · Gerlingen", region: "stuttgart", bbox: [48.77, 8.9, 48.855, 9.04] },
   "metro-west-south": { title: "Sindelfingen", region: "stuttgart", bbox: [48.70, 8.9, 48.775, 9.04] },
   "metro-west-south-2": { title: "Böblingen", region: "stuttgart", bbox: [48.62, 8.9, 48.705, 9.04] },
+  /** Wieliczka test patch: Rynek Górny, Zamek Żupny, the Regis, Daniłowicza and Kinga shafts, the graduation
+   *  tower, the Rynek-Kopalnia station, St Clement's and St Sebastian's (~1.2 × 1.4 km). */
+  "wieliczka-rynek": { title: "Wieliczka · Rynek Górny · Kopalnia", region: "wieliczka", bbox: [49.977, 20.049, 49.988, 20.068] },
 };
 
 /** Look up an area and switch the camera to its region: call before any projection. */

@@ -137,11 +137,31 @@ export const REGIONS: Record<string, Region> = {
       add: [[48.672, 9.17, 48.712, 9.262]],
     },
   },
+  wieliczka: {
+    title: "Wieliczka",
+    origin: { lat: 49.98236, lon: 20.06018, h: 0 }, // Rynek Górny (centre of its OSM pedestrian area)
+    headingDeg: 200, // provisional: picked from test renders before the first publish
+    country: "Poland",
+    municipalities: ["Wieliczka"],
+    credits: [
+      "Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK)",
+      "Buildings: GUGiK 3D models, BDOT10k · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Trees: GUGiK NMPT",
+    ],
+    osmExtract: "https://download.geofabrik.de/europe/poland/malopolskie-latest.osm.pbf",
+    geoidM: 39.6, // EGM2008 at Rynek Górny (GeographicLib GeoidEval: 39.574 m)
+    groundH: 300, // the town lies ~210–390 m above sea level, + geoid
+    heightBase: 250, // valley ~250 m, hills ~430 m ellipsoid, buildings well below 805 m
+    sources: "gugik",
+    teryt: ["1219"], // powiat wielicki
+    look: "styled",
+    outline: { relations: [2751961] }, // the town of Wieliczka (admin_level 8)
+  },
 };
 
 export const CITIES: Record<string, City> = {
   "tel-aviv-yafo": { title: "Tel Aviv-Yafo", region: "israel-center", center: [32.0745, 34.7810], widthM: 5200 },
   stuttgart: { title: "Stuttgart", region: "stuttgart", center: [48.7784, 9.18], widthM: 3000 },
+  wieliczka: { title: "Wieliczka", region: "wieliczka", center: [49.9825, 20.0585], widthM: 2000 },
 };
 
 export const DEFAULT_CITY = "tel-aviv-yafo";
