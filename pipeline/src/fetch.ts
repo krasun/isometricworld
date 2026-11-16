@@ -17,7 +17,7 @@
  *
  * The Tel Aviv-Yafo layers are fetched only for regions with sources "tlv".
  */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openArea } from "./areas.ts";
 import { LOOKS, TOWERS } from "./landmarks.ts";
@@ -72,7 +72,7 @@ async function arcgis(layer: number, bbox: [number, number, number, number], fie
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
-const sources = REGIONS[area.region].sources;
+const sources = area.sources ?? REGIONS[area.region].sources;
 const extract = REGIONS[area.region].osmExtract;
 /** Overpass query, or the same selection from the region's local extract. */
 const osmQuery = (ql: string, bbox: number[], filter: OsmFilter) => extract ? localOsm(extract, bbox, filter) : overpass(ql);
@@ -91,6 +91,38 @@ if (sources === "lgl") {
   await download("lod2", [s - m, w - m, n + m, e + m]);
   await download("ndom1", [s - m, w - m, n + m, e + m]);
   await download("dgm1", [s - g, w - g, n + g, e + g]);
+}
+if (sources === "hzl") {
+  // Herzliya municipal GIS: buildings (layer 123, Trig survey 09/2021) and the 2023 tree survey
+  // (layer 441). Downloaded 2026-11-15 from the municipality's public ArcGIS (hrzgis.herzliya.muni.il,
+  // service herzliya_main_data) into data/raw/hzl/ - the repo keeps no data; see ATTRIBUTION.md.
+  const [s, w, n, e] = area.bbox, m = 0.002; // objects just past the edge still reach into edge tiles
+  const crop = (fc: { features: any[] }, pt: (f: any) => [number, number]) => ({
+    type: "FeatureCollection",
+    features: fc.features.filter((f) => { const [lon, lat] = pt(f); return lat >= s - m && lat <= n + m && lon >= w - m && lon <= e + m; }),
+  });
+  const centroid = (f: any): [number, number] => {
+    const ring = (f.geometry.type === "Polygon" ? f.geometry.coordinates[0] : f.geometry.coordinates[0][0]) as number[][];
+    return [ring.reduce((a, c) => a + c[0], 0) / ring.length, ring.reduce((a, c) => a + c[1], 0) / ring.length];
+  };
+  if (!existsSync(join(dir, "hzl_buildings.geojson"))) {
+    const all = JSON.parse(readFileSync(join(RAW, "hzl", "buildings_123.geojson"), "utf8"));
+    const c = crop(all, centroid);
+    writeFileSync(join(dir, "hzl_buildings.geojson"), JSON.stringify(c));
+    console.log(`  hzl buildings: ${c.features.length} of ${all.features.length}`);
+  }
+  if (!existsSync(join(dir, "hzl_trees.geojson"))) {
+    const all = JSON.parse(readFileSync(join(RAW, "hzl", "trees_survey_441.geojson"), "utf8"));
+    const c = crop(all, (f) => f.geometry.coordinates as [number, number]);
+    writeFileSync(join(dir, "hzl_trees.geojson"), JSON.stringify(c));
+    console.log(`  hzl trees: ${c.features.length} of ${all.features.length}`);
+  }
+  if (!existsSync(join(dir, "hzl_trees2.geojson"))) {
+    const all = JSON.parse(readFileSync(join(RAW, "hzl", "trees_single_442.geojson"), "utf8"));
+    const c = crop(all, (f) => f.geometry.coordinates as [number, number]);
+    writeFileSync(join(dir, "hzl_trees2.geojson"), JSON.stringify(c));
+    console.log(`  hzl single trees: ${c.features.length} of ${all.features.length}`);
+  }
 }
 if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;

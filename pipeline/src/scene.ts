@@ -172,6 +172,8 @@ const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
 const bbox = area.bbox;
 const region = REGIONS[area.region];
+/** Data source of this area (area override wins over the region default). */
+const sources = area.sources ?? region.sources;
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height. */
 const GEOID = region.geoidM;
 const raw = join(RAW, name);
@@ -193,11 +195,11 @@ type Building = { ring: P2[]; h: number; s: number; g: number | null };
 const buildings: Building[] = [];
 const tlvCover: P2[][] = [];
 
-const trees: Array<[number, number, number, number]> = [];
+let trees: Array<[number, number, number, number]> = [];
 const meshes: Lod2Building[] = [];
 
 // 1. Tel Aviv-Yafo municipal buildings: surveyed heights.
-const tlv = region.sources === "tlv" ? readJson(join(raw, "tlv_buildings.geojson")) : { features: [] };
+const tlv = sources === "tlv" ? readJson(join(raw, "tlv_buildings.geojson")) : { features: [] };
 for (const f of tlv.features) {
   const p = f.properties, g = f.geometry;
   if (!g) continue;
@@ -212,10 +214,31 @@ for (const f of tlv.features) {
     tlvCover.push(ring);
   }
 }
-if (region.sources === "tlv") console.log(`  tlv buildings: ${buildings.length}`);
+if (sources === "tlv") console.log(`  tlv buildings: ${buildings.length}`);
+
+// 1c. Herzliya municipal buildings (layer 123, Trig survey 09/2021): footprints + calculated heights.
+const hzl = sources === "hzl" ? readJson(join(raw, "hzl_buildings.geojson")) : { features: [] };
+let hzlMeasured = 0, hzlFloors = 0, hzlDefault = 0;
+for (const f of hzl.features) {
+  const p = f.properties, g = f.geometry;
+  if (!g) continue;
+  const polys = g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : [];
+  const kind = p.PUB_PRVT === "ציבורי" ? "public" : "regular";
+  const floors = parseFloat(p.Num_floors);
+  const measured = p.BLDG_HT > 0 ? p.BLDG_HT : 0;
+  let h = measured || (floors ? floors * FLOOR + 1 : 0) || 4;
+  if (measured) hzlMeasured++; else if (floors) hzlFloors++; else hzlDefault++;
+  for (const poly of polys) {
+    const ring = ringFromLonLat(poly[0]);
+    if (!ring) continue;
+    buildings.push({ ring, h: Math.max(3, h), s: style(h, kind, p.OBJECTID_1 ?? buildings.length), g: null });
+    tlvCover.push(ring);
+  }
+}
+if (sources === "hzl") console.log(`  hzl buildings: ${buildings.length} (height: ${hzlMeasured} surveyed, ${hzlFloors} from floors, ${hzlDefault} default)`);
 
 // 1b. LGL LoD2 buildings (real roofs) and nDOM1 tree crowns.
-if (region.sources === "lgl") {
+if (sources === "lgl") {
   const m = 0.002; // buildings whose centre is just outside still reach into edge tiles
   const box = [bbox[0] - m, bbox[1] - m, bbox[2] + m, bbox[3] + m];
   for (const f of lod2Files(box)) {
@@ -296,24 +319,24 @@ const parts: Array<{ ring: P2[]; h: number; min: number; t: Record<string, strin
 const looks: Array<{ ring: P2[]; area: number; roof: number[] | null; style: number | null; wall: number[] | null; bare?: boolean }> = [];
 for (const el of osm.elements) {
   const t = { ...el.tags, ...(LOOKS[el.tags?.name] ?? {}) };
-  if (t.amenity === "fountain" && region.sources === "lgl") { // nDOM reads fountain sculptures as tree crowns
+  if (t.amenity === "fountain" && sources === "lgl") { // nDOM reads fountain sculptures as tree crowns
     if (el.type === "node") { const q = toEnu(el.lon, el.lat); fountains.push({ at: [q[0], q[1]] }); }
     else if (el.type === "way" && el.geometry?.length >= 4) { const ring = ringFromLonLat(el.geometry.map((q: any) => [q.lon, q.lat])); if (ring) fountains.push({ ring }); }
     if (!t.building) continue;
   }
   if (el.type === "node" && t.natural === "tree") {
-    if (region.sources === "lgl") continue; // the nDOM crowns include them
+    if (sources === "lgl" || sources === "hzl") continue; // the nDOM crowns / municipal tree survey include them
     const p = toEnu(el.lon, el.lat); trees.push([p[0], p[1], 3, 6]); continue;
   }
-  const monument = region.sources === "lgl" && !t.building && !t["building:part"] && el.type === "way" && (t.name ?? "") in TOWERS; // Jubiläumssäule
-  const lglLook = region.sources === "lgl" && (!!(t.building || t["building:part"]) || monument);
+  const monument = sources === "lgl" && !t.building && !t["building:part"] && el.type === "way" && (t.name ?? "") in TOWERS; // Jubiläumssäule
+  const lglLook = sources === "lgl" && (!!(t.building || t["building:part"]) || monument);
   if (!lglLook && (!t.building || t.building === "roof" || t.location === "underground")) continue;
   const coords = el.type === "way" ? el.geometry?.map((q: any) => [q.lon, q.lat])
     : el.members?.find((m: any) => m.role === "outer" && m.geometry)?.geometry.map((q: any) => [q.lon, q.lat]);
   if (!coords || coords.length < 4) continue;
   const ring = ringFromLonLat(coords);
   if (!ring) continue;
-  if (region.sources === "lgl") {
+  if (sources === "lgl") {
     if (!lglLook) continue;
     const h = parseFloat(t.height);
     if (monument) { tallTowers.push({ ring, h, name: t.name }); continue; }
@@ -387,7 +410,100 @@ const lookAt = (pt: P2) => {
 }
 
 // 3. Tree crowns from 2024 canopy polygons: one crown per ~6 m cell inside each polygon.
-const can = region.sources === "tlv" ? readJson(join(raw, "tlv_canopy.geojson")) : { features: [] };
+// 3a. Herzliya 2023 tree survey (layer 441): one crown per surveyed tree, crown height from the survey.
+const hzt = sources === "hzl" ? readJson(join(raw, "hzl_trees.geojson")) : { features: [] };
+for (const f of hzt.features) {
+  const g = f.geometry;
+  if (!g || g.type !== "Point") continue;
+  const p = toEnu(g.coordinates[0], g.coordinates[1]);
+  const hh = parseFloat(f.properties?.["גובה"]) || 6;
+  const h = Math.min(28, Math.max(3, hh));
+  const r = Math.min(7, Math.max(1.5, h * 0.45));
+  trees.push([p[0], p[1], r, Math.max(2, h - r * 0.85)]); // crown centre: crown top ~= surveyed tree height
+}
+if (sources === "hzl") console.log(`  hzl trees: ${hzt.features.length}`);
+
+// 3b. Herzliya single trees (layer 442, 2020-2023 merge): add only trees >8 m from any survey tree.
+const hzt2 = sources === "hzl" ? readJson(join(raw, "hzl_trees2.geojson")) : { features: [] };
+let hzl2Added = 0, hzl2Dup = 0;
+{
+  const cell = 16, grid = new Map<string, number[]>();
+  const key = (x: number, y: number) => `${Math.floor(x / cell)}_${Math.floor(y / cell)}`;
+  trees.forEach((t, i) => {
+    const k = key(t[0], t[1]);
+    (grid.get(k) ?? grid.set(k, []).get(k)!).push(i);
+  });
+  const near = (x: number, y: number) => {
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const i of grid.get(key(x + dx * cell, y + dy * cell)) ?? [])
+          if ((trees[i][0] - x) ** 2 + (trees[i][1] - y) ** 2 < 64) return true;
+    return false;
+  };
+  // layer 442 is a merge of two vintages and contains internal duplicates: pre-dedup at 1 m
+  const seen2: Array<[number, number]> = [];
+  const cell2 = new Map<string, Array<[number, number]>>();
+  const dup2 = (x: number, y: number) => {
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const q of cell2.get(`${Math.floor((x + dx * cell) / cell)}_${Math.floor((y + dy * cell) / cell)}`) ?? [])
+          if ((q[0] - x) ** 2 + (q[1] - y) ** 2 < 1) return true;
+    return false;
+  };
+  let hzl2Self = 0;
+  for (const f of hzt2.features) {
+    const g = f.geometry;
+    if (!g || g.type !== "Point") continue;
+    const p = toEnu(g.coordinates[0], g.coordinates[1]);
+    if (dup2(p[0], p[1])) { hzl2Self++; continue; }
+    const k2 = `${Math.floor(p[0] / cell)}_${Math.floor(p[1] / cell)}`;
+    (cell2.get(k2) ?? cell2.set(k2, []).get(k2)!).push([p[0], p[1]]);
+    if (near(p[0], p[1])) { hzl2Dup++; continue; }
+    const hh = parseFloat(f.properties?.Gova) || 6;
+    const h = Math.min(28, Math.max(3, hh));
+    const r = Math.min(7, Math.max(1.5, h * 0.45));
+    trees.push([p[0], p[1], r, Math.max(2, h - r * 0.85)]);
+    hzl2Added++;
+  }
+  if (hzl2Self) console.log(`  hzl single trees: ${hzl2Self} internal duplicates collapsed`);
+}
+if (sources === "hzl") console.log(`  hzl single trees: ${hzl2Added} added, ${hzl2Dup} duplicates of survey skipped`);
+
+// 3c. OPTIONAL DISPLAY FILTER - DISABLED by default (decision 2026-11-16: source trees stay visible;
+// an OSM pitch polygon is not evidence that a surveyed tree is wrong). When enabled, it drops trees
+// deep inside a small/mid sports pitch (leisure=pitch): heuristic, reversible - raw sources untouched.
+// Known limitations: survey ages differ, georegistration uncertainty ~several m, velodrome/stadium
+// infields and school yards can have real trees. Age/alignment limits are reported, not corrected.
+const PITCH_TREE_FILTER = false;
+if (PITCH_TREE_FILTER && sources === "hzl" && trees.length) {
+  const gj = readJson(join(raw, "ground.json"));
+  const pitches: P2[][] = [];
+  for (const el of gj.elements) {
+    if (el.type === "way" && el.tags?.leisure === "pitch" && el.geometry?.length >= 4) {
+      const ring = ringFromLonLat(el.geometry.map((p: { lon: number; lat: number }) => [p.lon, p.lat]));
+      if (ring) pitches.push(ring);
+    }
+  }
+  const edgeDist = (x: number, y: number, ring: P2[]) => {
+    let best = Infinity;
+    for (let i = 0; i < ring.length; i++) {
+      const [ax, ay] = ring[i], [bx, by] = ring[(i + 1) % ring.length];
+      const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1e-9;
+      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L2));
+      best = Math.min(best, Math.hypot(x - (ax + t * dx), y - (ay + t * dy)));
+    }
+    return best;
+  };
+  const smallPitch = (ring: P2[]) => {
+    const xs = ring.map((p) => p[0]), ys = ring.map((p) => p[1]);
+    return Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) < 60;
+  };
+  const before = trees.length;
+  trees = trees.filter(([x, y]) => !pitches.some((ring) => smallPitch(ring) && inside([x, y], ring) && edgeDist(x, y, ring) > 6));
+  if (before !== trees.length) console.log(`  dropped ${before - trees.length} trees deep inside sports pitches (optional display filter, see comment)`);
+}
+
+const can = sources === "tlv" ? readJson(join(raw, "tlv_canopy.geojson")) : { features: [] };
 for (const f of can.features) {
   const g = f.geometry;
   if (!g) continue;
@@ -498,7 +614,7 @@ for (const ac of arcades) {
   for (let i = trees.length - 1; i >= 0; i--) if (near([trees[i][0], trees[i][1]])) trees.splice(i, 1);
 }
 // tunnel portals where roads and tracks go underground (portals.ts)
-if (region.sources === "lgl") {
+if (sources === "lgl") {
   const ways = ["roads.json", "rails.json", "ground.json"].filter((f) => existsSync(join(raw, f)))
     .flatMap((f) => readJson(join(raw, f)).elements.filter((e: any) => e.type === "way"));
   const groups = groupEnds(tunnelEnds(ways, (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }));

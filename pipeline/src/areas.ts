@@ -1,6 +1,6 @@
 import { CAMERA, activeRegion, llhToPixel, useRegion } from "./camera.ts";
 import { outlinePixels } from "./outline.ts";
-import { REGIONS } from "./places.ts";
+import { REGIONS, type Region } from "./places.ts";
 
 /** A rendered patch of a region (see places.ts); all pipeline steps work per area. */
 export interface Area {
@@ -8,9 +8,25 @@ export interface Area {
   region: string;
   /** south, west, north, east (WGS84) */
   bbox: [number, number, number, number];
+  /** Override the region's data sources for this area (e.g. Herzliya municipal data inside israel-center). */
+  sources?: Region["sources"];
 }
 
 export const AREAS: Record<string, Area> = {
+  /** Herzliya test patch: city centre around Sokolov (~1.5 km²). */
+  "herzliya-test": {
+    title: "Herzliya · Centre",
+    region: "israel-center",
+    bbox: [32.158, 34.808, 32.172, 34.826],
+    sources: "hzl",
+  },
+  /** The whole city: Marina and Herzliya Pituach to the eastern neighbourhoods, including the sea. */
+  herzliya: {
+    title: "Herzliya",
+    region: "israel-center",
+    bbox: [32.142, 34.785, 32.205, 34.87], // south edge below the city boundary's southern tip (32.1440, OSM relation 1382820)
+    sources: "hzl",
+  },
   /** Jaffa → Yarkon Park → Ramat Gan, including the sea off the coast. */
   "tlv-core": {
     title: "Tel Aviv-Yafo · Ramat Gan",
