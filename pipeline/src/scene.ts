@@ -165,7 +165,7 @@ function lod2StyleOf(b: Lod2Building): [number, number] {
   const r = hash(Math.round(b.center[0] * 1e6) ^ Math.round(b.center[1] * 1e6));
   const r2 = hash(Math.round(b.center[1] * 1e6) * 7 + 3);
   const tile = r < 0.55 ? 0 : r < 0.82 ? 1 : 2;
-  const flat = r2 < 0.55 ? 3 : r2 < 0.85 ? 5 : 6;
+  const flat = r2 < 0.55 ? 3 : r2 < 0.85 || b.roofRgb ? 5 : 6; // no made-up green roof where the roof's colour is measured
   const k = (pitched: number, f: number) => pitched * 10 + f;
   if (kind === "structure") return [4, k(2, 5)];                                 // canopies, other structures
   if (kind === "small" || b.height < 3.5) return [4, k(tile, 5)];
@@ -185,6 +185,28 @@ const region = REGIONS[area.region];
 const STYLED = region.look === "styled";
 /** Building kinds drawn with monumental walls (styles.ts). */
 const MONUMENTAL = new Set(styleOf(region.style).monumental);
+
+/**
+ * Façade features from what a building is used for (BDOT10k functions; drawn by page/renderer.ts), bits:
+ * 16 known (then no made-up shop fronts), 1 shop fronts on the ground floor (a shop, restaurant, pharmacy or
+ * bank in it, also downstairs in a home), 2 balcony stacks (blocks of flats: 4+ storeys, or 3 under a flat
+ * roof), 4 garage doors, 8 a retail box (a market: blank walls, an entrance, a sign band), 32 a shed or barn
+ * door, 64 hall doors (warehouses, workshops). 0: the source says nothing.
+ */
+const RETAIL = new Set(["obiekt handlowo-usługowy", "dom towarowy lub handlowy", "restauracja", "apteka", "bank"]);
+function facadeFlags(b: Lod2Building): number {
+  if (!b.use) return 0;
+  const uses = b.uses ?? [b.use], area = Math.abs(area2(b.footprint)), st = b.storeys ?? 0;
+  const market = b.use === "hipermarket lub supermarket" || ((b.use === "dom towarowy lub handlowy" || b.use === "obiekt handlowo-usługowy") && area >= 800);
+  let f = 16;
+  if (market && st <= 2) f |= 8;
+  else if (uses.some((u) => RETAIL.has(u))) f |= 1;
+  if (b.use === "budynek wielorodzinny" && (st >= 4 || (st >= 3 && b.roofType === "1000"))) f |= 2;
+  if (b.use === "garaż") f |= 4;
+  if (b.use === "budynek gospodarczy" || b.use === "budynek produkcyjny zwierząt hodowlanych") f |= 32;
+  if (/^(magazyn|produkcyjny|warsztat remontowo-naprawczy|stacja obsługi pojazdów)$/.test(b.use) && area >= 250) f |= 64;
+  return f;
+}
 /** Buildings are LoD2 meshes and tree crowns come from a surface model (LGL, GUGiK), not from OSM. */
 const LOD2 = region.sources === "lgl" || region.sources === "gugik";
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height. */
@@ -780,8 +802,10 @@ for (const b of meshes as Mesh[]) {
   const fc: P2 = [b.footprint.reduce((a, p) => a + p[0], 0) / b.footprint.length, b.footprint.reduce((a, p) => a + p[1], 0) / b.footprint.length];
   const look = b.look ?? lookAt(fc), roof = look.roof ?? b.roofRgb ?? null; // OSM roof:colour, else the source's measured one
   const entry: unknown[] = [look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
-  if (roof || look.wall || ("bare" in look && look.bare)) entry.push(roof, look.wall);
-  if ("bare" in look && look.bare) entry.push(look.bare);
+  const bare = ("bare" in look && look.bare) || null, flags = facadeFlags(b);
+  if (roof || look.wall || bare || b.storeys || flags) entry.push(roof, look.wall);
+  if (bare || b.storeys || flags) entry.push(bare);
+  if (b.storeys || flags) entry.push(b.storeys ?? 0, flags); // the façade's window rows and features (renderer.ts)
   add(minx, miny, maxx, maxy, (bin) => bin.m.push(entry));
 }
 for (const t of trees) {

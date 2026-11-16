@@ -323,7 +323,7 @@ export interface TileObjects {
   b: Array<[P2[], number, number, number | null]>; // ring, height, style, ground hint (ellipsoid)
   t: Array<[number, number, number, number]>;      // x, y, radius, crown height
   /** LoD2 meshes: style, roof kind, roof xyz[], wall (xyz, along, above base)[], footprint, height, seed */
-  m?: Array<[number, number, number[], number[], P2[], number, number, (number[] | null)?, (number[] | null)?, number?]>; // … osm roof, osm wall, bare (no roof furniture)
+  m?: Array<[number, number, number[], number[], P2[], number, number, (number[] | null)?, (number[] | null)?, (number | null)?, number?, number?]>; // … osm roof, osm wall, bare (no roof furniture), storeys, façade flags (scene.ts facadeFlags)
 }
 
 /** wall, roof colours per style (see scene.ts): bauhaus, residential, public, tower, shed, modern */
@@ -341,16 +341,18 @@ const buildingMaterial = new THREE.ShaderMaterial({
     attribute vec3 color;
     attribute vec2 facade;   // (meters along wall, meters above ground); y = -1000: roof / rooftop object
     attribute float kind;    // style index
-    attribute vec4 frame;    // monumental walls (style 6, wallFrames): start and end along the wall, eaves, kind code + top
-    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos; varying vec4 vFrame;
+    attribute vec4 frame;    // the wall: start, end along, eaves, top (style 6: wallFrames' kind code + top; else + 1000: doors here)
+    attribute vec4 grid;     // the building (wallFacts): floor height, the grid's bottom, façade flags; 0: unknown
+    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos; varying vec4 vFrame; varying vec4 vGrid;
     void main() {
-      vColor = color; vNormal = normal; vFacade = facade; vKind = kind; vPos = position; vFrame = frame;
+      vColor = color; vNormal = normal; vFacade = facade; vKind = kind; vPos = position; vFrame = frame; vGrid = grid;
       gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: /* glsl */ `
     uniform vec3 sun;
-    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos; varying vec4 vFrame;
+    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos; varying vec4 vFrame; varying vec4 vGrid;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    bool bit(float v, float b) { return mod(floor(v / b + 0.001), 2.0) > 0.5; }
     const vec3 GLASS = vec3(0.30, 0.40, 0.50);
     void main() {
       vec3 n = normalize(vNormal);
@@ -371,14 +373,18 @@ const buildingMaterial = new THREE.ShaderMaterial({
           float v = clamp((vKind - kf - 0.05) / 0.9, 0.0, 1.0);
           float r1 = hash(vec2(v * 97.0, 1.3)), r2 = hash(vec2(v * 61.0, 4.7)), r3 = hash(vec2(v * 43.0, 8.9));
           float r4 = hash(vec2(v * 29.0, 2.1)), r5 = hash(vec2(v * 83.0, 6.5)), r6 = hash(vec2(v * 17.0, 9.3));
-          float y = vFacade.y, x = vFacade.x;
+          bool rows = vGrid.x > 0.5;                                    // known storeys (wallFacts): floor height, grid bottom
+          float fl = vGrid.z;                                           // façade flags (scene.ts facadeFlags); > 15: known
+          bool fk = fl > 15.5, doors = fk && vFrame.w > 999.5;
+          float Y = vFacade.y, wW = vFrame.y - vFrame.x, wE = vFrame.z, wmid = vFacade.x - vFrame.x - 0.5 * wW;
+          float y = vFacade.y - (rows ? vGrid.y : 0.0), x = vFacade.x;
           vec3 WIN = vec3(0.24, 0.30, 0.37);
           vec3 FRAME = r5 < 0.7 ? vec3(0.95, 0.95, 0.93) : (r5 < 0.85 ? vec3(0.32, 0.32, 0.34) : vec3(0.52, 0.40, 0.29));
           if (k <= 2) {
             // punched windows: floor height, bay, window size and grouping, ground floor, frames, shutters
-            float FH = k == 2 ? 3.8 + 0.9 * r1 : (k == 0 ? 3.0 + 0.5 * r1 : 2.75 + 0.35 * r1);
-            bool shop = k != 2 && r6 < 0.22;
-            float GF = shop ? 4.2 : (k == 2 || r6 < 0.5 ? FH * 1.2 : FH);
+            float FH = rows ? vGrid.x : k == 2 ? 3.8 + 0.9 * r1 : (k == 0 ? 3.0 + 0.5 * r1 : 2.75 + 0.35 * r1);
+            bool shop = fk ? bit(fl, 1.0) : k != 2 && r6 < 0.22;
+            float GF = rows ? FH : shop ? 4.2 : (k == 2 || r6 < 0.5 ? FH * 1.2 : FH);
             float BAY = k == 2 ? 3.1 + 1.2 * r2 : 2.2 + 1.7 * r2;
             float hw = min(k == 2 ? 0.55 + 0.25 * r3 : 0.42 + 0.38 * r3, BAY * 0.5 - 0.35);
             bool pairs = k != 2 && r4 > 0.72 && BAY > 2.8;
@@ -413,10 +419,19 @@ const buildingMaterial = new THREE.ShaderMaterial({
             } else if ((r2 > 0.55 || k == 2) && fi > 0.5 && fy < 0.22) {
               c *= 0.9;                                                            // string course
             }
+            if (fk && bit(fl, 2.0) && fi > 0.5 && abs(mod(bay, 3.0) - 1.0) < 0.5) {
+              // blocks of flats: stacks of loggias every third bay, a parapet and the shaded recess behind it
+              float bx = mod(x, BAY);
+              if (bx > 0.15 && bx < BAY - 0.15) {
+                vec3 P = r2 < 0.5 ? vec3(0.92, 0.92, 0.90) : r2 < 0.75 ? vec3(0.78, 0.85, 0.90) : vec3(0.93, 0.83, 0.68);
+                if (fy < 1.05) c = P * (fy > 0.95 ? 0.88 : 1.0);
+                else if (fy < fh - 0.25) c = abs(bx - 0.5 * BAY) < 0.5 * BAY - 0.7 ? WIN * 0.8 : c * 0.55;
+              }
+            }
             if (plinth) c *= 0.8;
           } else if (k == 3) {       // towers: curtain wall, tint per building
             vec3 tint = r1 < 0.3 ? vec3(0.42, 0.55, 0.68) : (r1 < 0.55 ? vec3(0.40, 0.56, 0.55) : (r1 < 0.8 ? vec3(0.52, 0.55, 0.58) : vec3(0.55, 0.48, 0.40)));
-            float FH = 3.4 + 0.5 * r2, M = 1.2 + 0.6 * r3;
+            float FH = rows ? vGrid.x : 3.4 + 0.5 * r2, M = 1.2 + 0.6 * r3;
             c = mix(c, tint, 0.75) * (0.92 + 0.12 * hash(vec2(floor(x / M), floor(y / FH)) + v));
             if (fract(y / FH) < 0.1 + 0.15 * r4 || fract(x / M) < 0.06) c = vec3(0.84, 0.86, 0.88);
           } else if (k == 4) {       // sheds, garages, halls: horizontal or vertical cladding
@@ -471,12 +486,35 @@ const buildingMaterial = new THREE.ShaderMaterial({
               }
             }
           } else {                   // offices: ribbon windows or a grid of square windows, shop fronts
-            float FH = 3.4 + 0.5 * r1, M = 1.3 + 0.8 * r2, fy = fract(y / FH);
+            float FH = rows ? vGrid.x : 3.4 + 0.5 * r1, M = 1.3 + 0.8 * r2, fy = fract(y / FH);
             vec3 g = mix(WIN, r5 < 0.5 ? vec3(0.36, 0.48, 0.58) : vec3(0.40, 0.50, 0.46), 0.5) * (0.9 + 0.2 * hash(vec2(floor(x / M), floor(y / FH)) + v));
             float lo = 0.25 + 0.1 * r3, hi = 0.82 + 0.08 * r4;
             if (r3 < 0.35) { if (fy > lo && fy < hi && abs(fract(x / M) - 0.5) < 0.32) c = g; }
             else if (fy > lo && fy < hi) c = fract(x / M) < 0.06 ? c * 0.85 : g;
-            if (y < 4.0 && y > 0.3 && r6 < 0.6 && fract(x / 6.0) > 0.08) c = WIN * 0.9; // shop fronts
+            if (y < 4.0 && y > 0.3 && (fk ? bit(fl, 1.0) : r6 < 0.6) && fract(x / 6.0) > 0.08) c = WIN * 0.9; // shop fronts
+          }
+          if (fk) {
+            // what the building is used for (BDOT10k): doors, a market's front
+            if (bit(fl, 8.0)) {                                         // retail box: panels; a sign band and the entrance
+              c = vColor * (fract(Y / 1.2) < 0.04 ? 0.94 : 1.0);
+              if (doors) {
+                vec3 brand = r1 < 0.25 ? vec3(0.78, 0.16, 0.16) : r1 < 0.5 ? vec3(0.16, 0.34, 0.68) : r1 < 0.75 ? vec3(0.93, 0.72, 0.12) : vec3(0.18, 0.52, 0.30);
+                if (Y > wE - 1.6 && Y < wE - 0.4) c = brand;
+                if (abs(wmid) < min(4.0, 0.18 * wW) && Y > 0.1 && Y < 3.2) c = Y > 2.95 || fract(wmid / 1.5) < 0.05 ? vec3(0.72, 0.73, 0.74) : WIN * 0.95;
+              }
+            }
+            if (doors && bit(fl, 4.0)) {                                // garage doors in a row
+              float n = max(1.0, floor(wW / 3.0)), B = wW / n, bx = mod(vFacade.x - vFrame.x, B) - 0.5 * B;
+              vec3 D = r3 < 0.5 ? vec3(0.64, 0.65, 0.66) : r3 < 0.8 ? vec3(0.46, 0.34, 0.25) : vec3(0.85, 0.85, 0.83);
+              if (abs(bx) < min(1.2, 0.42 * B) && Y > 0.05 && Y < min(2.15, wE - 0.4)) c = D * (fract(Y / 0.32) < 0.12 ? 0.86 : 1.0);
+            }
+            if (doors && bit(fl, 32.0)) {                               // a shed's or barn's door: timber planks
+              if (abs(wmid) < min(1.5, 0.2 * wW) && Y > 0.05 && Y < min(2.6, wE * 0.8)) c = vec3(0.42, 0.30, 0.21) * (fract(wmid / 0.22) < 0.12 ? 0.82 : 1.0);
+            }
+            if (doors && bit(fl, 64.0)) {                               // a hall's roller doors
+              float d = wW > 22.0 ? abs(abs(wmid) - 0.22 * wW) : abs(wmid);
+              if (d < 2.0 && Y > 0.05 && Y < min(4.5, wE - 1.0)) c = vec3(0.66, 0.67, 0.68) * (fract(Y / 0.25) < 0.15 ? 0.88 : 1.0);
+            }
           }
         }
         gl_FragColor = vec4(c * light, 1.0);
@@ -805,21 +843,15 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
   }
 }
 
-/** LoD2 meshes into the shared building arrays (flat-shaded triangles; walls carry facade coordinates). */
 /**
- * Monumental walls (style 6): per wall triangle, its LoD2 wall polygon's [start, end along, eaves, 1000 × raised
- * + 100 × kind + top] and its bottom; eaves and top from that bottom (the shader lays a wall standing on a lower
- * roof out on its own height, without plinth, portal or oculus: raised). Kinds: 0 a side wall; 1 a gable from
- * the ground (rising 2.5 m+ above its ends, 6 m+ wide): an oculus; 2 such a gable 7 m+ wide: also a portal;
- * 3 a tower (eaves 4 m+ above the building's main eaves, under 14 m wide). The eaves are the wall's height at
- * its ends, or the building's main eaves where those are much lower (stepped outlines); the main eaves: the
- * median over its walls weighted by their length (a nave's side walls, a rotunda's drum). A
- * polygon is the triangles sharing a facing and the origin of `along` (lod2.ts: along = projection on the
- * wall's horizontal direction + a constant per polygon).
+ * A LoD2 mesh's wall polygons (per wall triangle, its polygon: the triangles sharing a facing and the origin of
+ * `along`; lod2.ts: along = projection on the wall's horizontal direction + a constant per polygon), each
+ * polygon's height at both ends (a gable wall's eaves), and the building's main eaves: the median of those over
+ * its walls weighted by their length (a nave's side walls, a rotunda's drum).
  */
-function wallFrames(wall: number[]): Array<{ frame: number[]; bottom: number }> {
-  type Wall = { nx: number; ny: number; o: number; s0: number; s1: number; top: number; pts: number[][] };
-  const walls: Wall[] = [], of: Wall[] = [], rx = wall[0], ry = wall[1]; // near the building: kilometres would magnify normal errors
+type WallPolygon = { nx: number; ny: number; o: number; s0: number; s1: number; top: number; pts: number[][] };
+function wallPolygons(wall: number[]) {
+  const walls: WallPolygon[] = [], of: WallPolygon[] = [], rx = wall[0], ry = wall[1]; // near the building: kilometres would magnify normal errors
   for (let i = 0; i + 14 < wall.length; i += 15) {
     const [ax, ay, az] = wall.slice(i, i + 3), [bx, by, bz] = wall.slice(i + 5, i + 8), [cx, cy, cz] = wall.slice(i + 10, i + 13);
     let nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay), ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
@@ -834,11 +866,50 @@ function wallFrames(wall: number[]): Array<{ frame: number[]; bottom: number }> 
     }
     of.push(w);
   }
-  // height at both ends (the eaves of a gable wall); the building's main eaves
-  const ends = (w: Wall) => Math.min(...[w.s0, w.s1].map((e) => Math.max(...w.pts.filter((p) => Math.abs(p[0] - e) < 0.3).map((p) => p[1]))));
+  const ends = (w: WallPolygon) => Math.min(...[w.s0, w.s1].map((e) => Math.max(...w.pts.filter((p) => Math.abs(p[0] - e) < 0.3).map((p) => p[1]))));
   const byE = walls.map((w) => ({ e: ends(w), len: w.s1 - w.s0 })).sort((a, b) => a.e - b.e);
   let half = byE.reduce((t, q) => t + q.len, 0) / 2, eaves = 0;
   for (const q of byE) if ((half -= q.len) <= 0) { eaves = q.e; break; }
+  return { walls, of, ends, eaves };
+}
+
+/**
+ * What the source knows of a building (BDOT10k: storeys, façade flags), for its walls. The floor grid: storeys
+ * under the main eaves at ≈ 3 m (the rest are in the roof: gable windows continue the grid), floor height
+ * between 2.7 and 4.2 m, lined up under the eaves (any height left below is a plinth: a raised ground floor, a
+ * slope); none where the height does not fit the storeys. Per wall: [start, end along, eaves, top + 1000 where
+ * the doors go].
+ */
+function wallFacts(wall: number[], storeys: number, flags: number) {
+  const { walls, of, ends, eaves } = wallPolygons(wall);
+  let fh = 0, y0 = 0;
+  if (storeys && eaves >= 2 && eaves <= storeys * 4.8 + 1.5) { // a height that fits the storeys (else the data disagree)
+    const n = Math.max(1, Math.min(storeys, Math.round(eaves / 3)));
+    fh = Math.min(4.2, Math.max(2.7, eaves / n));
+    y0 = Math.max(0, eaves - n * fh);
+  }
+  // doors (scene.ts facadeFlags) on the long walls, a single garage's on its short ones
+  const len = (w: WallPolygon) => w.s1 - w.s0, long = Math.max(...walls.map(len));
+  const short = Math.min(...walls.map(len).filter((W) => W >= 2.6), long);
+  const doors = (w: WallPolygon) => flags & 4 ? (long < 7.5 ? len(w) >= 2.6 && len(w) <= short + 0.6 : len(w) >= long - 1.5)
+    : flags & (8 | 32 | 64) ? len(w) >= Math.max(4, 0.8 * long) : false;
+  const frame = new Map(walls.map((w) => [w, [w.s0, w.s1, ends(w), w.top + (doors(w) ? 1000 : 0)]] as [WallPolygon, number[]]));
+  return { grid: [fh, y0, flags, 0], frames: of.map((w) => frame.get(w)!) };
+}
+
+/**
+ * Monumental walls (style 6): per wall triangle, its LoD2 wall polygon's [start, end along, eaves, 1000 × raised
+ * + 100 × kind + top] and its bottom; eaves and top from that bottom (the shader lays a wall standing on a lower
+ * roof out on its own height, without plinth, portal or oculus: raised). Kinds: 0 a side wall; 1 a gable from
+ * the ground (rising 2.5 m+ above its ends, 6 m+ wide): an oculus; 2 such a gable 7 m+ wide: also a portal;
+ * 3 a tower (eaves 4 m+ above the building's main eaves, under 14 m wide). The eaves are the wall's height at
+ * its ends, or the building's main eaves where those are much lower (stepped outlines); the main eaves: the
+ * median over its walls weighted by their length (a nave's side walls, a rotunda's drum). A
+ * polygon is the triangles sharing a facing and the origin of `along` (lod2.ts: along = projection on the
+ * wall's horizontal direction + a constant per polygon).
+ */
+function wallFrames(wall: number[]): Array<{ frame: number[]; bottom: number }> {
+  const { walls, of, ends, eaves } = wallPolygons(wall);
   const frame = new Map(walls.map((w) => {
     const W = w.s1 - w.s0, bottom = Math.min(...w.pts.map((p) => p[1])), raised = bottom > 2 ? 1 : 0;
     let e = ends(w);
@@ -846,13 +917,14 @@ function wallFrames(wall: number[]): Array<{ frame: number[]; bottom: number }> 
     const kind = e > eaves + 4 && W < 14 ? 3 : !raised && w.top - e > 2.5 && W > 6 ? (W > 7 ? 2 : 1) : 0;
     const b = raised ? bottom : 0;
     return [w, { frame: [w.s0, w.s1, e - b, 1000 * raised + 100 * kind + w.top - b], bottom: b }];
-  }) as Array<[Wall, { frame: number[]; bottom: number }]>);
+  }) as Array<[WallPolygon, { frame: number[]; bottom: number }]>);
   return of.map((w) => frame.get(w)!);
 }
 
-function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[], fac: number[], kin: number[], frm: number[]) {
+/** LoD2 meshes into the shared building arrays (flat-shaded triangles; walls carry facade coordinates). */
+function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[], fac: number[], kin: number[], frm: number[], grd: number[]) {
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
-  for (const [style, roofKind, roof, wall, footprint, , seed, osmRoof, osmWall, bare] of data.m ?? []) {
+  for (const [style, roofKind, roof, wall, footprint, , seed, osmRoof, osmWall, bare, storeys, flags] of data.m ?? []) {
     const j = (seed % 97) / 97 - 0.5; // per-building tint
     const walls = STYLE.walls?.[style] ?? WALL_BY_STYLE[style] ?? WALLS_STR, w = (osmWall ?? walls[seed % walls.length]).map((v) => Math.min(1, v * (1 + 0.04 * j)));
     // OSM roof:colour / roof:material where mapped (scene.ts), else the palette by roof kind
@@ -880,12 +952,19 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
     }
     if (planes.length) roofFurniture({ pos, nor, col, fac, kin }, planes, footprint, wall, style, green, w, rnd);
     const frames = style === 6 ? wallFrames(wall) : null;
+    const facts = !frames && (storeys || flags) ? wallFacts(wall, storeys ?? 0, flags ?? 0) : null; // window rows, doors
     for (let i = 0; i + 14 < wall.length; i += 15) {
       a.fromArray(wall, i); b.fromArray(wall, i + 5); c.fromArray(wall, i + 10);
       n.subVectors(b, a).cross(c.clone().sub(a)).normalize();
       for (const k of [0, 5, 10]) {
         const f = frames?.[i / 15];
-        if (f) { while (frm.length < (pos.length / 3) * 4) frm.push(0, 0, 0, 0); frm.push(...f.frame); }
+        if (f || facts) {
+          const n = (pos.length / 3) * 4;
+          while (frm.length < n) frm.push(0, 0, 0, 0);
+          while (grd.length < n) grd.push(0, 0, 0, 0);
+          frm.push(...(f ? f.frame : facts!.frames[i / 15]));
+          grd.push(...(facts ? facts.grid : [0, 0, 0, 0]));
+        }
         const above = wall[i + k + 4];
         // walls reach 3 m below the LoD2 base, so a downhill slope never opens a gap under the house
         const drop = above < 0.05 ? 3 : 0;
@@ -899,7 +978,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
 function buildObjects(data: TileObjects) {
   objects.children.forEach((o: any) => o.geometry?.dispose());
   objects.clear();
-  const pos: number[] = [], nor: number[] = [], col: number[] = [], fac: number[] = [], tow: number[] = [], frm: number[] = [];
+  const pos: number[] = [], nor: number[] = [], col: number[] = [], fac: number[] = [], tow: number[] = [], frm: number[] = [], grd: number[] = [];
   /** axis-aligned box on a roof (rooftop clutter), no facade pattern */
   const box = (x: number, y: number, z: number, sx: number, sy: number, sz: number, c: number[]) => {
     const X = [x - sx / 2, x + sx / 2], Y = [y - sy / 2, y + sy / 2], Z = [z, z + sz];
@@ -961,8 +1040,9 @@ function buildObjects(data: TileObjects) {
       }
     }
   });
-  if (STYLED) addMeshes(data, pos, nor, col, fac, tow, frm);
+  if (STYLED) addMeshes(data, pos, nor, col, fac, tow, frm, grd);
   while (frm.length < (pos.length / 3) * 4) frm.push(0, 0, 0, 0);
+  while (grd.length < (pos.length / 3) * 4) grd.push(0, 0, 0, 0);
   if (pos.length) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
@@ -971,6 +1051,7 @@ function buildObjects(data: TileObjects) {
     geo.setAttribute("facade", new THREE.Float32BufferAttribute(fac, 2));
     geo.setAttribute("kind", new THREE.Float32BufferAttribute(tow, 1));
     geo.setAttribute("frame", new THREE.Float32BufferAttribute(frm, 4));
+    geo.setAttribute("grid", new THREE.Float32BufferAttribute(grd, 4));
     objects.add(new THREE.Mesh(geo, buildingMaterial));
   }
   if (data.t.length) {

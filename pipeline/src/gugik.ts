@@ -115,15 +115,21 @@ function bdotKind(general: string, main: string): BuildingKind {
   return "other"; // homes and the rest
 }
 
-/** BDOT10k id -> [kind, existence (eksploatowany, w budowie, nieczynny, zniszczony)], cached per powiat. */
-function bdotBuildings(t: string): Map<string, [BuildingKind, string]> {
+/** A BDOT10k building: [kind, existence (eksploatowany, w budowie, nieczynny, zniszczony), storeys above ground
+ *  (liczbaKondygnacji; 0 unknown), main function (przewazajacaFunkcjaBudynku), all its functions
+ *  (funkcjaSzczegolowaBudynku, "|"-joined: a home with a shop)]. */
+type BdotBuilding = [BuildingKind, string, number, string, string];
+/** BDOT10k id -> BdotBuilding, cached per powiat (a cache from before the storeys is rebuilt). */
+function bdotBuildings(t: string): Map<string, BdotBuilding> {
   const cache = join(DIR, `bdot10k-${t}.buildings.json`);
-  if (!existsSync(cache)) {
-    const zip = zipOf("bdot10k", t), out: Record<string, [BuildingKind, string]> = {};
+  const old = existsSync(cache) && (Object.values(JSON.parse(readFileSync(cache, "utf8")))[0] as unknown[] | undefined)?.length !== 5;
+  if (!existsSync(cache) || old) {
+    const zip = zipOf("bdot10k", t), out: Record<string, BdotBuilding> = {};
     for (const m of members(zip, /OT_BUBD_A\.xml$/)) {
       for (const [b] of unzipOne(zip, m).matchAll(/<ot:OT_BUBD_A [\s\S]*?<\/ot:OT_BUBD_A>/g)) {
         const tag = (k: string) => new RegExp(`<ot:${k}>([^<]*)<`).exec(b)?.[1] ?? "";
-        out[tag("lokalnyId")] = [bdotKind(tag("funkcjaOgolnaBudynku"), tag("przewazajacaFunkcjaBudynku")), tag("kategoriaIstnienia")];
+        const main = tag("przewazajacaFunkcjaBudynku"), all = [...b.matchAll(/<ot:funkcjaSzczegolowaBudynku>([^<]*)</g)].map((m) => m[1]);
+        out[tag("lokalnyId")] = [bdotKind(tag("funkcjaOgolnaBudynku"), main), tag("kategoriaIstnienia"), parseInt(tag("liczbaKondygnacji")) || 0, main, all.join("|")];
       }
     }
     writeFileSync(cache, JSON.stringify(out));
@@ -143,7 +149,7 @@ const KRON86_DEFAULT = 0.26;
  * kind from BDOT10k. `geoid` turns EVRF2007 into ellipsoid heights.
  */
 export async function gugikBuildings(teryt: string[], bbox: number[], geoid: number): Promise<Lod2Building[]> {
-  const lod2: Lod2Building[] = [], lod1: Lod2Building[] = [], bdot = new Map<string, [BuildingKind, string]>();
+  const lod2: Lod2Building[] = [], lod1: Lod2Building[] = [], bdot = new Map<string, BdotBuilding>();
   for (const t of teryt) {
     for (const xml of sheets("lod2", t, bbox)) lod2.push(...parseLod2(xml, bbox, geoid, { toLatLon: fromPuwg }));
     for (const xml of sheets("lod1", t, bbox)) lod1.push(...parseLod2(xml, bbox, geoid, { toLatLon: fromPuwg, lod1: true }));
@@ -177,6 +183,9 @@ export async function gugikBuildings(teryt: string[], bbox: number[], geoid: num
   for (const b of out) {
     const k = bdot.get(bdotId(b));
     b.kind = k?.[0] ?? "other";
+    if (k?.[2]) b.storeys = k[2];
+    if (k?.[3]) b.use = k[3];
+    if (k?.[4]) b.uses = k[4].split("|");
     if (k) known++;
   }
   console.log(`  gugik: ${kept.length}/${lod2.length} LoD2 buildings (+${dz.toFixed(2)} m Kronsztadt 86 -> EVRF2007, from ${d.length}), `

@@ -168,6 +168,10 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   cast sun shadows, wall palettes per building style, and `monumental` walls for chosen building kinds
   (churches in "poland": laid out on each LoD2 wall from its own extent, not a floor grid: pilasters, one tall
   arched window per bay, cornice, oculus and portal in the gable, towers in storeys with a clock and belfry).
+  Where the source says what a building is used for and how many storeys it has (GUGiK: BDOT10k), its walls
+  follow that rather than chance: window rows by storeys, shop fronts where there is a shop, loggias on blocks
+  of flats, garage, shed and hall doors, a market's panels, sign band and entrance (`facadeFlags` in
+  `scene.ts`, `wallFacts` in `renderer.ts`); a measured roof colour is never replaced by a made-up green roof.
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).

@@ -35,6 +35,12 @@ export interface Lod2Building {
   kind?: BuildingKind;
   /** The roof's colour measured by the source (e.g. from an orthophoto), RGB 0…1; OSM roof:colour still wins. */
   roofRgb?: number[];
+  /** Storeys above ground, where the source says (BDOT10k liczbaKondygnacji): the façade's window rows. */
+  storeys?: number;
+  /** The source's own name for what the building is used for (BDOT10k przewazajacaFunkcjaBudynku), and all
+   *  its uses (funkcjaSzczegolowaBudynku: a home with a shop downstairs). */
+  use?: string;
+  uses?: string[];
 }
 
 /** What a building is used for, as far as its look goes (scene.ts lod2Style). "other" includes homes. */
