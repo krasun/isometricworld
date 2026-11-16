@@ -310,14 +310,18 @@ viewer.addOnceHandler("open", () => {
 document.getElementById("credits")!.innerHTML = [
   `© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>`,
   // the region's own data sources
-  ...(REGION === "stuttgart"
-    ? [`Datenquelle: <a href="https://www.lgl-bw.de">LGL</a>, <a href="https://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a> (verändert)`]
-    : [`<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`]),
+  ({
+    stuttgart: `Datenquelle: <a href="https://www.lgl-bw.de">LGL</a>, <a href="https://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a> (verändert)`,
+    // GUGiK (PZGiK material, CC BY 4.0) requires this notice: "prepared from the national geodetic and cartographic resource"
+    wieliczka: `Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (<a href="https://www.geoportal.gov.pl/">GUGiK</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>)`,
+  } as Record<string, string>)[REGION] ?? `<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`,
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
   // the method to recreate the derived database (ODbL) and the code
   `<a href="https://github.com/krasun/isometricworld">Source</a>`,
-  REGION === "stuttgart" // the Stuttgart region was built by Lukas Hermann
-    ? `Made by <a href="https://lukashermann.dev/">Lukas Hermann</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
-    : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
+  // the region's maker: Stuttgart was built by Lukas Hermann, Wieliczka by Maciek Chmura
+  ({
+    stuttgart: `Made by <a href="https://lukashermann.dev/">Lukas Hermann</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
+    wieliczka: `Made by <a href="https://x.com/maciekChmura">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
+  } as Record<string, string>)[REGION] ?? `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
 // each credit stays on one line; the separator rides at the end of the previous one so no line starts with "·"
 ].map((c, i, all) => `<span class="credit">${c}${i < all.length - 1 ? " ·" : ""}</span>`).join(" ");
