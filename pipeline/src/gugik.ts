@@ -19,6 +19,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type BuildingKind, type Lod2Building, parseLod2 } from "./lod2.ts";
+import { boxTouchesOutline } from "./outline.ts";
 import { RAW } from "./paths.ts";
 import { fromTm, type Tm, toTm } from "./utm.ts";
 
@@ -65,13 +66,14 @@ const POWIAT = {
 type Powiat = keyof typeof POWIAT;
 const zipOf = (p: Powiat, t: string) => join(DIR, `${p}-${t}.zip`);
 
-/** Download what an area needs: the powiats' buildings and the NMT / NMPT sheets around the bbox. */
+/** Download what an area needs: the powiats' buildings and the NMT / NMPT sheets around the bbox (only
+ *  near the region's outline, if it has one: nothing outside it is rendered). */
 export async function fetchGugik(teryt: string[], bbox: number[]) {
   mkdirSync(DIR, { recursive: true });
   for (const t of teryt) for (const p of Object.keys(POWIAT) as Powiat[]) await download(POWIAT[p](t), zipOf(p, t));
   const [s, w, n, e] = bbox, m = 0.005, g = 0.01; // objects just past the edge; terrain as far as ground.ts reads
-  await fetchSheets("nmpt", [s - m, w - m, n + m, e + m]);
-  await fetchSheets("nmt", [s - g, w - g, n + g, e + g]);
+  await fetchSheets("nmpt", [s - m, w - m, n + m, e + m], (box) => boxTouchesOutline(box, m));
+  await fetchSheets("nmt", [s - g, w - g, n + g, e + g], (box) => boxTouchesOutline(box, g));
 }
 
 // ---- CityGML sheets inside the powiat zips ------------------------------------------------------------
@@ -219,8 +221,11 @@ async function sheetAt(model: Model, lat: number, lon: number, cache: Record<str
   return (cache[key] = null);
 }
 
-/** Download every sheet of a model touching a bbox; sheets are ~2.3 km across, so a ~1 km sample grid finds all. */
-async function fetchSheets(model: Model, [s, w, n, e]: number[]) {
+/**
+ * Download every sheet of a model touching a bbox; sheets are ~2.3 km across, so a ~1 km sample grid finds
+ * all. `near` skips sample cells ([s, w, n, e]) the region does not need.
+ */
+async function fetchSheets(model: Model, [s, w, n, e]: number[], near: (box: number[]) => boolean = () => true) {
   const dir = join(DIR, model);
   mkdirSync(dir, { recursive: true });
   const cacheFile = join(dir, "links.json");
@@ -228,6 +233,7 @@ async function fetchSheets(model: Model, [s, w, n, e]: number[]) {
   const steps = (a: number, b: number, d: number) => { const k = Math.max(1, Math.ceil((b - a) / d)); return Array.from({ length: k + 1 }, (_, i) => a + ((b - a) * i) / k); };
   const found = new Map<string, string>(); // url -> year
   for (const lat of steps(s, n, 0.008)) for (const lon of steps(w, e, 0.012)) {
+    if (!near([lat - 0.004, lon - 0.006, lat + 0.004, lon + 0.006])) continue;
     const sheet = await sheetAt(model, lat, lon, cache);
     if (sheet) found.set(sheet.url, sheet.year);
   }
