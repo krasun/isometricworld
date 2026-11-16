@@ -743,12 +743,16 @@ for (const pl of PLACED) {
   const [la, lo] = pl.at;
   if (la < bbox[0] - 0.002 || la > bbox[2] + 0.002 || lo < bbox[1] - 0.002 || lo > bbox[3] + 0.002) continue;
   const e = toEnu(lo, la), c: P2 = [e[0], e[1]];
-  let base = groundAt(...c), ground = base, note = "model";
+  let base = groundAt(...c), ground = base, note = "model", under: Mesh | undefined;
   if (pl.cut) {
     const hit = cutBlock(c, pl.cut);
     if (!hit) { console.log(`  landmark ${pl.name}: no LoD2 block within ${pl.cut} m, skipped`); continue; }
     base = hit.cap; ground = hit.mesh.base; note = `LoD2 block cut at ${(hit.cap - ground).toFixed(1)} m -> model`;
-    if (pl.walls) hit.mesh.look = { ...lookAt(centre(hit.mesh.footprint)), wall: pl.walls };
+    under = hit.mesh;
+  } else if (pl.building) under = (meshes as Mesh[]).find((m) => inside(c, m.footprint));
+  if (under && pl.building) {
+    const look = lookAt(centre(under.footprint));
+    under.look = { ...look, wall: pl.building.wall ?? look.wall, roof: pl.building.roof ?? look.roof };
   }
   meshes.push(...pl.model(c, base, ground).map(fromPiece));
   dropCrowns((p) => Math.hypot(p[0] - c[0], p[1] - c[1]) < pl.clear);

@@ -95,11 +95,12 @@ export const STRUCTURES: Structure[] = [
  * The model stands on `base` (the ground there); `ground` is the ground level too, or with `cut` the building's.
  *
  * `cut` replaces a solid LoD2 block (a headframe's stand-in): the LoD2 walls and roofs within `cut` m of the point
- * that rise above the roofs around them are cut off and capped level there, and the model stands on the cap;
- * `walls` recolours that building's plaster, when OSM's outline of it does not cover the LoD2 building (LOOKS).
+ * that rise above the roofs around them are cut off and capped level there, and the model stands on the cap.
+ * `building` sets the wall and roof colour of that LoD2 building (without `cut`: the one under the point), where
+ * OSM's outline does not cover it (LOOKS) or the orthophoto reads its roof wrong (the headframe's shadow on it).
  */
 export type Placed = {
-  name: string; at: [number, number]; clear: number; cut?: number; walls?: number[];
+  name: string; at: [number, number]; clear: number; cut?: number; building?: { wall?: number[]; roof?: number[] };
   model: (c: P2, base: number, ground: number) => Piece[];
 };
 export const PLACED: Placed[] = [...wieliczka.PLACED];

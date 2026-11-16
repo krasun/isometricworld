@@ -134,12 +134,112 @@ function danilowiczHeadframe(c: P2, base: number, ground: number): Piece[] {
   return [column, decks, rails, top, pole, red, strut];
 }
 
+const OCHRE = [0.90, 0.84, 0.64], RED_TILE = [0.68, 0.30, 0.22], CAP = [0.30, 0.31, 0.33], GREY_GREEN = [0.66, 0.70, 0.64];
+
+/** Laced strut: two chords `w` apart from (u0, h0) to (u1, h1) along a frame's u axis, zig-zag lacing between. */
+function strut(p: Piece, at: (u: number, v: number) => P2, z: (h: number) => number, u0: number, h0: number, u1: number, h1: number, w: number, chord: number, lace: number, n: number) {
+  const q = (v: number, t: number): P3 => { const a = at(u0 + (u1 - u0) * t, v); return [a[0], a[1], z(h0 + (h1 - h0) * t)]; };
+  for (const v of [-w / 2, w / 2]) beam(p, q(v, 0), q(v, 1), chord);
+  for (let k = 0; k < n; k++) beam(p, q(k % 2 ? w / 2 : -w / 2, k / n), q(k % 2 ? -w / 2 : w / 2, (k + 1) / n), lace);
+}
+
+/**
+ * Szyb św. Kingi (1864): a steep red-tiled pyramid on the shaft house's roof, out of which rises a short dark
+ * lattice with a railed gallery round the sheave wheel, a flat hipped cap on posts and a mast; a laced strut runs
+ * down north-west to the next roof. Cap from LoD2 (5.75 m square on the building's axes, 24°; eaves 28.0 m, top
+ * 29.2 m); the strut from the surface model (NMPT − NMT falls from 24 m to 10 m 4–9 m out at 295–330°); the
+ * pyramid and the gallery from the photos.
+ */
+function kingaHeadframe(c: P2, base: number, ground: number): Piece[] {
+  const at = frame(c, 24.2), z = (h: number) => h - (base - ground), capH = base - ground;
+  const sq = (h: number): P2[] => [at(-h, -h), at(h, -h), at(h, h), at(-h, h)];
+  const corners = (h: number, zz: number): P3[] => sq(h).map((q) => [q[0], q[1], z(zz)]);
+  // the pyramid: 3.0 m half-width where the LoD2 block was cut (so it encloses the stump), 1.3 m at 22 m
+  const half = (zz: number) => 1.3 + ((22 - zz) * (3.0 - 1.3)) / (22 - capH), z0 = capH - 2.5;
+  const pyramid = part(sq(half(z0)), base, z(22), { roof: RED_TILE, wall: RED_TILE, style: CLAD, bare: 1 });
+  const lo = corners(half(z0), z0), hi = corners(1.3, 22);
+  for (let i = 0; i < 4; i++) roofFace(pyramid, [lo[i], lo[(i + 1) % 4], hi[(i + 1) % 4], hi[i]]);
+  roofFace(pyramid, hi);
+  const steel = part(sq(2.6), base, z(29.2), clad(BLACK_STEEL));
+  lattice(steel, corners(1.1, 22), corners(1.7, 23.6), 1, 0.3, 0.14);
+  prism(steel, sq(2.6), z(23.55), z(23.8));
+  railing(steel, sq(2.6), z(23.8), 1.05);
+  for (const q of corners(2.45, 23.8)) beam(steel, q, [q[0], q[1], z(27.6)], 0.25);
+  beam(steel, [c[0], c[1], z(29.2)], [c[0], c[1], z(33.5)], 0.12); // mast
+  // the sheave wheel, in the plane of the rope (towards the strut)
+  const rope = frame(c, 295), ring: P3[] = [];
+  for (let k = 0; k < 14; k++) { const t = (k / 14) * 2 * Math.PI, q = rope(1.5 * Math.cos(t), 0); ring.push([q[0], q[1], z(25.0 + 1.5 * Math.sin(t))]); }
+  for (let k = 0; k < 14; k++) beam(steel, ring[k], ring[(k + 1) % 14], 0.16);
+  for (const k of [0, 4, 9]) beam(steel, ring[k], ring[(k + 7) % 14], 0.08);
+  const cap = part(sq(2.875), base, z(29.2), clad(CAP));
+  prism(cap, sq(2.875), z(27.6), z(28.0), false);
+  const r = sq(2.875), apex: P3 = [c[0], c[1], z(29.2)];
+  for (let i = 0; i < 4; i++) { const a = r[i], b = r[(i + 1) % 4]; roofFace(cap, [[a[0], a[1], z(28.0)], [b[0], b[1], z(28.0)], apex]); }
+  const back = part([rope(1.5, -1), rope(9.5, -1), rope(9.5, 1), rope(1.5, 1)], base, z(23.6), clad(BLACK_STEEL));
+  strut(back, rope, z, 1.7, 23.5, 9.0, 10.8, 1.6, 0.28, 0.12, 6);
+  return [pyramid, steel, cap, back];
+}
+
+/**
+ * Szyb Kościuszko: a modern pale grey-green steel headframe (2000s) rising out of a flat-roofed hall, LoD2 leaves
+ * it out: an X-braced square column, a platform with an open frame on top (yellow railings), yellow stair flights
+ * with landings on the south side, and a box-girder strut to the ground north-north-east. From the surface model
+ * (NMPT − NMT: top 28.7 m; above 22 m about 7.6 m square; the strut falls from 16 m to the ground 4–11 m out at
+ * 0–45°) and the hall's axes in LoD2 (20°, 110°); the column, frame and stairs from a 2008 photo.
+ */
+function kosciuszkoHeadframe(c: P2, base: number): Piece[] {
+  const at = frame(c, 20); // u: north-north-east, along the strut
+  const sq = (h: number): P2[] => [at(-h, -h), at(h, -h), at(h, h), at(-h, h)];
+  const corners = (h: number, zz: number): P3[] => sq(h).map((q) => [q[0], q[1], zz]);
+  const steel = part(sq(3.8), base, 27.2, clad(GREY_GREEN));
+  lattice(steel, corners(2.8, 8.5), corners(2.8, 20.0), 4, 0.36, 0.15);
+  prism(steel, sq(3.8), 20.0, 20.6);
+  for (const q of corners(3.6, 20.6)) beam(steel, q, [q[0], q[1], 27.2], 0.3);
+  for (const zz of [24.0, 27.2]) { const L = corners(3.6, zz); for (let i = 0; i < 4; i++) beam(steel, L[i], L[(i + 1) % 4], 0.24); }
+  beam(steel, [...at(0, -3.6), 27.2] as P3, [...at(0, 3.6), 27.2] as P3, 0.3); // sheave beam
+  // strut: a box girder from under the platform to the ground
+  beam(steel, [...at(3.6, 0), 20.0] as P3, [...at(11.2, 0), 0.0] as P3, 1.1);
+  const yellow = part(sq(3.8), base, 28.2, clad(YELLOW));
+  railing(yellow, sq(3.8), 20.6, 1.05);
+  railing(yellow, sq(3.6), 27.2, 1.0);
+  // stairs on the south side: landings with railings, flights between them
+  const landing: P2[] = [at(-4.2, -2.6), at(-2.8, -2.6), at(-2.8, -0.2), at(-4.2, -0.2)];
+  for (const zz of [11.5, 14.5, 17.5]) { prism(steel, landing, zz - 0.15, zz); railing(yellow, landing, zz, 1.0); }
+  for (const [z0, z1, v] of [[9.0, 11.5, -2.2], [11.5, 14.5, -0.6], [14.5, 17.5, -2.2], [17.5, 20.0, -0.6]]) {
+    const v1 = v < -1 ? -0.6 : -2.2;
+    beam(yellow, [...at(-3.5, v), z0] as P3, [...at(-3.5, v1), z1] as P3, 0.22);
+  }
+  return [steel, yellow];
+}
+
+const SILO = [0.86, 0.87, 0.86], HALL_ROOF = [0.80, 0.81, 0.80];
+
+/**
+ * The three round silos beside Szyb Kościuszko (white tops with a hatch on the orthophoto, ≈ 3.3 m across;
+ * NMPT − NMT 14–18 m), which the surface model otherwise turns into tree crowns. Offsets in m east, north.
+ */
+function kosciuszkoSilos(c: P2, base: number): Piece[] {
+  const out: Piece[] = [];
+  for (const [dx, dy] of [[1.1, 1.85], [-3.9, -0.9], [-0.4, -2.0]]) {
+    const q: P2 = [c[0] + dx, c[1] + dy], s = piece(q, base, 1.65, 16.6, clad(SILO));
+    lathe(s, q, [[0, 1.65], [16.0, 1.65], [16.6, 0.5]], 16);
+    disc(s, q, 16.6, 0.5, 0, 16);
+    out.push(s);
+  }
+  return out;
+}
+
 /** Models at a measured point, for parts OSM does not map on their own. */
 export const PLACED: Placed[] = [
   // centre of the round part of the graduation tower's OSM outline (a circle fitted to its outer and inner arcs,
   // r 7.6 m), as the walls are drawn from that outline; the surface model has the roof 1.2 m further east
   { name: "Tężnia solankowa: wieża widokowa", at: [49.984448, 20.052061], clear: 8, model: tezniaTower },
   // headframes: the centre of the LoD2 block standing in for each (its roof outline), cut off at the roofs around
-  { name: "Szyb Regis", at: [49.983825, 20.061206], clear: 4, cut: 4.3, walls: SALMON, model: regisHeadframe },
-  { name: "Szyb Daniłowicza", at: [49.983034, 20.055672], clear: 4, cut: 4.0, walls: KHAKI, model: danilowiczHeadframe },
+  { name: "Szyb Regis", at: [49.983825, 20.061206], clear: 4, cut: 4.3, building: { wall: SALMON }, model: regisHeadframe },
+  { name: "Szyb Daniłowicza", at: [49.983034, 20.055672], clear: 4, cut: 4.0, building: { wall: KHAKI }, model: danilowiczHeadframe },
+  { name: "Szyb Kinga", at: [49.983251, 20.051488], clear: 4, cut: 4.4, building: { wall: OCHRE }, model: kingaHeadframe },
+  // not in LoD2: the centre of the NMPT − NMT area above 18 m
+  { name: "Szyb Kościuszko", at: [49.982752, 20.045126], clear: 6, building: { roof: HALL_ROOF }, model: kosciuszkoHeadframe },
+  // the silos on the orthophoto, offsets from here
+  { name: "Szyb Kościuszko: silosy", at: [49.982735, 20.045266], clear: 5.5, model: kosciuszkoSilos },
 ];
