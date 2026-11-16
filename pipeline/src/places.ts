@@ -41,9 +41,10 @@ export interface Region {
    * Where buildings, trees and terrain come from beyond OSM:
    *   "tlv"  Tel Aviv-Yafo municipal GIS (buildings + canopy), Copernicus GLO-30 terrain
    *   "lgl"  LGL Baden-Württemberg open data: LoD2 buildings, nDOM1 tree crowns, DGM1 terrain
+   *   "hzl"  Herzliya municipal GIS (buildings + 2023 tree survey, local download), Copernicus GLO-30
    *   unset  OSM buildings and trees, Copernicus GLO-30 terrain
    */
-  sources?: "tlv" | "lgl";
+  sources?: "tlv" | "lgl" | "hzl";
   /** OSM from this Geofabrik .osm.pbf extract (osmlocal.ts) instead of the Overpass API. */
   osmExtract?: string;
   /**
@@ -84,7 +85,7 @@ export const REGIONS: Record<string, Region> = {
     ],
     airport: { lat: 32.0055, lon: 34.8854, runwayHeadingDeg: 117 }, // Ben Gurion, runway 12
     credits: [
-      "Map data © OpenStreetMap contributors · Tel Aviv-Yafo Municipality",
+      "Map data © OpenStreetMap contributors · Tel Aviv-Yafo Municipality · Herzliya Municipality GIS",
       "Terrain: Copernicus DEM © DLR, Airbus DS · Painted with AI",
     ],
     geoidM: 19.1,
@@ -128,6 +129,7 @@ export const REGIONS: Record<string, Region> = {
 
 export const CITIES: Record<string, City> = {
   "tel-aviv-yafo": { title: "Tel Aviv-Yafo", region: "israel-center", center: [32.0745, 34.7810], widthM: 5200 },
+  herzliya: { title: "Herzliya", region: "israel-center", center: [32.1653, 34.8258], widthM: 7500 },
   stuttgart: { title: "Stuttgart", region: "stuttgart", center: [48.7784, 9.18], widthM: 3000 },
 };
 
