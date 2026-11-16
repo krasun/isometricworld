@@ -140,7 +140,7 @@ export const REGIONS: Record<string, Region> = {
   wieliczka: {
     title: "Wieliczka",
     origin: { lat: 49.98236, lon: 20.06018, h: 0 }, // Rynek Górny (centre of its OSM pedestrian area)
-    headingDeg: 225, // looks SW: 45° to the old town's N–S / E–W streets, the hills to the south in view
+    headingDeg: 330, // looks NNW: north near the top, 30° to the old town's N–S / E–W streets; the A4 and Kraków at the back
     country: "Poland",
     municipalities: ["Wieliczka"],
     credits: [
@@ -152,9 +152,12 @@ export const REGIONS: Record<string, Region> = {
     groundH: 300, // the town lies ~210–390 m above sea level, + geoid
     heightBase: 250, // valley ~250 m, hills ~430 m ellipsoid, buildings well below 805 m
     sources: "gugik",
-    teryt: ["1219"], // powiat wielicki
+    teryt: ["1219", "1261"], // powiat wielicki; Kraków (across the A4, in the ring around the town)
     look: "styled",
-    outline: { relations: [2751961] }, // the town of Wieliczka (admin_level 8)
+    // gmina Wieliczka (OSM relation 2662713, admin_level 7: the town and its villages) and Kraków (449696,
+    // north of the A4), cut further by the areas: the town (relation 2751961) and the A4 stay clear of the
+    // faded edge, the villages and Kraków's edge around them fade out
+    outline: { relations: [2662713, 449696] },
   },
 };
 

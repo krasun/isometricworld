@@ -66,6 +66,10 @@ export const AREAS: Record<string, Area> = {
   /** Wieliczka test patch: Rynek Górny, Zamek Żupny, the Regis, Daniłowicza and Kinga shafts, the graduation
    *  tower, the Rynek-Kopalnia station, St Clement's and St Sebastian's (~1.2 × 1.4 km). */
   "wieliczka-rynek": { title: "Wieliczka · Rynek Górny · Kopalnia", region: "wieliczka", bbox: [49.977, 20.049, 49.988, 20.068] },
+  /** The whole town (OSM relation 2751961: 49.971–50.005 N, 20.003–20.089 E) and a ~650 m ring around it, so
+   *  the faded map edge (up to ~640 m wide) falls on the villages and Kraków, not on the town; north to past
+   *  the A4 (50.000–50.018 N). */
+  "wieliczka-town": { title: "Wieliczka", region: "wieliczka", bbox: [49.965, 19.994, 50.024, 20.098] },
 };
 
 /** Look up an area and switch the camera to its region: call before any projection. */
