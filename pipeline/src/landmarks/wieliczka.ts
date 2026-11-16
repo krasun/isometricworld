@@ -286,11 +286,14 @@ function basztaDetails(c: P2, base: number, ground: number): Piece[] {
   return [wood, top];
 }
 
-/** Named buildings whose OSM tags give no look (merged over their tags, scene.ts): the salt works castle. */
+/** Named buildings whose OSM tags give no look (merged over their tags, scene.ts); roofs stay the orthophoto's. */
 export const LOOKS: Record<string, Record<string, string>> = {
-  // pale butter-yellow plaster, red tiles (the orthophoto's roofing class)
+  // the salt works castle: pale butter-yellow plaster, red tiles
   "Zamek Żupny": { "building:colour": "yellow" },
   "Zamek Południowy": { "building:colour": "yellow" },
+  // St Clement's: salmon-pink plaster with cream pilasters (photos 2023); its new copper roof reads brown-grey on
+  // the 2025 orthophoto (the light green of early 2023 photos was the old one)
+  "Kościół pw. Świętego Klemensa w Wieliczce": { "building:colour": "pink" },
 };
 
 /** Models at a measured point, for parts OSM does not map on their own. */

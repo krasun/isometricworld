@@ -20,6 +20,7 @@ import { openArea } from "./areas.ts";
 import { CAMERA, ecefToEnu, enuToLlh, enuToPixel, llhToEcef } from "./camera.ts";
 import { isBridge } from "./bridges.ts";
 import { crowns } from "./canopy.ts";
+import { styleOf } from "./styles.ts";
 import { ARCADES, arcade, LOOKS, PLACED, type Piece, type Rings, STRUCTURES, type Structure, TOPS, TOWERS } from "./landmarks.ts";
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
@@ -156,6 +157,10 @@ function wallLook(t: Record<string, string>): { style: number | null; wall: numb
 }
 
 function lod2Style(b: Lod2Building): [number, number] {
+  const [s, roofKind] = lod2StyleOf(b), kind = b.kind ?? alkisKind(b.fn);
+  return [s !== 4 && MONUMENTAL.has(kind) ? 6 : s, roofKind]; // preset: monumental walls for these kinds
+}
+function lod2StyleOf(b: Lod2Building): [number, number] {
   const kind = b.kind ?? alkisKind(b.fn), flatOnly = b.roofType === "1000";
   const r = hash(Math.round(b.center[0] * 1e6) ^ Math.round(b.center[1] * 1e6));
   const r2 = hash(Math.round(b.center[1] * 1e6) * 7 + 3);
@@ -178,6 +183,8 @@ const bbox = area.bbox;
 const region = REGIONS[area.region];
 /** Styled look (places.ts `look`): OSM looks and landmarks on the LoD2 meshes, tunnel portals, bridge models. */
 const STYLED = region.look === "styled";
+/** Building kinds drawn with monumental walls (styles.ts). */
+const MONUMENTAL = new Set(styleOf(region.style).monumental);
 /** Buildings are LoD2 meshes and tree crowns come from a surface model (LGL, GUGiK), not from OSM. */
 const LOD2 = region.sources === "lgl" || region.sources === "gugik";
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height. */

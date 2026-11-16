@@ -341,14 +341,15 @@ const buildingMaterial = new THREE.ShaderMaterial({
     attribute vec3 color;
     attribute vec2 facade;   // (meters along wall, meters above ground); y = -1000: roof / rooftop object
     attribute float kind;    // style index
-    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos;
+    attribute vec4 frame;    // monumental walls (style 6, wallFrames): start and end along the wall, eaves, kind code + top
+    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos; varying vec4 vFrame;
     void main() {
-      vColor = color; vNormal = normal; vFacade = facade; vKind = kind; vPos = position;
+      vColor = color; vNormal = normal; vFacade = facade; vKind = kind; vPos = position; vFrame = frame;
       gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: /* glsl */ `
     uniform vec3 sun;
-    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos;
+    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos; varying vec4 vFrame;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     const vec3 GLASS = vec3(0.30, 0.40, 0.50);
     void main() {
@@ -420,6 +421,55 @@ const buildingMaterial = new THREE.ShaderMaterial({
             if (fract(y / FH) < 0.1 + 0.15 * r4 || fract(x / M) < 0.06) c = vec3(0.84, 0.86, 0.88);
           } else if (k == 4) {       // sheds, garages, halls: horizontal or vertical cladding
             if (r1 < 0.5 ? fract(y / 0.9) < 0.08 : fract(x / 0.6) < 0.12) c *= 0.93;
+          } else if (k == 6) {
+            // monumental walls (churches; styles.ts monumental): laid out on each wall, not on a floor grid.
+            // vFrame (wallFrames): the wall's start and end along it, its eaves, 1000 × raised + 100 × kind + its top;
+            // heights (y too) from the wall's own bottom
+            float up = floor(vFrame.w / 1000.0 + 0.001), wk = floor((vFrame.w - 1000.0 * up) / 100.0 + 0.001);
+            float s0 = vFrame.x, W = vFrame.y - vFrame.x, E = vFrame.z, T = vFrame.w - 1000.0 * up - 100.0 * wk;
+            float xl = x - s0, mid = xl - 0.5 * W;
+            bool tower = wk > 2.5, gable = wk > 0.5 && wk < 2.5, portal = wk > 1.5 && wk < 2.5;
+            vec3 TRIM = dot(c, vec3(0.3333)) > 0.9 ? c * 0.9 : vec3(0.96, 0.94, 0.87); // pilasters, cornices, surrounds
+            vec3 GL = vec3(0.21, 0.26, 0.31), WOOD = vec3(0.34, 0.24, 0.17);
+            if (y < 0.8 && up < 0.5) c = mix(c, vec3(0.74, 0.72, 0.68), 0.65);       // stone plinth
+            else if (min(xl, W - xl) < 0.55 && W > 3.0) c = TRIM;                     // corner pilasters
+            else if (tower) {
+              // storeys of about 5.5 m between cornices: a narrow window each, the clock, the belfry on top
+              float N = max(2.0, floor(E / 5.5 + 0.5)), Hs = E / N, i = floor(y / Hs), fy = y - i * Hs, ab = abs(mid);
+              if (fy < 0.35 && i > 0.5) c = TRIM;
+              else if (i > N - 1.5) {                                                 // belfry: arched opening, louvres
+                float r = min(1.2, W * 0.17), yh = Hs - 1.0 - r, d = fy > yh ? length(vec2(mid, fy - yh)) : ab;
+                if (fy > 1.0 && d < r) c = fract(fy / 0.35) < 0.3 ? vec3(0.30, 0.28, 0.26) : vec3(0.13, 0.13, 0.15);
+                else if (fy > 0.85 && d < r + 0.2) c = TRIM;
+              } else if (i > N - 2.5 && N > 2.5) {                                    // clock
+                float r = min(1.1, min(W * 0.16, Hs * 0.3)), d = length(vec2(mid, fy - Hs * 0.55));
+                if (d < r * 0.12) c = vec3(0.15);
+                else if (d < r) c = vec3(0.95, 0.93, 0.86);
+                else if (d < r + 0.22) c = vec3(0.20, 0.20, 0.22);
+              } else if (i > 0.5 || E < 12.0) {                                       // a narrow window per storey
+                float r = min(0.55, W * 0.08), yh = Hs - 1.3 - r, d = fy > yh ? length(vec2(mid, fy - yh)) : ab;
+                if (fy > 1.3 && d < r) c = GL; else if (fy > 1.15 && d < r + 0.16) c = TRIM;
+              }
+            } else {
+              // bays of about 5.5 m: a tall round-arched window each, pilasters between, a cornice at the eaves
+              float n = max(1.0, floor(W / 5.5 + 0.5)), B = W / n, bx = mod(xl, B) - 0.5 * B, ab = abs(bx);
+              float ww = clamp(B * 0.34, 0.9, 2.0), r = 0.5 * ww, ys = max(gable ? 4.9 : 1.6, 0.22 * E), yh = E - 1.3 - r;
+              if (y > E - 0.75 && y < E - 0.15) c = TRIM;
+              else if (y < E - 0.75) {
+                if (n > 1.5 && 0.5 * B - ab < 0.28) c = TRIM;
+                else if (portal && abs(mid) < 1.3 && y < 4.5) {                       // portal in the gable wall
+                  float d = y > 3.2 ? length(vec2(mid, y - 3.2)) : abs(mid);
+                  if (d < 1.0) c = WOOD * (fract(mid / 0.3) < 0.12 ? 0.8 : 1.0); else if (d < 1.25) c = TRIM;
+                } else if (yh - ys > 0.8 && W > 2.2) {
+                  float d = y > yh ? length(vec2(bx, y - yh)) : ab;
+                  if (y > ys && d < r) c = ab < 0.05 || abs(y - yh) < 0.05 ? TRIM * 0.85 : GL * (0.9 + 0.3 * (y - ys) / (yh + r - ys));
+                  else if (y > ys - 0.3 && d < r + 0.17) c = TRIM;
+                }
+              } else if (gable) {                                                     // oculus in the gable
+                float o = clamp((T - E) * 0.12, 0.4, 1.0), d = length(vec2(mid, y - E - (T - E) * 0.38));
+                if (d < o) c = GL; else if (d < o + 0.2) c = TRIM;
+              }
+            }
           } else {                   // offices: ribbon windows or a grid of square windows, shop fronts
             float FH = 3.4 + 0.5 * r1, M = 1.3 + 0.8 * r2, fy = fract(y / FH);
             vec3 g = mix(WIN, r5 < 0.5 ? vec3(0.36, 0.48, 0.58) : vec3(0.40, 0.50, 0.46), 0.5) * (0.9 + 0.2 * hash(vec2(floor(x / M), floor(y / FH)) + v));
@@ -756,7 +806,51 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
 }
 
 /** LoD2 meshes into the shared building arrays (flat-shaded triangles; walls carry facade coordinates). */
-function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[], fac: number[], kin: number[]) {
+/**
+ * Monumental walls (style 6): per wall triangle, its LoD2 wall polygon's [start, end along, eaves, 1000 × raised
+ * + 100 × kind + top] and its bottom; eaves and top from that bottom (the shader lays a wall standing on a lower
+ * roof out on its own height, without plinth, portal or oculus: raised). Kinds: 0 a side wall; 1 a gable from
+ * the ground (rising 2.5 m+ above its ends, 6 m+ wide): an oculus; 2 such a gable 7 m+ wide: also a portal;
+ * 3 a tower (eaves 4 m+ above the building's main eaves, under 14 m wide). The eaves are the wall's height at
+ * its ends, or the building's main eaves where those are much lower (stepped outlines); the main eaves: the
+ * median over its walls weighted by their length (a nave's side walls, a rotunda's drum). A
+ * polygon is the triangles sharing a facing and the origin of `along` (lod2.ts: along = projection on the
+ * wall's horizontal direction + a constant per polygon).
+ */
+function wallFrames(wall: number[]): Array<{ frame: number[]; bottom: number }> {
+  type Wall = { nx: number; ny: number; o: number; s0: number; s1: number; top: number; pts: number[][] };
+  const walls: Wall[] = [], of: Wall[] = [], rx = wall[0], ry = wall[1]; // near the building: kilometres would magnify normal errors
+  for (let i = 0; i + 14 < wall.length; i += 15) {
+    const [ax, ay, az] = wall.slice(i, i + 3), [bx, by, bz] = wall.slice(i + 5, i + 8), [cx, cy, cz] = wall.slice(i + 10, i + 13);
+    let nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay), ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
+    const L = Math.hypot(nx, ny) || 1;
+    nx /= L; ny /= L;
+    const o = wall[i + 3] - ((ax - rx) * -ny + (ay - ry) * nx);
+    let w = walls.find((q) => Math.abs(q.nx - nx) + Math.abs(q.ny - ny) < 0.03 && Math.abs(q.o - o) < 0.15);
+    if (!w) walls.push(w = { nx, ny, o, s0: Infinity, s1: -Infinity, top: 0, pts: [] });
+    for (const k of [3, 8, 13]) {
+      const s = wall[i + k], h = wall[i + k + 1];
+      w.s0 = Math.min(w.s0, s); w.s1 = Math.max(w.s1, s); w.top = Math.max(w.top, h); w.pts.push([s, h]);
+    }
+    of.push(w);
+  }
+  // height at both ends (the eaves of a gable wall); the building's main eaves
+  const ends = (w: Wall) => Math.min(...[w.s0, w.s1].map((e) => Math.max(...w.pts.filter((p) => Math.abs(p[0] - e) < 0.3).map((p) => p[1]))));
+  const byE = walls.map((w) => ({ e: ends(w), len: w.s1 - w.s0 })).sort((a, b) => a.e - b.e);
+  let half = byE.reduce((t, q) => t + q.len, 0) / 2, eaves = 0;
+  for (const q of byE) if ((half -= q.len) <= 0) { eaves = q.e; break; }
+  const frame = new Map(walls.map((w) => {
+    const W = w.s1 - w.s0, bottom = Math.min(...w.pts.map((p) => p[1])), raised = bottom > 2 ? 1 : 0;
+    let e = ends(w);
+    if (e < 0.6 * eaves) e = Math.min(w.top, eaves);
+    const kind = e > eaves + 4 && W < 14 ? 3 : !raised && w.top - e > 2.5 && W > 6 ? (W > 7 ? 2 : 1) : 0;
+    const b = raised ? bottom : 0;
+    return [w, { frame: [w.s0, w.s1, e - b, 1000 * raised + 100 * kind + w.top - b], bottom: b }];
+  }) as Array<[Wall, { frame: number[]; bottom: number }]>);
+  return of.map((w) => frame.get(w)!);
+}
+
+function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[], fac: number[], kin: number[], frm: number[]) {
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
   for (const [style, roofKind, roof, wall, footprint, , seed, osmRoof, osmWall, bare] of data.m ?? []) {
     const j = (seed % 97) / 97 - 0.5; // per-building tint
@@ -767,7 +861,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
     const rnd = mulberry(seed * 7919 + 1);
     // style in the integer part, the building's facade variation in the fraction (buildingMaterial)
     const kind = 10 + style + 0.05 + 0.9 * mulberry(seed * 104729 + 7)();
-    const green = roofKind % 10 === 6, landmark = (style === 4 && !!osmRoof) || !!bare; // hand-modelled / LOOKS landmarks: no roof furniture
+    const green = roofKind % 10 === 6, landmark = (style === 4 && !!osmRoof) || !!bare || style === 6; // hand-modelled / LOOKS landmarks, churches: no roof furniture
     const planes: Plane[] = [];
     for (let i = 0; i + 8 < roof.length; i += 9) {
       a.fromArray(roof, i); b.fromArray(roof, i + 3); c.fromArray(roof, i + 6);
@@ -785,15 +879,18 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
       pl.tris.push([a.x, a.y, b.x, b.y, c.x, c.y]); pl.area += area;
     }
     if (planes.length) roofFurniture({ pos, nor, col, fac, kin }, planes, footprint, wall, style, green, w, rnd);
+    const frames = style === 6 ? wallFrames(wall) : null;
     for (let i = 0; i + 14 < wall.length; i += 15) {
       a.fromArray(wall, i); b.fromArray(wall, i + 5); c.fromArray(wall, i + 10);
       n.subVectors(b, a).cross(c.clone().sub(a)).normalize();
       for (const k of [0, 5, 10]) {
+        const f = frames?.[i / 15];
+        if (f) { while (frm.length < (pos.length / 3) * 4) frm.push(0, 0, 0, 0); frm.push(...f.frame); }
         const above = wall[i + k + 4];
         // walls reach 3 m below the LoD2 base, so a downhill slope never opens a gap under the house
         const drop = above < 0.05 ? 3 : 0;
         pos.push(wall[i + k], wall[i + k + 1], wall[i + k + 2] - drop); nor.push(n.x, n.y, n.z); col.push(...w);
-        fac.push(wall[i + k + 3], above - drop); kin.push(kind);
+        fac.push(wall[i + k + 3], above - drop - (f?.bottom ?? 0)); kin.push(kind);
       }
     }
   }
@@ -802,7 +899,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
 function buildObjects(data: TileObjects) {
   objects.children.forEach((o: any) => o.geometry?.dispose());
   objects.clear();
-  const pos: number[] = [], nor: number[] = [], col: number[] = [], fac: number[] = [], tow: number[] = [];
+  const pos: number[] = [], nor: number[] = [], col: number[] = [], fac: number[] = [], tow: number[] = [], frm: number[] = [];
   /** axis-aligned box on a roof (rooftop clutter), no facade pattern */
   const box = (x: number, y: number, z: number, sx: number, sy: number, sz: number, c: number[]) => {
     const X = [x - sx / 2, x + sx / 2], Y = [y - sy / 2, y + sy / 2], Z = [z, z + sz];
@@ -864,7 +961,8 @@ function buildObjects(data: TileObjects) {
       }
     }
   });
-  if (STYLED) addMeshes(data, pos, nor, col, fac, tow);
+  if (STYLED) addMeshes(data, pos, nor, col, fac, tow, frm);
+  while (frm.length < (pos.length / 3) * 4) frm.push(0, 0, 0, 0);
   if (pos.length) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
@@ -872,6 +970,7 @@ function buildObjects(data: TileObjects) {
     geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
     geo.setAttribute("facade", new THREE.Float32BufferAttribute(fac, 2));
     geo.setAttribute("kind", new THREE.Float32BufferAttribute(tow, 1));
+    geo.setAttribute("frame", new THREE.Float32BufferAttribute(frm, 4));
     objects.add(new THREE.Mesh(geo, buildingMaterial));
   }
   if (data.t.length) {

@@ -7,6 +7,8 @@
  * the Stuttgart test patch pixel for pixel), not a flag on each region. Regions in the same country or
  * climate share a preset.
  */
+import type { BuildingKind } from "./lod2.ts";
+
 export interface StylePreset {
   /**
    * Sun shadows cast by buildings and trees onto the ground, roofs and walls: the colour a fully shaded
@@ -19,6 +21,14 @@ export interface StylePreset {
    * colour listed twice is twice as common. A style left out (or null) keeps the renderer's own palette.
    */
   walls: Partial<Record<number, number[][]>> | null;
+  /**
+   * Building kinds (lod2.ts BuildingKind) drawn as monumental walls (façade style 6, page/renderer.ts): laid
+   * out on each wall rather than a floor grid: a stone plinth, pilasters at the corners and between bays,
+   * one tall round-arched window per bay, a cornice at the eaves, an oculus in the gable, a portal in the
+   * gable wall; towers in storeys with a clock and the belfry at the top. Two-tone: pilasters, cornices
+   * and surrounds in a cream trim. No roof clutter. Empty: those kinds keep their usual style.
+   */
+  monumental: BuildingKind[];
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -31,7 +41,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null },
+  stuttgart: { castShadow: null, walls: null, monumental: [] },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -43,7 +53,10 @@ export const STYLES = {
       // outbuildings, garages, halls: plaster, red brick, weathered wood, sheet metal
       4: [[0.78, 0.78, 0.76], [0.84, 0.80, 0.72], [0.70, 0.42, 0.33], [0.86, 0.86, 0.84], [0.62, 0.50, 0.38]],
       5: [[0.93, 0.93, 0.92], [0.86, 0.87, 0.88], [0.94, 0.91, 0.84], [0.66, 0.67, 0.69]],
+      // churches: white, cream, Galician ochre, salmon pink, pale yellow plaster
+      6: [[0.96, 0.95, 0.92], [0.95, 0.91, 0.82], [0.93, 0.82, 0.55], [0.94, 0.82, 0.78], [0.96, 0.90, 0.70]],
     },
+    monumental: ["church"],
   },
 } satisfies Record<string, StylePreset>;
 
