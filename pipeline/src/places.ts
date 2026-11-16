@@ -140,7 +140,7 @@ export const REGIONS: Record<string, Region> = {
   wieliczka: {
     title: "Wieliczka",
     origin: { lat: 49.98236, lon: 20.06018, h: 0 }, // Rynek Górny (centre of its OSM pedestrian area)
-    headingDeg: 200, // provisional: picked from test renders before the first publish
+    headingDeg: 225, // looks SW: 45° to the old town's N–S / E–W streets, the hills to the south in view
     country: "Poland",
     municipalities: ["Wieliczka"],
     credits: [
