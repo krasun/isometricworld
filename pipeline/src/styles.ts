@@ -29,6 +29,12 @@ export interface StylePreset {
    * and surrounds in a cream trim. No roof clutter. Empty: those kinds keep their usual style.
    */
   monumental: BuildingKind[];
+  /**
+   * Eaves (LoD2 roofs end flush with the walls): each pitched roof plane carried `overhang` m (in plan) past
+   * its eaves and `verge` m past its gables, a gutter under the eaves and downpipes at their ends and corners
+   * (page/renderer.ts eaves). null: roofs end at the walls.
+   */
+  eaves: { overhang: number; verge: number; gutters: boolean } | null;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -41,7 +47,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [] },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -57,6 +63,7 @@ export const STYLES = {
       6: [[0.96, 0.95, 0.92], [0.95, 0.91, 0.82], [0.93, 0.82, 0.55], [0.94, 0.82, 0.78], [0.96, 0.90, 0.70]],
     },
     monumental: ["church"],
+    eaves: { overhang: 0.5, verge: 0.3, gutters: true },
   },
 } satisfies Record<string, StylePreset>;
 

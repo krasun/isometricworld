@@ -172,6 +172,8 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   follow that rather than chance: window rows by storeys, shop fronts where there is a shop, loggias on blocks
   of flats, garage, shed and hall doors, a market's panels, sign band and entrance (`facadeFlags` in
   `scene.ts`, `wallFacts` in `renderer.ts`); a measured roof colour is never replaced by a made-up green roof.
+  `eaves` (on in "poland"): LoD2 roofs end flush with the walls, so each pitched roof plane is carried past its
+  eaves (≈ 0.5 m) and gables (≈ 0.3 m), with a gutter under the eaves and downpipes at their ends and corners.
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).

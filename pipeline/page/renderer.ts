@@ -675,6 +675,112 @@ function quad3(o: Out, q: number[][], c: number[]) {
   for (const k of [0, 1, 2, 0, 2, 3]) { o.pos.push(...q[k]); o.nor.push(nx, ny, nz); o.col.push(...c); o.fac.push(0, -1000); o.kin.push(0); }
 }
 
+/** square bar of width w from a to b (gutters, downpipes), faces turned outward */
+function bar(o: Out, a: number[], b: number[], w: number, c: number[]) {
+  const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  const e1 = new THREE.Vector3().crossVectors(d, Math.abs(d.z) > 0.9 * d.length() ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1)).normalize();
+  const e2 = new THREE.Vector3().crossVectors(d, e1).normalize();
+  const off = [[1, 1], [1, -1], [-1, -1], [-1, 1]].map(([i, j]) => e1.clone().multiplyScalar((i * w) / 2).add(e2.clone().multiplyScalar((j * w) / 2)));
+  for (let k = 0; k < 4; k++) {
+    const p = off[k], q = off[(k + 1) % 4], out = p.clone().add(q);
+    let f = [[a[0] + p.x, a[1] + p.y, a[2] + p.z], [a[0] + q.x, a[1] + q.y, a[2] + q.z], [b[0] + q.x, b[1] + q.y, b[2] + q.z], [b[0] + p.x, b[1] + p.y, b[2] + p.z]];
+    const n = new THREE.Vector3(f[1][0] - f[0][0], f[1][1] - f[0][1], f[1][2] - f[0][2]).cross(new THREE.Vector3(f[2][0] - f[0][0], f[2][1] - f[0][1], f[2][2] - f[0][2]));
+    if (n.dot(out) < 0) f = [f[1], f[0], f[3], f[2]];
+    quad3(o, f, c);
+  }
+}
+
+/**
+ * Eaves (styles.ts `eaves`). LoD2 roofs end flush with the walls: every pitched roof plane is carried on past
+ * its free edges (edges of one roof triangle only), along the slope at the eaves and sideways at the gables,
+ * the corners mitred; edges rising into a higher wall stay. A gutter hangs under each eaves edge, downpipes run
+ * from the ends and corners of the eaves down to the building's base.
+ */
+function eaves(o: Out, roof: number[], wall: number[], tile: number[], kind: number, seed: number, cfg: { overhang: number; verge: number; gutters: boolean }) {
+  const nv = roof.length / 3, vk: number[] = new Array(nv), ids = new Map<string, number>();
+  for (let i = 0; i < nv; i++) { // vertex ids by position (5 cm)
+    const k = `${Math.round(roof[3 * i] * 20)},${Math.round(roof[3 * i + 1] * 20)},${Math.round(roof[3 * i + 2] * 20)}`;
+    let id = ids.get(k);
+    if (id === undefined) ids.set(k, id = ids.size);
+    vk[i] = id;
+  }
+  const ek = (a: number, b: number) => (a < b ? a * 1048576 + b : b * 1048576 + a), count = new Map<number, number>();
+  for (let t = 0; t + 2 < nv; t += 3) for (const [i, j] of [[0, 1], [1, 2], [2, 0]]) { const k = ek(vk[t + i], vk[t + j]); count.set(k, (count.get(k) ?? 0) + 1); }
+  // free edges of pitched planes: [ax, ay, az, bx, by, bz, offx, offy, offz, nx, ny, nz, eave, id a, id b]
+  const E: number[][] = [];
+  for (let t = 0; t + 2 < nv; t += 3) {
+    const p = [3 * t, 3 * t + 3, 3 * t + 6];
+    const ux = roof[p[1]] - roof[p[0]], uy = roof[p[1] + 1] - roof[p[0] + 1], uz = roof[p[1] + 2] - roof[p[0] + 2];
+    const wx = roof[p[2]] - roof[p[0]], wy = roof[p[2] + 1] - roof[p[0] + 1], wz = roof[p[2] + 2] - roof[p[0] + 2];
+    let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+    const L = Math.hypot(nx, ny, nz);
+    if (L < 1e-6) continue;
+    nx /= L; ny /= L; nz /= L;
+    if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    if (nz > 0.97 || nz < 0.2) continue; // flat roofs keep their parapet; near-vertical faces
+    for (const [i, j, k] of [[0, 1, 2], [1, 2, 0], [2, 0, 1]]) {
+      if (count.get(ek(vk[t + i], vk[t + j])) !== 1) continue;
+      const a = p[i], b = p[j], c = p[k];
+      const ex = roof[b] - roof[a], ey = roof[b + 1] - roof[a + 1], ez = roof[b + 2] - roof[a + 2];
+      let ox = ey * nz - ez * ny, oy = ez * nx - ex * nz, oz = ex * ny - ey * nx;
+      const ol = Math.hypot(ox, oy, oz) || 1;
+      ox /= ol; oy /= ol; oz /= ol;
+      if (ox * (roof[c] - roof[a]) + oy * (roof[c + 1] - roof[a + 1]) + oz * (roof[c + 2] - roof[a + 2]) > 0) { ox = -ox; oy = -oy; oz = -oz; }
+      const h = Math.hypot(ox, oy);
+      if (oz > 0.05 || h < 0.3) continue; // against a higher wall
+      const eave = oz < -0.05, d = (eave ? cfg.overhang : cfg.verge) / h;
+      E.push([roof[a], roof[a + 1], roof[a + 2], roof[b], roof[b + 1], roof[b + 2], ox * d, oy * d, oz * d, nx, ny, nz, eave ? 1 : 0, vk[t + i], vk[t + j]]);
+    }
+  }
+  if (!E.length) return;
+  const push = (q: number[][], n: number[]) => { // roof triangles, counter-clockwise from above
+    const cr = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]);
+    for (const v of cr >= 0 ? q : [q[0], q[2], q[1]]) { o.pos.push(v[0], v[1], v[2]); o.nor.push(n[0], n[1], n[2]); o.col.push(...tile); o.fac.push(0, -1000); o.kin.push(kind); }
+  };
+  const at = new Map<number, Array<{ e: number[]; v: number[]; dx: number; dy: number }>>();
+  for (const e of E) {
+    const a = [e[0], e[1], e[2]], b = [e[3], e[4], e[5]], a2 = [a[0] + e[6], a[1] + e[7], a[2] + e[8]], b2 = [b[0] + e[6], b[1] + e[7], b[2] + e[8]], n = [e[9], e[10], e[11]];
+    push([a, b, b2], n); push([a, b2, a2], n);
+    for (const [v, w, id] of [[a, b, e[13]], [b, a, e[14]]] as Array<[number[], number[], number]>) {
+      const l = Math.hypot(w[0] - v[0], w[1] - v[1]) || 1;
+      if (!at.has(id)) at.set(id, []);
+      at.get(id)!.push({ e, v, dx: (w[0] - v[0]) / l, dy: (w[1] - v[1]) / l });
+    }
+  }
+  // corners: where two carried edges meet at an angle, fill the mitre (at the lower of their levels)
+  for (const list of at.values()) {
+    if (list.length !== 2) continue;
+    const [p, q] = list, hp = Math.hypot(p.e[6], p.e[7]), hq = Math.hypot(q.e[6], q.e[7]);
+    if ((p.e[6] * q.e[6] + p.e[7] * q.e[7]) / (hp * hq) > 0.9) continue;
+    const v = p.v, m = [v[0] + p.e[6] + q.e[6], v[1] + p.e[7] + q.e[7], v[2] + Math.min(p.e[8], q.e[8])];
+    const n = [p.e[9] + q.e[9], p.e[10] + q.e[10], p.e[11] + q.e[11]], nl = Math.hypot(n[0], n[1], n[2]) || 1;
+    const nn = [n[0] / nl, n[1] / nl, n[2] / nl];
+    push([v, [v[0] + p.e[6], v[1] + p.e[7], v[2] + p.e[8]], m], nn); push([v, m, [v[0] + q.e[6], v[1] + q.e[7], v[2] + q.e[8]]], nn);
+  }
+  if (!cfg.gutters) return;
+  const G = [[0.26, 0.27, 0.28], [0.26, 0.27, 0.28], [0.26, 0.27, 0.28], [0.26, 0.27, 0.28], [0.38, 0.28, 0.21], [0.38, 0.28, 0.21], [0.38, 0.28, 0.21], [0.70, 0.71, 0.72], [0.70, 0.71, 0.72], [0.90, 0.90, 0.89]][(seed * 7) % 10];
+  let base = Infinity;
+  for (let i = 0; i + 4 < wall.length; i += 5) base = Math.min(base, wall[i + 2] - wall[i + 4]);
+  for (const e of E) {
+    if (!e[12]) continue;
+    const h = Math.hypot(e[6], e[7]), ux = e[6] / h, uy = e[7] / h;
+    const lift = (x: number, y: number, z: number) => [x + e[6] + ux * 0.05, y + e[7] + uy * 0.05, z + e[8] - 0.1];
+    bar(o, lift(e[0], e[1], e[2]), lift(e[3], e[4], e[5]), 0.16, G);
+  }
+  // downpipes at the eaves' ends and corners (not where an eaves line runs straight on), a few per building
+  let pipes = 0;
+  for (const list of at.values()) {
+    const ev = list.filter((x) => x.e[12]);
+    if (!ev.length || (ev.length === 2 && ev[0].dx * ev[1].dx + ev[0].dy * ev[1].dy < -0.95)) continue;
+    for (const x of ev) {
+      if (pipes >= 8 || !Number.isFinite(base)) break;
+      const h = Math.hypot(x.e[6], x.e[7]), px = x.v[0] + (x.e[6] / h) * 0.12 + x.dx * 0.3, py = x.v[1] + (x.e[7] / h) * 0.12 + x.dy * 0.3;
+      bar(o, [px, py, x.v[2] + x.e[8] - 0.12], [px, py, base - 0.2], 0.11, G);
+      pipes++;
+    }
+  }
+}
+
 /** box turned by t (u = (cos t, sin t)): centre (x, y), base z, su × sv, height h on the -v side and hb on the +v side */
 function prism(o: Out, x: number, y: number, z: number, su: number, sv: number, h: number, hb: number, t: number, c: number[]) {
   const cu = Math.cos(t), sn = Math.sin(t);
@@ -951,6 +1057,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
       pl.tris.push([a.x, a.y, b.x, b.y, c.x, c.y]); pl.area += area;
     }
     if (planes.length) roofFurniture({ pos, nor, col, fac, kin }, planes, footprint, wall, style, green, w, rnd);
+    if (STYLE.eaves && !bare && wall.length) eaves({ pos, nor, col, fac, kin }, roof, wall, tileRoof, kind, seed, STYLE.eaves);
     const frames = style === 6 ? wallFrames(wall) : null;
     const facts = !frames && (storeys || flags) ? wallFacts(wall, storeys ?? 0, flags ?? 0) : null; // window rows, doors
     for (let i = 0; i + 14 < wall.length; i += 15) {
