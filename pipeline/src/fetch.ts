@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { openArea } from "./areas.ts";
 import { LOOKS, TOWERS } from "./landmarks.ts";
 import { download } from "./lgl.ts";
-import { FILTERS, localOsm, type OsmFilter } from "./osmlocal.ts";
+import { FILTERS, downloadExtract, localOsm, type OsmFilter } from "./osmlocal.ts";
 import { overpass } from "./overpass.ts";
 import { RAW } from "./paths.ts";
 import { REGIONS } from "./places.ts";
@@ -84,6 +84,8 @@ const extract = REGIONS[area.region].osmExtract;
 const osmQuery = (ql: string, bbox: number[], filter: OsmFilter) => extract ? localOsm(extract, bbox, filter) : overpass(ql);
 const dir = join(RAW, name);
 mkdirSync(dir, { recursive: true });
+// first: the region outline (outline.ts) is cut from the extract, and the LGL tiles to fetch depend on it
+if (extract) await downloadExtract(extract);
 
 if (sources === "tlv") {
   if (!existsSync(join(dir, "tlv_buildings.geojson")))

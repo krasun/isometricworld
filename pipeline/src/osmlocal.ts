@@ -18,8 +18,8 @@ interface LatLon { lat: number; lon: number }
 
 const DIR = join(RAW, "osm");
 
-/** Download the extract once (re-download: delete the file). */
-async function extract(url: string) {
+/** Download the extract once (re-download: delete the file); returns its path. */
+export async function downloadExtract(url: string) {
   mkdirSync(DIR, { recursive: true });
   const file = join(DIR, url.split("/").pop()!);
   if (existsSync(file)) return file;
@@ -42,7 +42,7 @@ function tagsOf(s: string): Tags {
 
 /** Every element of the extract inside bbox [s, w, n, e] that passes the filter, as Overpass JSON. */
 export async function localOsm(url: string, [s, w, n, e]: number[], filter: OsmFilter) {
-  const pbf = await extract(url);
+  const pbf = await downloadExtract(url);
   const cut = join(DIR, `cut-${process.pid}.osm.pbf`);
   // smart: complete ways and multipolygon members, like Overpass returns them with `geom`
   execFileSync("osmium", ["extract", "-b", `${w},${s},${e},${n}`, "--strategy", "smart", "-O", "-o", cut, pbf], { stdio: "ignore" });
