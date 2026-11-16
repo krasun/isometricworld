@@ -20,7 +20,7 @@ import { openArea } from "./areas.ts";
 import { CAMERA, ecefToEnu, enuToLlh, enuToPixel, llhToEcef } from "./camera.ts";
 import { isBridge } from "./bridges.ts";
 import { crowns } from "./canopy.ts";
-import { ARCADES, arcade, LOOKS, type Piece, TOPS, TOWERS } from "./landmarks.ts";
+import { ARCADES, arcade, LOOKS, PLACED, type Piece, type Rings, STRUCTURES, type Structure, TOPS, TOWERS } from "./landmarks.ts";
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
 import { deckHeight } from "./bridges.ts";
@@ -415,6 +415,7 @@ let osmCount = 0;
 // styled regions: OSM roof:colour / roof:material, building:colour / building:material per footprint or building part
 // tall towers (TV towers…): LoD2 has only a stump, OSM often has the whole shape as building:parts with min_height
 const tallTowers: Array<{ ring: P2[]; h: number; name?: string }> = [];
+const structures: Array<{ rings: Rings; structure: Structure; t: Record<string, string> }> = []; // landmarks.ts STRUCTURES
 const tops: Array<{ ring: P2[]; name: string }> = []; // landmarks.ts TOPS
 const fountains: Array<{ ring?: P2[]; at?: P2 }> = [];
 const arcades: Array<{ ring: P2[]; name: string }> = []; // landmarks.ts ARCADES
@@ -422,6 +423,13 @@ const parts: Array<{ ring: P2[]; h: number; min: number; t: Record<string, strin
 const looks: Array<{ ring: P2[]; area: number; roof: number[] | null; style: number | null; wall: number[] | null; bare?: boolean }> = [];
 for (const el of osm.elements) {
   const t = { ...el.tags, ...(LOOKS[el.tags?.name] ?? {}) };
+  // structures built on their OSM outline (landmarks.ts STRUCTURES): a graduation tower's brushwood walls
+  const structure = STYLED && el.type !== "node" ? STRUCTURES.find((s) => s.match(t)) : undefined;
+  if (structure) {
+    const rings = osmRings(el);
+    if (rings.outer.length) structures.push({ rings, structure, t });
+    continue;
+  }
   if (t.amenity === "fountain" && LOD2) { // nDOM reads fountain sculptures as tree crowns
     if (el.type === "node") { const q = toEnu(el.lon, el.lat); fountains.push({ at: [q[0], q[1]] }); }
     else if (el.type === "way" && el.geometry?.length >= 4) { const ring = ringFromLonLat(el.geometry.map((q: any) => [q.lon, q.lat])); if (ring) fountains.push({ ring }); }
@@ -571,6 +579,13 @@ function prism(ring: P2[], base: number, min: number, h: number, look: Mesh["loo
   }
   return { id: "osm-tower", fn: "osm_tower", roofType: "1000", height: h, base, roof, wall, footprint: ring, center: [0, 0], xy: [], look } as unknown as Mesh;
 }
+/** A way's or multipolygon's closed rings in ENU (members that are closed ways; others are left out). */
+function osmRings(el: any): Rings {
+  const ring = (g: any[]) => (g?.length >= 4 ? ringFromLonLat(g.map((q: any) => [q.lon, q.lat])) : null);
+  if (el.type === "way") { const r = ring(el.geometry); return { outer: r ? [r] : [], inner: [] }; }
+  const of = (role: string) => (el.members ?? []).filter((m: any) => m.role === role).map((m: any) => ring(m.geometry)).filter(Boolean) as P2[][];
+  return { outer: of("outer"), inner: of("inner") };
+}
 const fromPiece = (p: Piece) => ({ id: "landmark", fn: "osm_landmark", roofType: "1000", center: [0, 0], xy: [], ...p }) as unknown as Mesh;
 for (const tw of tallTowers) {
   const near = (p: P2) => inside(p, tw.ring) || tw.ring.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 3);
@@ -653,6 +668,22 @@ if (STYLED) {
     meshes.push(...model(ring, { ground: groundAt, deckAt }).map(fromPiece));
     console.log(`  bridge ${e.tags.name}: model`);
   }
+}
+// structures on their OSM outline and models at measured points (landmarks.ts); the surface model reads both
+// as tree crowns, so crowns on them go
+const dropCrowns = (hit: (p: P2) => boolean) => { for (let i = trees.length - 1; i >= 0; i--) if (hit([trees[i][0], trees[i][1]])) trees.splice(i, 1); };
+for (const { rings, structure, t } of structures) {
+  meshes.push(...structure.model(rings, groundAt, t).map(fromPiece));
+  dropCrowns((p) => rings.outer.some((r) => inside(p, r)));
+  console.log(`  structure ${t.name ?? t.man_made}: model`);
+}
+for (const pl of PLACED) {
+  const [la, lo] = pl.at;
+  if (la < bbox[0] - 0.002 || la > bbox[2] + 0.002 || lo < bbox[1] - 0.002 || lo > bbox[3] + 0.002) continue;
+  const e = toEnu(lo, la), c: P2 = [e[0], e[1]];
+  meshes.push(...pl.model(c, groundAt(...c)).map(fromPiece));
+  dropCrowns((p) => Math.hypot(p[0] - c[0], p[1] - c[1]) < pl.clear);
+  console.log(`  landmark ${pl.name}: model`);
 }
 for (const b of meshes as Mesh[]) {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;

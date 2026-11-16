@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { LOOKS, TOWERS } from "./landmarks.ts";
+import { LOOKS, STRUCTURES, TOWERS } from "./landmarks.ts";
 import { RAW } from "./paths.ts";
 
 type Tags = Record<string, string>;
@@ -102,7 +102,8 @@ export const FILTERS = {
   /** what the styled look takes from OSM: buildings (and parts) with roof/wall colour or material, min_height or a
    *  tower, and the landmarks of landmarks.ts by name */
   looks: ((type, t) => (type !== "node" && !!(t.building || t["building:part"])
-    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (type === "way" && (t.name ?? "") in TOWERS)) as OsmFilter,
+    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (type === "way" && (t.name ?? "") in TOWERS)
+    || (type !== "node" && STRUCTURES.some((s) => s.match(t)))) as OsmFilter,
   /** fountains: a surface model reads their sculptures as tree crowns */
   fountains: ((_type, t) => t.amenity === "fountain") as OsmFilter,
   /** rail route relations (S-Bahn, regional, long distance, Stadtbahn) and the tracks they run on, tunnels included */

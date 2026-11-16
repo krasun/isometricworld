@@ -171,8 +171,10 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
 - OSM detail on top of LoD2: `roof:colour`/`roof:material` and `building:colour`/`building:material` set roof
   and facade looks; tall towers (`man_made=tower|communications_tower`, ≥ 60 m) are rebuilt from their OSM
   `building:part`s; no nDOM tree crowns on railway and construction land.
-- Landmarks (`landmarks.ts`): hand-built models from published dimensions, matched by OSM `name`: the
-  Fernsehturm (whole tower) and the Mercedes star on the Bahnhofsturm (on its roof).
+- Landmarks (`landmarks.ts`: the registries and how they are matched; the models per region in `landmarks/`):
+  hand-built models from published dimensions, matched by OSM `name`: the Fernsehturm (whole tower) and the
+  Mercedes star on the Bahnhofsturm (on its roof). `STRUCTURES` builds tagged structures from their OSM outline
+  in every region (graduation towers); `PLACED` puts a model at a measured point (Wieliczka's viewing tower).
 - Areas: the city (`stuttgart-*`) and the towns around it (`metro-*`) are split into overlapping areas. Where
   they overlap, export takes each tile from the area it lies deepest inside.
 

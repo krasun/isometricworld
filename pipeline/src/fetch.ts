@@ -24,7 +24,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openArea } from "./areas.ts";
-import { LOOKS, TOWERS } from "./landmarks.ts";
+import { LOOKS, STRUCTURES, TOWERS } from "./landmarks.ts";
 import { download } from "./lgl.ts";
 import { fetchGugik } from "./gugik.ts";
 import { FILTERS, downloadExtract, localOsm, type OsmFilter } from "./osmlocal.ts";
@@ -117,6 +117,7 @@ if (!existsSync(join(dir, "osm.json"))) {
     ...["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)),
     ...Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`),
     ...Object.keys(TOWERS).map((n) => `way["name"="${n}"]${b};`),
+    ...STRUCTURES.map((s) => `nwr${s.ql}${b};`),
   ].join(" "), FILTERS.looks]);
   // fountains, whose sculptures the surface model reads as tree crowns (data)
   if (LOD2) parts.push([`nwr["amenity"="fountain"]${b};`, FILTERS.fountains]);
