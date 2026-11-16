@@ -2,7 +2,9 @@
  * Social clip: a smooth, deterministic camera flight over the live viewer, rendered frame by frame
  * (no screen recording, so no dropped frames) and encoded with ffmpeg.
  *
- *   npx tsx src/film.ts [url] [out.mp4] [--fps 60] [--size 1080 | WxH] [--seconds 14] [--blur 1] [--grain 5] [--preview]
+ *   npx tsx src/film.ts [url] [out.mp4] [--city tel-aviv-yafo] [--fps 60] [--size 1080 | WxH] [--seconds 14] [--blur 1] [--grain 5] [--preview]
+ *
+ * - --city picks the shot list (FILMS) and the title; the clip opens /<city> on the site.
  *
  * - The camera follows a Catmull-Rom spline through SHOTS in (x, y, ln scale), resting at each pose
  *   (with a slow push in) and easing between them. Moves advance by *perceived* motion (screen px
@@ -16,15 +18,22 @@
  */
 import { spawn } from "node:child_process";
 import { chromium } from "playwright-core";
-import { llhToPixel } from "./camera.ts";
+import { llhToPixel, useRegion } from "./camera.ts";
 import { CHROME, CHROME_ARGS, siteUrl } from "./paths.ts";
+import { CITIES, DEFAULT_CITY, REGIONS } from "./places.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string, def: number) => { const i = args.indexOf(`--${name}`); return i >= 0 ? Number(args[i + 1]) : def; };
 const preview = args.includes("--preview");
-const VALUED = ["--fps", "--size", "--seconds", "--blur", "--grain"];
+const VALUED = ["--fps", "--size", "--seconds", "--blur", "--grain", "--city"];
 const pos = args.filter((a, i) => !a.startsWith("--") && !VALUED.includes(args[i - 1]));
-const [urlArg, out = "film.mp4"] = pos, url = siteUrl(urlArg);
+const SLUG = (() => { const i = args.indexOf("--city"); return i >= 0 ? args[i + 1] : DEFAULT_CITY; })(), CITY = CITIES[SLUG];
+if (!CITY) throw new Error(`unknown city ${SLUG}`);
+useRegion(CITY.region);
+const GROUND_H = REGIONS[CITY.region].groundH; // shots are given at the region's typical ground height
+const [urlArg, out = "film.mp4"] = pos, base = siteUrl(urlArg);
+// the default city is the site root; any other city is /<slug>
+const url = SLUG === DEFAULT_CITY ? base : new URL(SLUG, base.endsWith("/") ? base : `${base}/`).href;
 const FPS = preview ? 6 : flag("fps", 60);
 // output px = CSS px: --size 1080 (square: shows uncropped in the X feed) or WxH, e.g. 960x540 for the README GIF
 const [SIZE, HEIGHT] = (() => { const i = args.indexOf("--size"), v = i >= 0 ? args[i + 1] : "1080", [w, h] = v.split("x").map(Number); return [w, h || w]; })();
@@ -38,20 +47,34 @@ const GRAIN = preview ? 0 : flag("grain", 5); // film grain strength (ffmpeg noi
  * + hold (seconds the camera rests there, gently drifting in; omitted = fly through without stopping).
  */
 type Shot = { at: [number, number]; px?: boolean; scale: number; hold?: number; note: string };
-const SHOTS: Shot[] = [
+/** Per city: the shots, and the shot whose hold an airliner crosses (none: no plane placed). */
+const FILMS: Record<string, { shots: Shot[]; planeShot?: number }> = {
+  "tel-aviv-yafo": { planeShot: 2, shots: [
   { at: [32.0988, 34.7990], scale: 0.62, hold: 1.1, note: "Yarkon Park: the river bends, jacarandas, flame trees" },
   { at: [10050, -4400], px: true, scale: 0.95, hold: 1.0, note: "Namir Rd crossing the Yarkon: traffic on the bridge and the Rokach junction" },
   { at: [32.0950, 34.7760], scale: 0.26, hold: 0.8, note: "wide: the river mouth, Tel Aviv Port, the sea (airliner passes)" },
   { at: [32.0860, 34.7690], scale: 0.34, note: "down the coast: marina, hotel towers" },
   { at: [32.0795, 34.7672], scale: 0.85, hold: 1.9, note: "Gordon/Frishman beach: surf, sand, cars on the promenade" },
-];
+  ] },
+  // a short clip for X (--seconds 8)
+  stuttgart: { shots: [
+    { at: [48.7845, 9.1830], scale: 0.7, hold: 1.5, note: "Hauptbahnhof: the Bonatz building, trains in the tracks, the S21 site" },
+    { at: [48.7950, 9.2050], scale: 0.3, note: "wide: Schlossgarten and Rosensteinpark down to the Neckar" },
+    { at: [48.8000, 9.2105], scale: 0.6, hold: 1.4, note: "the Neckar: König-Karls-Brücke, the rail bridge, Rosensteinpark, Leuze baths" },
+    { at: [48.7965, 9.2230], scale: 0.3, note: "wide: up the river to Bad Cannstatt" },
+    { at: [48.7922, 9.2320], scale: 0.6, hold: 2.0, note: "the Neckarpark: the stadium and its pitches (title)" },
+  ] },
+};
+const FILM = FILMS[SLUG];
+if (!FILM) throw new Error(`no shots for ${SLUG} (FILMS in film.ts)`);
+const SHOTS = FILM.shots;
 const HOLD_ZOOM = 0.035;  // ln-scale drift during each hold (a slow push in, so poses never freeze)
-const PLANE_SHOT = 2;     // the airliner crosses the frame centre during this shot's hold
+const PLANE_SHOT = FILM.planeShot; // the airliner crosses the frame centre during this shot's hold
 
 // ---- camera path ------------------------------------------------------------------------------
 type P = [number, number, number]; // x, y (global art px), u = ln scale
 // shot scales are for a 1080 px wide frame: other widths keep the same width of city in view
-const keys: P[] = SHOTS.map(({ at, px, scale }) => { const [x, y] = px ? at : llhToPixel(at[0], at[1], 25); return [x, y, Math.log((scale * SIZE) / 1080)]; });
+const keys: P[] = SHOTS.map(({ at, px, scale }) => { const [x, y] = px ? at : llhToPixel(at[0], at[1], GROUND_H); return [x, y, Math.log((scale * SIZE) / 1080)]; });
 function spline(t: number): P { // uniform Catmull-Rom, t in [0, keys.length - 1]
   const n = keys.length - 1, i = Math.min(Math.floor(t), n - 1), f = t - i;
   const p0 = keys[Math.max(i - 1, 0)], p1 = keys[i], p2 = keys[i + 1], p3 = keys[Math.min(i + 2, n)];
@@ -126,10 +149,10 @@ await page.addStyleTag({ content: `
   #film-shade { position: fixed; z-index: 10; left: 0; right: 0; top: 0; height: 28vh; pointer-events: none; opacity: 0;
     background: linear-gradient(rgba(8,10,14,.45), rgba(8,10,14,.2) 55%, rgba(8,10,14,0)); }
 ` });
-await page.evaluate(() => {
+await page.evaluate((title) => {
   const d = document.createElement("div");
   d.id = "film-title";
-  d.textContent = "Tel Aviv-Yafo";
+  d.textContent = title;
   document.body.appendChild(d);
   const shade = document.createElement("div");
   shade.id = "film-shade";
@@ -139,11 +162,11 @@ await page.evaluate(() => {
   item.minPixelRatio = 1.1;    // always the sharper level
   item.immediateRender = false;
   (window as any).__film = { dt: 0 };
-});
+}, CITY.title);
 
 // put an airliner over the frame centre mid-way through the wide pose (planes fly 75 m/s along the approach)
 const mid = cameraAt(holdMid);
-await page.evaluate(([cx, cy, tAt]) => {
+if (PLANE_SHOT !== undefined) await page.evaluate(([cx, cy, tAt]) => {
   const w = window as any, M: number[][] = w.__world.enu2px, planes = w.__planes;
   if (!planes || !w.__world.airport) return;
   const ap = w.__world.airport, O = [w.__world.camera.origin.lat, w.__world.camera.origin.lon], enu = (lat: number, lon: number) => [(lon - O[1]) * 111320 * Math.cos((O[0] * Math.PI) / 180), (lat - O[0]) * 110574];

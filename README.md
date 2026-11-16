@@ -7,6 +7,12 @@ Isometric maps of real cities, built from open data. Everything is TypeScript.
 First city: **Tel Aviv-Yafo** (`/tel-aviv-yafo` on the dev server), from Jaffa to Yarkon Park and
 Ramat Gan, including the sea. Full-quality clip: [`video/tel-aviv-yafo.mp4`](video/tel-aviv-yafo.mp4).
 
+![Stuttgart](video/stuttgart.gif)
+
+Second city: **Stuttgart** (`/stuttgart`), by [Lukas Hermann](https://lukashermann.dev/): the city and the towns
+around it from LGL Baden-Württemberg open data, drawn procedurally instead of painted. Full-quality clip:
+[`video/stuttgart.mp4`](video/stuttgart.mp4).
+
 ## The idea
 
 Real cities as a hand-painted isometric illustration you can pan and zoom like a map, with every building,
@@ -121,6 +127,7 @@ npm -w pipeline exec tsx src/perf.ts   http://localhost:<port>/   # bytes & time
 npm -w pipeline exec tsx src/tour.ts   http://localhost:<port>/ tour   # screenshots of known places
 npm -w pipeline exec tsx src/traffictest.ts http://localhost:<port>/ 5     # 5 sim-minutes: overlaps, speeds, jams
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/tel-aviv-yafo.mp4  # 14 s 1080² 60 fps clip for X (--preview: quick 6 fps check; --blur 8: motion blur)
+npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/stuttgart.mp4 --city stuttgart --seconds 4.5  # shots per city: FILMS in film.ts
 ```
 
 | Step | File | What it does |
