@@ -4,6 +4,7 @@ import type { Traffic } from "./traffic.ts";
 import type { Trains } from "./trains.ts";
 import type { Cats } from "./cats.ts";
 import type { Planes, Parrots, Airport } from "./sky.ts";
+import { TiltShift } from "./tiltshift.ts";
 import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
@@ -190,6 +191,7 @@ function drawBorders(dpr: number) {
   }
 }
 
+const tilt = REGIONS[REGION]?.effects?.tiltShift ? new TiltShift(document.getElementById("map")!) : null;
 let lastT = performance.now();
 function frame(t: number) {
   const dpr = window.devicePixelRatio || 1;
@@ -221,6 +223,7 @@ function frame(t: number) {
     if (planes) { planes.step(dt); planes.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
   }
   if (showBorders || k / dpr < 0.05) drawBorders(dpr); // borders appear automatically far out
+  tilt?.update();
   lastT = t;
   requestAnimationFrame(frame);
 }
@@ -245,6 +248,7 @@ window.addEventListener("keydown", (e) => {
   if (key === "t") showTraffic = !showTraffic;
   if (key === "p") togglePhoto();
   if (key === "v") document.body.classList.toggle("video");
+  if (key === "m") tilt?.toggle();
 });
 if (new URLSearchParams(location.search).has("video")) document.body.classList.add("video");
 

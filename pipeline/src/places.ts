@@ -28,6 +28,11 @@ export interface Region {
    * (default 22000 → 7000; negative = past it, on the runway). web/src/scripts/sky.ts.
    */
   airport?: { lat: number; lon: number; runwayHeadingDeg: number; h?: number; from?: number; to?: number };
+  /**
+   * Viewer effects (web/src/scripts): tiltShift, the map as a miniature, a sharp band across the middle and the
+   * edges blurred (tiltshift.ts; a button and M switch it).
+   */
+  effects?: { tiltShift?: boolean };
   /** Credit lines (video mode and footer). */
   credits: string[];
   /** Geoid undulation at the origin (EGM2008, m): sea level as ellipsoid height. */
@@ -159,6 +164,7 @@ export const REGIONS: Record<string, Region> = {
     teryt: ["1219", "1261"], // powiat wielicki; Kraków (across the A4, in the ring around the town)
     look: "styled",
     style: "poland",
+    effects: { tiltShift: true },
     // gmina Wieliczka (OSM relation 2662713, admin_level 7: the town and its villages) and Kraków (449696,
     // north of the A4), cut further by the areas: the town (relation 2751961) and the A4 stay clear of the
     // faded edge, the villages and Kraków's edge around them fade out

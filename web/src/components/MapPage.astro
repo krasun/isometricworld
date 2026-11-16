@@ -121,6 +121,13 @@ const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), site).href, 
 				background: rgba(10, 12, 16, 0.42); backdrop-filter: blur(4px); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); pointer-events: none; }
 			body.video #video-credit { display: block; }
 			body.video #credits { display: none; }
+			/* viewer effects (tiltshift.ts): a round switch in the top right corner */
+			#tilt-toggle { position: fixed; z-index: 10; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
+				width: 40px; height: 40px; border: 0; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+				background: rgba(255, 255, 255, 0.85); color: #555; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); touch-action: manipulation; }
+			#tilt-toggle[aria-pressed="true"] { background: #1f2a37; color: #fff; }
+			#tilt-toggle:hover { filter: brightness(1.08); }
+			body.video #tilt-toggle { display: none; }
 		</style>
 
 		<script>
