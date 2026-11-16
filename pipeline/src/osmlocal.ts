@@ -97,13 +97,17 @@ const LEISURE = /^(park|garden|pitch|playground|stadium|track|golf_course|swimmi
 const NATURAL = /^(water|beach|sand|scrub|grassland|wood|wetland|coastline|bare_rock|heath)$/;
 export const FILTERS = {
   trees: ((type, t) => type === "node" && t.natural === "tree") as OsmFilter,
-  /** trees + buildings (and parts) tagged with roof/wall colour or material (LoD2 regions take only the looks from OSM) */
-  treesAndLooks: ((type, t) => (type === "node" && t.natural === "tree") || (type !== "node" && !!(t.building || t["building:part"])
-    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (type === "way" && (t.name ?? "") in TOWERS) || t.amenity === "fountain") as OsmFilter,
+  /** every building (regions whose buildings come from OSM) */
+  buildings: ((type, t) => type !== "node" && !!t.building) as OsmFilter,
+  /** what the styled look takes from OSM: buildings (and parts) with roof/wall colour or material, min_height or a
+   *  tower, and the landmarks of landmarks.ts by name */
+  looks: ((type, t) => (type !== "node" && !!(t.building || t["building:part"])
+    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (type === "way" && (t.name ?? "") in TOWERS)) as OsmFilter,
+  /** fountains: a surface model reads their sculptures as tree crowns */
+  fountains: ((_type, t) => t.amenity === "fountain") as OsmFilter,
   /** rail route relations (S-Bahn, regional, long distance, Stadtbahn) and the tracks they run on, tunnels included */
   rails: ((type, t) => (type === "relation" && /^(train|light_rail|subway|tram)$/.test(t.route ?? ""))
     || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge)$/.test(t.railway ?? ""))) as OsmFilter,
-  buildingsAndTrees: ((type, t) => (type !== "node" && !!t.building) || (type === "node" && t.natural === "tree")) as OsmFilter,
   roads: ((type, t) => type === "way" && ROAD.test(t.highway ?? "") && t.area !== "yes") as OsmFilter,
   ground: ((type, t) =>
     (type === "way" && !!t.highway && !/yes|building_passage/.test(t.tunnel ?? ""))

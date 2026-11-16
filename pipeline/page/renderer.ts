@@ -12,8 +12,8 @@ import { deckHeight } from "../src/bridges.ts";
 const params = new URLSearchParams(location.search);
 const REGION = params.get("region") ?? "israel-center";
 useRegion(REGION); // before any projection below
-/** LGL regions (Baden-Württemberg) get the finished procedural look (no paint step): LoD2 roofs, hillshade, outlines. */
-const STYLED = REGIONS[REGION].sources === "lgl";
+/** Styled regions (places.ts `look`) get the finished procedural look (no paint step): LoD2 roofs, hillshade, outlines. */
+const STYLED = REGIONS[REGION].look === "styled";
 /** Ellipsoid height the height pass counts from (heights.ts). */
 const HEIGHT_BASE = REGIONS[REGION].heightBase ?? 0;
 const SS = Number(params.get("ss") ?? 2); // supersampling

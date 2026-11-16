@@ -6,7 +6,8 @@
  * data/raw/<area>/tlv_buildings.geojson  Tel Aviv-Yafo GIS layer 513: footprints, 2019 surveyed
  *                                        height above ground, base/roof elevation, floors
  * data/raw/<area>/tlv_canopy.geojson     layer 574: 2024 tree canopy polygons
- * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage)
+ * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage; none where LoD2
+ *                                        has the buildings), roof/facade looks + landmarks (styled regions)
  * data/raw/<area>/osm_parts.json         OSM building:parts (Tel Aviv-Yafo: towers on podiums)
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
  * data/raw/<area>/rails.json             OSM rail routes (S-Bahn, regional, Stadtbahn…) and their tracks (trains)
@@ -74,6 +75,10 @@ async function arcgis(layer: number, bbox: [number, number, number, number], fie
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
 const sources = REGIONS[area.region].sources;
+/** Buildings come from LoD2 and tree crowns from a surface model (data), not from OSM. */
+const LOD2 = sources === "lgl";
+/** Styled look (places.ts `look`): OSM roof/facade colours, tall towers and landmarks on top of the LoD2 meshes. */
+const STYLED = REGIONS[area.region].look === "styled";
 const extract = REGIONS[area.region].osmExtract;
 /** Overpass query, or the same selection from the region's local extract. */
 const osmQuery = (ql: string, bbox: number[], filter: OsmFilter) => extract ? localOsm(extract, bbox, filter) : overpass(ql);
@@ -96,9 +101,22 @@ if (sources === "lgl") {
 if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;
   const b = `(${s},${w},${n},${e})`;
+  // each part as Overpass QL + the same selection as an extract filter (osmlocal.ts)
+  const parts: Array<[string, OsmFilter]> = [];
+  // every building, unless LoD2 has them (data)
+  if (!LOD2) parts.push([`way["building"]${b}; relation["building"]${b};`, FILTERS.buildings]);
+  parts.push([`node["natural"="tree"]${b};`, FILTERS.trees]);
+  // buildings with colour/material tags and the landmarks (look)
+  if (STYLED) parts.push([[
+    ...["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)),
+    ...Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`),
+    ...Object.keys(TOWERS).map((n) => `way["name"="${n}"]${b};`),
+  ].join(" "), FILTERS.looks]);
+  // fountains, whose sculptures the surface model reads as tree crowns (data)
+  if (LOD2) parts.push([`nwr["amenity"="fountain"]${b};`, FILTERS.fountains]);
   const data = await osmQuery(`[out:json][timeout:300];
-${sources === "lgl" ? `(node["natural"="tree"]${b}; ${["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)).join(" ")} ${Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`).join(" ")} ${Object.keys(TOWERS).map((n) => `way["name"="${n}"]${b};`).join(" ")} nwr["amenity"="fountain"]${b};);` : `(way["building"]${b}; relation["building"]${b}; node["natural"="tree"]${b};);`}
-out body geom;`, area.bbox, sources === "lgl" ? FILTERS.treesAndLooks : FILTERS.buildingsAndTrees);
+(${parts.map((p) => p[0]).join(" ")});
+out body geom;`, area.bbox, (type, t) => parts.some((p) => p[1](type, t)));
   writeFileSync(join(dir, "osm.json"), JSON.stringify(data));
   console.log(`  osm: ${data.elements.length} elements`);
 }

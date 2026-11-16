@@ -5,7 +5,9 @@
  *   npm -w pipeline run scene -- tlv-core
  *
  * Sources per region (places.ts `sources`): Tel Aviv-Yafo municipal buildings + canopy ("tlv"),
- * LGL LoD2 buildings + nDOM1 tree crowns ("lgl"), else OSM buildings + trees.
+ * LGL LoD2 buildings + nDOM1 tree crowns ("lgl"), else OSM buildings + trees. Regions with look
+ * "styled" also take roof/facade looks, tall towers and landmarks from OSM, and get tunnel portals
+ * and bridge models.
  *
  * Output: data/derived/<area>/scene/<tx>_<ty>.json — objects visible in each render tile:
  *   b: buildings  [ring (ENU x,y pairs, CCW), height above ground, style, groundHint]
@@ -173,6 +175,8 @@ const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
 const bbox = area.bbox;
 const region = REGIONS[area.region];
+/** Styled look (places.ts `look`): OSM looks and landmarks on the LoD2 meshes, tunnel portals, bridge models. */
+const STYLED = region.look === "styled";
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height. */
 const GEOID = region.geoidM;
 const raw = join(RAW, name);
@@ -397,7 +401,7 @@ const covered = (pt: P2) => {
   return false;
 };
 let osmCount = 0;
-// LoD2 regions: OSM roof:colour / roof:material, building:colour / building:material per footprint or building part
+// styled regions: OSM roof:colour / roof:material, building:colour / building:material per footprint or building part
 // tall towers (TV towers…): LoD2 has only a stump, OSM often has the whole shape as building:parts with min_height
 const tallTowers: Array<{ ring: P2[]; h: number; name?: string }> = [];
 const tops: Array<{ ring: P2[]; name: string }> = []; // landmarks.ts TOPS
@@ -416,16 +420,15 @@ for (const el of osm.elements) {
     if (region.sources === "lgl") continue; // the nDOM crowns include them
     const p = toEnu(el.lon, el.lat); trees.push([p[0], p[1], 3, 6]); continue;
   }
-  const monument = region.sources === "lgl" && !t.building && !t["building:part"] && el.type === "way" && (t.name ?? "") in TOWERS; // Jubiläumssäule
-  const lglLook = region.sources === "lgl" && (!!(t.building || t["building:part"]) || monument);
-  if (!lglLook && (!t.building || t.building === "roof" || t.location === "underground")) continue;
+  const monument = STYLED && !t.building && !t["building:part"] && el.type === "way" && (t.name ?? "") in TOWERS; // Jubiläumssäule
+  const styledLook = STYLED && (!!(t.building || t["building:part"]) || monument);
+  if (!styledLook && (!t.building || t.building === "roof" || t.location === "underground")) continue;
   const coords = el.type === "way" ? el.geometry?.map((q: any) => [q.lon, q.lat])
     : el.members?.find((m: any) => m.role === "outer" && m.geometry)?.geometry.map((q: any) => [q.lon, q.lat]);
   if (!coords || coords.length < 4) continue;
   const ring = ringFromLonLat(coords);
   if (!ring) continue;
-  if (region.sources === "lgl") {
-    if (!lglLook) continue;
+  if (styledLook) {
     const h = parseFloat(t.height);
     if (monument) { tallTowers.push({ ring, h, name: t.name }); continue; }
     if (/^(tower|communications_tower)$/.test(t.man_made ?? "") && h >= 60) tallTowers.push({ ring, h, name: t.name });
@@ -433,8 +436,8 @@ for (const el of osm.elements) {
     if (t.name && t.name in ARCADES && t.building) arcades.push({ ring, name: t.name });
     if (t["building:part"] && h) parts.push({ ring, h, min: parseFloat(t.min_height) || 0, t });
     looks.push({ ring, area: Math.abs(area2(ring)), roof: roofRgb(t), ...wallLook(t), bare: t.name in LOOKS }); // landmarks: no solar panels etc.
-    continue;
   }
+  if (region.sources === "lgl") continue; // the buildings are LoD2 meshes: OSM footprints only carry their looks
   const c: P2 = [ring.reduce((a, p) => a + p[0], 0) / ring.length, ring.reduce((a, p) => a + p[1], 0) / ring.length];
   if (covered(c)) continue;
   const levels = parseFloat(t["building:levels"]);
@@ -607,8 +610,8 @@ for (const ac of arcades) {
   });
   for (let i = trees.length - 1; i >= 0; i--) if (near([trees[i][0], trees[i][1]])) trees.splice(i, 1);
 }
-// tunnel portals where roads and tracks go underground (portals.ts)
-if (region.sources === "lgl") {
+// styled look: tunnel portals where roads and tracks go underground (portals.ts)
+if (STYLED) {
   const ways = ["roads.json", "rails.json", "ground.json"].filter((f) => existsSync(join(raw, f)))
     .flatMap((f) => readJson(join(raw, f)).elements.filter((e: any) => e.type === "way"));
   const groups = groupEnds(tunnelEnds(ways, (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }));

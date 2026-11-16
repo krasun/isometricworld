@@ -38,12 +38,20 @@ export interface Region {
    */
   heightBase?: number;
   /**
-   * Where buildings, trees and terrain come from beyond OSM:
+   * Where buildings, trees and terrain come from beyond OSM (data only; how they are drawn is `look`):
    *   "tlv"  Tel Aviv-Yafo municipal GIS (buildings + canopy), Copernicus GLO-30 terrain
    *   "lgl"  LGL Baden-Württemberg open data: LoD2 buildings, nDOM1 tree crowns, DGM1 terrain
    *   unset  OSM buildings and trees, Copernicus GLO-30 terrain
    */
   sources?: "tlv" | "lgl";
+  /**
+   * How the map is drawn:
+   *   "painted"  (default) the render is only the input: every window is repainted by the image model (paint.ts)
+   *   "styled"   the renderer draws the finished look itself (STYLED in page/renderer.ts): LoD2 roofs and
+   *              facades, hillshade, outlines, OSM roof/facade colours, landmarks, tunnel portals, bridge models
+   * Only the styled look draws LoD2 meshes, so a region with LoD2 buildings ("lgl") needs "styled".
+   */
+  look?: "painted" | "styled";
   /** OSM from this Geofabrik .osm.pbf extract (osmlocal.ts) instead of the Overpass API. */
   osmExtract?: string;
   /**
@@ -115,6 +123,7 @@ export const REGIONS: Record<string, Region> = {
     groundH: 300, // Kessel floor ~245 m NHN + geoid
     heightBase: 250, // valley ~250 m, Fernsehturm top ~750 m ellipsoid: 150…805 m fits
     sources: "lgl",
+    look: "styled",
     // Stuttgart (OSM relation 62375, Stadtkreis) and the towns around it (admin_level 8): Fellbach, Waiblingen,
     // Remseck am Neckar, Ludwigsburg, Kornwestheim, Korntal-Münchingen, Gerlingen, Ditzingen, Böblingen,
     // Sindelfingen, Leonberg, Esslingen am Neckar, Ostfildern, Filderstadt, Leinfelden-Echterdingen;

@@ -4,7 +4,8 @@
  *            opening + blur, which is plenty for flat Gush Dan), sea/lakes flattened from OSM;
  *            regions with sources "lgl": LGL DGM1 (1 m bare earth, sampled on a 3 m grid, no
  *            filtering; Copernicus only where DGM1 has no data), rivers left at their surveyed level
- *   surface  OSM roads at real widths, pavements, landuse, parks, beach, water, rail
+ *   surface  OSM roads at real widths, pavements, landuse, parks, beach, water, rail; regions with
+ *            look "styled" keep meadows, vineyards, allotments and orchards as their own kinds
  *
  *   npm -w pipeline run ground -- tlv-core
  *
@@ -36,11 +37,14 @@ export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
 const region = REGIONS[area.region];
-const LGL = region.sources === "lgl";
+/** 1 m bare-earth terrain (LGL DGM1): a finer grid, no filtering, rivers at their surveyed level. */
+const DGM = region.sources === "lgl";
+/** Styled look (places.ts `look`): meadows, vineyards, allotments and orchards drawn as their own kinds. */
+const STYLED = region.look === "styled";
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
 const GEOID = region.geoidM;
 /** Terrain grid posting (m) and how far past the area it reaches (deg; the render footprint of an edge tile). */
-const STEP = LGL ? 3 : 10, TMARGIN = LGL ? 0.008 : MARGIN;
+const STEP = DGM ? 3 : 10, TMARGIN = DGM ? 0.008 : MARGIN;
 const [S, W, N, E] = area.bbox;
 const bb = [S - MARGIN, W - MARGIN, N + MARGIN, E + MARGIN];
 const out = join(DERIVED, name, "ground");
@@ -160,11 +164,11 @@ function areaKind(t: Record<string, string>): string | null {
   if (na === "wood" || lu === "forest") return "wood";
   if (["scrub", "grassland", "heath", "wetland", "bare_rock"].includes(na)) return "scrub";
   if (lu === "cemetery" || am === "grave_yard") return "cemetery";
-  if (LGL && lu === "meadow") return "meadow";
+  if (STYLED && lu === "meadow") return "meadow";
   if (lu === "flowerbed") return "flowerbed";
   if (["park", "garden", "dog_park", "golf_course", "recreation_ground", "nature_reserve"].includes(le)
     || ["grass", "meadow", "village_green", "recreation_ground"].includes(lu)) return "park";
-  if (LGL && ["vineyard", "allotments", "orchard"].includes(lu)) return lu; // the Kessel's slopes: own colours and rows
+  if (STYLED && ["vineyard", "allotments", "orchard"].includes(lu)) return lu; // the Kessel's slopes: own colours and rows
   if (["farmland", "orchard", "allotments", "plant_nursery", "greenhouse_horticulture", "vineyard"].includes(lu)) return "farm";
   if (["construction", "brownfield", "greenfield", "landfill"].includes(lu)) return "dirt";
   if (am === "parking") return "parking";
@@ -311,7 +315,7 @@ async function loadDem() {
 }
 
 const dem = await loadDem();
-const dgm = LGL ? await rasterSampler("dgm1", tb) : null;
+const dgm = DGM ? await rasterSampler("dgm1", tb) : null;
 const n = grid.nx * grid.ny;
 let h = new Float32Array(n);
 const fine = new Uint8Array(n); // 1: bare-earth DGM1 (no filtering needed)
@@ -322,7 +326,7 @@ for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
   if (Number.isFinite(v)) { h[i] = v; fine[i] = 1; } else h[i] = dem(lat, lon);
 }
 const fineShare = fine.reduce((a, b) => a + b, 0) / n;
-if (LGL) console.log(`  terrain: DGM1 on ${(fineShare * 100).toFixed(1)}% of the grid, Copernicus elsewhere`);
+if (DGM) console.log(`  terrain: DGM1 on ${(fineShare * 100).toFixed(1)}% of the grid, Copernicus elsewhere`);
 /** Separable min / max / box filter with radius r grid cells. */
 function filter(a: Float32Array, r: number, op: "min" | "max" | "mean") {
   const pass = (src: Float32Array, horiz: boolean) => {
@@ -352,7 +356,7 @@ if (fineShare < 1) {
 // water: sea at 0 m; lakes/rivers at their lowest surrounding ground; land kept above the sea
 const isWater = new Uint8Array(n);
 if (sea.length) fillGrid(sea, grid, (i) => { isWater[i] = 1; h[i] = -0.4; });
-for (const w of LGL ? [] : water) { // DGM1 already holds each river's surveyed level (and the Neckar's weirs)
+for (const w of DGM ? [] : water) { // DGM1 already holds each river's surveyed level (and the Neckar's weirs)
   const idx: number[] = [];
   fillGrid(w, grid, (i) => idx.push(i));
   if (!idx.length) continue;
