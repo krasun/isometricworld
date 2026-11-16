@@ -1,9 +1,10 @@
 /**
- * LoD2 buildings (CityGML 1.0, AdV profile, as LGL Baden-Württemberg publishes them) -> triangle
- * meshes in the camera's ENU frame. Real roof shapes (gable, hip, mansard…), walls with facade
- * coordinates for the renderer's window patterns, and a footprint for contact shadows.
+ * LoD2 buildings (CityGML) -> triangle meshes in the camera's ENU frame. Real roof shapes (gable, hip,
+ * mansard…), walls with facade coordinates for the renderer's window patterns, and a footprint for
+ * contact shadows.
  *
- * Coordinates are ETRS89/UTM32 + NHN; NHN + the region's geoid = ellipsoid height.
+ * The document's projection and height datum come with its source (Lod2Source): LGL Baden-Württemberg
+ * (CityGML 1.0, AdV profile) is ETRS89/UTM32 + NHN; NHN + the region's geoid = ellipsoid height.
  */
 import * as THREE from "three";
 import { ecefToEnu, llhToEcef } from "./camera.ts";
@@ -27,16 +28,58 @@ export interface Lod2Building {
   /** Largest ground polygon (ENU xy, CCW) and the building's centre (lat, lon). */
   footprint: P2[];
   center: [number, number];
-  /** Footprints in UTM (ground polygons, else roof outlines): where the nDOM shows roofs, not trees. */
-  utm: P2[][];
+  /** Footprints in the source's projected metres (ground polygons, else roof outlines): where the
+   *  surface model shows roofs, not trees. */
+  xy: P2[][];
+  /** What the building is used for, where the source says so other than by an ALKIS `fn` (see alkisKind). */
+  kind?: BuildingKind;
+}
+
+/** What a building is used for, as far as its look goes (scene.ts lod2Style). "other" includes homes. */
+export type BuildingKind = "structure" | "small" | "church" | "public" | "commercial" | "industrial" | "other";
+
+/** ALKIS small buildings: garages, sheds, huts… */
+const ALKIS_SMALL = ["2463", "2464", "2465", "2723", "2740", "2741"];
+/** Building kind from an ALKIS function (e.g. 31001_1010 Wohnhaus; not 31001_: canopies and other structures). */
+export function alkisKind(fn: string): BuildingKind {
+  const code = fn.split("_")[1] ?? "", group = fn.split("_")[0];
+  if (group !== "31001") return "structure";
+  if (ALKIS_SMALL.includes(code)) return "small";
+  if (code.startsWith("304")) return "church";
+  if (code.startsWith("3")) return "public";
+  if (code.startsWith("21") || code.startsWith("22")) return "industrial"; // production, storage
+  if (code.startsWith("2")) return "commercial";                          // offices, shops
+  return "other";
+}
+
+/** Where a CityGML document comes from: its projection, height datum and what in it is not a building. */
+export interface Lod2Source {
+  /** projected easting, northing (m) -> [lat, lon] */
+  toLatLon: (east: number, north: number) => [number, number];
+  /** metres added to the document's heights to bring them onto the datum the region's geoid refers to */
+  dz?: number;
+  /** building functions to skip (bridges, tunnels…) */
+  skip?: (fn: string) => boolean;
 }
 
 const POLY = /<gml:Polygon[^>]*>([\s\S]*?)<\/gml:Polygon>/g;
 const POS = /<gml:posList[^>]*>([^<]*)<\/gml:posList>/g;
+const RING = /<gml:LinearRing[^>]*>([\s\S]*?)<\/gml:LinearRing>/g;
+const VERTEX = /<gml:pos(?:\s[^>]*)?>([^<]*)<\/gml:pos>/g;
 const SURF = /<bldg:(RoofSurface|WallSurface|GroundSurface)\b[\s\S]*?<\/bldg:\1>/g;
 
 /** ALKIS functions that are traffic structures (bridges, tunnels…): the road or rail is drawn on the ground instead. */
 const isTrafficStructure = (fn: string) => fn.startsWith("53001_") || fn.startsWith("52003_");
+
+/** LGL Baden-Württemberg: ETRS89/UTM32 + NHN, ALKIS functions. */
+export const LGL_LOD2: Lod2Source = { toLatLon: (e, n) => fromUtm(e, n), skip: isTrafficStructure };
+
+/** A polygon's rings as flat x, y, z lists: `posList` per ring, or one `pos` per vertex. */
+function ringsOf(poly: string): number[][] {
+  const lists = [...poly.matchAll(POS)];
+  if (lists.length) return lists.map((q) => q[1].trim().split(/\s+/).map(Number));
+  return [...poly.matchAll(RING)].map((r) => [...r[1].matchAll(VERTEX)].flatMap((v) => v[1].trim().split(/\s+/).map(Number)));
+}
 
 /** Split a CityGML document into its top-level buildings (with their parts). */
 function* buildings(xml: string): Generator<string> {
@@ -51,23 +94,24 @@ function* buildings(xml: string): Generator<string> {
 
 /**
  * Parse every building in a CityGML document whose centre lies in `bbox` ([s, w, n, e]).
- * `geoid` turns NHN into ellipsoid heights.
+ * `geoid` turns the source's heights (+ its `dz`) into ellipsoid heights.
  */
-export function parseLod2(xml: string, bbox: number[], geoid: number): Lod2Building[] {
+export function parseLod2(xml: string, bbox: number[], geoid: number, source: Lod2Source = LGL_LOD2): Lod2Building[] {
   const out: Lod2Building[] = [];
   const [S, W, N, E] = bbox;
+  const up = geoid + (source.dz ?? 0);
   for (const b of buildings(xml)) {
     const id = b.match(/gml:id="([^"]+)"/)![1];
     const fn = b.match(/<bldg:function>([^<]*)/)?.[1] ?? "";
-    if (isTrafficStructure(fn)) continue;
+    if (source.skip?.(fn)) continue;
     const roofType = b.match(/<bldg:roofType>([^<]*)/)?.[1] ?? "";
     const heights = [...b.matchAll(/<bldg:measuredHeight[^>]*>([^<]*)/g)].map((x) => Number(x[1]));
-    // surfaces in UTM first: the centre test is cheap there, and most of a 1 km file lies outside small areas
+    // surfaces in projected metres first: the centre test is cheap there, and most of a 1 km file lies outside small areas
     const surfaces: Array<{ kind: string; rings: number[][] }> = [];
     let se = 0, sn = 0, cnt = 0;
     for (const s of b.matchAll(SURF)) {
       for (const p of s[0].matchAll(POLY)) {
-        const rings = [...p[1].matchAll(POS)].map((q) => q[1].trim().split(/\s+/).map(Number));
+        const rings = ringsOf(p[1]);
         if (!rings.length || rings[0].length < 9) continue;
         surfaces.push({ kind: s[1], rings });
         if (s[1] === "GroundSurface") for (let i = 0; i < rings[0].length; i += 3) { se += rings[0][i]; sn += rings[0][i + 1]; cnt++; }
@@ -75,12 +119,12 @@ export function parseLod2(xml: string, bbox: number[], geoid: number): Lod2Build
     }
     if (!surfaces.length) continue;
     if (!cnt) for (const s of surfaces) for (let i = 0; i < s.rings[0].length; i += 3) { se += s.rings[0][i]; sn += s.rings[0][i + 1]; cnt++; }
-    const center = fromUtm(se / cnt, sn / cnt);
+    const center = source.toLatLon(se / cnt, sn / cnt);
     if (center[0] < S || center[0] > N || center[1] < W || center[1] > E) continue;
 
     const toEnu = (e: number, n: number, h: number): V3 => {
-      const [lat, lon] = fromUtm(e, n);
-      return ecefToEnu(llhToEcef(lat, lon, h + geoid));
+      const [lat, lon] = source.toLatLon(e, n);
+      return ecefToEnu(llhToEcef(lat, lon, h + up));
     };
     const roof: number[] = [], wall: number[] = [];
     let base = Infinity, footprint: P2[] = [], bestArea = 0;
@@ -109,12 +153,14 @@ export function parseLod2(xml: string, bbox: number[], geoid: number): Lod2Build
     }
     if (!roof.length && !wall.length) continue;
     const ground = surfaces.filter((x) => x.kind === "GroundSurface");
-    const utm = (ground.length ? ground : surfaces.filter((x) => x.kind === "RoofSurface")).map((x) => {
+    const xy = (ground.length ? ground : surfaces.filter((x) => x.kind === "RoofSurface")).map((x) => {
       const r: P2[] = [];
       for (let i = 0; i + 2 < x.rings[0].length; i += 3) r.push([x.rings[0][i], x.rings[0][i + 1]]);
       return r;
     });
-    out.push({ id, fn, roofType, height: Math.max(0, ...heights), base, roof, wall, footprint, center, utm });
+    // measured height (eaves… ridge) if the document has one, else base to the highest point
+    const height = heights.length ? Math.max(0, ...heights) : Math.max(...polys.flatMap((p) => p.rings[0].map((v) => v[2]))) - base;
+    out.push({ id, fn, roofType, height, base, roof, wall, footprint, center, xy });
   }
   return out;
 }

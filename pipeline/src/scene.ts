@@ -25,7 +25,7 @@ import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
 import { deckHeight } from "./bridges.ts";
 import { lod2Files, rasterSampler } from "./lgl.ts";
-import { type Lod2Building, parseLod2 } from "./lod2.ts";
+import { alkisKind, type Lod2Building, parseLod2 } from "./lod2.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
 import { fromUtm } from "./utm.ts";
@@ -155,19 +155,19 @@ function wallLook(t: Record<string, string>): { style: number | null; wall: numb
 }
 
 function lod2Style(b: Lod2Building): [number, number] {
-  const code = b.fn.split("_")[1] ?? "", group = b.fn.split("_")[0], flatOnly = b.roofType === "1000";
+  const kind = b.kind ?? alkisKind(b.fn), flatOnly = b.roofType === "1000";
   const r = hash(Math.round(b.center[0] * 1e6) ^ Math.round(b.center[1] * 1e6));
   const r2 = hash(Math.round(b.center[1] * 1e6) * 7 + 3);
   const tile = r < 0.55 ? 0 : r < 0.82 ? 1 : 2;
   const flat = r2 < 0.55 ? 3 : r2 < 0.85 ? 5 : 6;
   const k = (pitched: number, f: number) => pitched * 10 + f;
-  if (group !== "31001") return [4, k(2, 5)];                                    // canopies, other structures
-  if (["2463", "2464", "2465", "2723", "2740", "2741"].includes(code) || b.height < 3.5) return [4, k(tile, 5)];
-  if (code.startsWith("304")) return [2, k(r < 0.3 ? 4 : 2, 3)];                // churches: slate, some copper
+  if (kind === "structure") return [4, k(2, 5)];                                 // canopies, other structures
+  if (kind === "small" || b.height < 3.5) return [4, k(tile, 5)];
+  if (kind === "church") return [2, k(r < 0.3 ? 4 : 2, 3)];                     // churches: slate, some copper
   if (b.height >= 45) return [3, k(2, 5)];
-  if (code.startsWith("3")) return [2, k(r < 0.15 ? 4 : tile, flat)];           // public: sandstone
-  if (code.startsWith("2") && (flatOnly || b.height > 18)) return [r2 < 0.5 ? 5 : 1, k(tile, flat)]; // offices, shops: ribbon or punched windows
-  if (code.startsWith("21") || code.startsWith("22")) return [4, k(tile, 5)];   // production, storage
+  if (kind === "public") return [2, k(r < 0.15 ? 4 : tile, flat)];             // public: sandstone
+  if ((kind === "commercial" || kind === "industrial") && (flatOnly || b.height > 18)) return [r2 < 0.5 ? 5 : 1, k(tile, flat)]; // offices, shops: ribbon or punched windows
+  if (kind === "industrial") return [4, k(tile, 5)];                            // production, storage
   return [flatOnly ? 1 : 0, k(tile, flat)];
 }
 
@@ -341,7 +341,7 @@ if (region.sources === "lgl") {
   }
   process.stdout.write("\n");
   const ndom = await rasterSampler("ndom1", box);
-  const cs = crowns(ndom.px, box, meshes.flatMap((b) => b.utm));
+  const cs = crowns(ndom.px, box, meshes.flatMap((b) => b.xy));
   // On rail land and building sites the surface model is mostly masts, trains, cranes and containers:
   // keep only crowns that are clearly trees there (wide and tall).
   const noTrees: Array<{ r: P2[]; b: number[] }> = [];
@@ -558,9 +558,9 @@ function prism(ring: P2[], base: number, min: number, h: number, look: Mesh["loo
     v(a, along, min); v(b, along + L, h); v(a, along, h);
     along += L;
   }
-  return { id: "osm-tower", fn: "osm_tower", roofType: "1000", height: h, base, roof, wall, footprint: ring, center: [0, 0], utm: [], look } as unknown as Mesh;
+  return { id: "osm-tower", fn: "osm_tower", roofType: "1000", height: h, base, roof, wall, footprint: ring, center: [0, 0], xy: [], look } as unknown as Mesh;
 }
-const fromPiece = (p: Piece) => ({ id: "landmark", fn: "osm_landmark", roofType: "1000", center: [0, 0], utm: [], ...p }) as unknown as Mesh;
+const fromPiece = (p: Piece) => ({ id: "landmark", fn: "osm_landmark", roofType: "1000", center: [0, 0], xy: [], ...p }) as unknown as Mesh;
 for (const tw of tallTowers) {
   const near = (p: P2) => inside(p, tw.ring) || tw.ring.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 3);
   const stump = meshes.filter((b) => near(centre(b.footprint)));
