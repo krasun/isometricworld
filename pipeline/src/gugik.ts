@@ -7,8 +7,9 @@
  *   BDOT10k buildings   per powiat (OT_BUBD_A): what each building is used for, by its BDOT10k id, which is
  *                       the 3D models' buildingId
  *   NMT, NMPT           terrain (1 m) and surface (0.5 m) per 1:5000 map sheet, ASC grids, EVRF2007
+ *   orthophoto          aerial photo (WMS, 0.25 m): each roof's real colour
  *
- * Licences (ATTRIBUTION.md): the 3D models CC0 1.0; BDOT10k, NMT and NMPT CC BY 4.0, with the notice
+ * Licences (ATTRIBUTION.md): the 3D models CC0 1.0; BDOT10k, NMT, NMPT and the orthophoto CC BY 4.0, with the notice
  * „Wykorzystano/opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego”.
  *
  * Based on Piotr Kulpiński's Kraków branch (github.com/piotrkulpinski/isometricworld, feat/krakow-test-patch,
@@ -18,6 +19,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import sharp from "sharp";
 import { type BuildingKind, type Lod2Building, parseLod2 } from "./lod2.ts";
 import { boxTouchesOutline } from "./outline.ts";
 import { RAW } from "./paths.ts";
@@ -40,7 +42,7 @@ function projected([s, w, n, e]: number[]): number[] {
 const touches = (a: number[], b: number[]) => a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
 
 // ---- downloads --------------------------------------------------------------------------------------
-async function download(url: string, file: string) {
+async function download(url: string, file: string, label = url.split("/").pop()) {
   if (existsSync(file)) return;
   for (let attempt = 1; ; attempt++) {
     try {
@@ -48,7 +50,7 @@ async function download(url: string, file: string) {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       writeFileSync(`${file}.tmp`, Buffer.from(await r.arrayBuffer()));
       renameSync(`${file}.tmp`, file);
-      console.log(`  gugik: ${url.split("/").pop()}`);
+      console.log(`  gugik: ${label}`);
       return;
     } catch (err) {
       if (attempt === 4) throw new Error(`${url}: ${(err as Error).message}`);
@@ -66,14 +68,15 @@ const POWIAT = {
 type Powiat = keyof typeof POWIAT;
 const zipOf = (p: Powiat, t: string) => join(DIR, `${p}-${t}.zip`);
 
-/** Download what an area needs: the powiats' buildings and the NMT / NMPT sheets around the bbox (only
- *  near the region's outline, if it has one: nothing outside it is rendered). */
+/** Download what an area needs: the powiats' buildings, the NMT / NMPT sheets and the orthophoto around the bbox
+ *  (only near the region's outline, if it has one: nothing outside it is rendered). */
 export async function fetchGugik(teryt: string[], bbox: number[]) {
   mkdirSync(DIR, { recursive: true });
   for (const t of teryt) for (const p of Object.keys(POWIAT) as Powiat[]) await download(POWIAT[p](t), zipOf(p, t));
   const [s, w, n, e] = bbox, m = 0.005, g = 0.01; // objects just past the edge; terrain as far as ground.ts reads
   await fetchSheets("nmpt", [s - m, w - m, n + m, e + m], (box) => boxTouchesOutline(box, m));
   await fetchSheets("nmt", [s - g, w - g, n + g, e + g], (box) => boxTouchesOutline(box, g));
+  await fetchOrtho([s - m, w - m, n + m, e + m], (box) => boxTouchesOutline(box, m));
 }
 
 // ---- CityGML sheets inside the powiat zips ------------------------------------------------------------
@@ -139,7 +142,7 @@ const KRON86_DEFAULT = 0.26;
  * buildings LoD2 does not have (built since); LoD2 buildings that are gone by 2024 are dropped. Each gets its
  * kind from BDOT10k. `geoid` turns EVRF2007 into ellipsoid heights.
  */
-export function gugikBuildings(teryt: string[], bbox: number[], geoid: number): Lod2Building[] {
+export async function gugikBuildings(teryt: string[], bbox: number[], geoid: number): Promise<Lod2Building[]> {
   const lod2: Lod2Building[] = [], lod1: Lod2Building[] = [], bdot = new Map<string, [BuildingKind, string]>();
   for (const t of teryt) {
     for (const xml of sheets("lod2", t, bbox)) lod2.push(...parseLod2(xml, bbox, geoid, { toLatLon: fromPuwg }));
@@ -178,8 +181,116 @@ export function gugikBuildings(teryt: string[], bbox: number[], geoid: number): 
   }
   console.log(`  gugik: ${kept.length}/${lod2.length} LoD2 buildings (+${dz.toFixed(2)} m Kronsztadt 86 -> EVRF2007, from ${d.length}), `
     + `${fresh.length} LoD1 2024 only; ${known}/${out.length} with a BDOT10k function`);
+  // each roof's colour from the orthophoto, where it has been downloaded (chunk by chunk: sorted by chunk)
+  const ortho = new Ortho(), chunkOf = (b: Lod2Building) => b.xy[0]?.[0] ? orthoKey(b.xy[0][0][0], b.xy[0][0][1]) : "";
+  let coloured = 0;
+  for (const b of [...out].sort((a, c) => chunkOf(a).localeCompare(chunkOf(c)))) {
+    if (!b.xy.length) continue;
+    await ortho.ensure(b.xy.flat());
+    const c = roofColour(b.xy, ortho);
+    if (c) { b.roofRgb = c; coloured++; }
+  }
+  if (ortho.chunks.size) console.log(`  orthophoto roof colours: ${coloured}/${out.length}`);
   return out;
 }
+
+// ---- orthophoto: each roof's real colour --------------------------------------------------------------
+const ORTO = "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution";
+/** Chunks of 1024 m at 0.25 m per pixel: 4096 px, the service's largest image. */
+const ORTO_KM = 1024, ORTO_M = 0.25, ORTO_PX = ORTO_KM / ORTO_M;
+const orthoKey = (e: number, n: number) => `${Math.floor(e / ORTO_KM) * ORTO_KM}_${Math.floor(n / ORTO_KM) * ORTO_KM}`;
+const orthoFile = (key: string) => join(DIR, "orto", `${key}.jpg`);
+
+/** Download the orthophoto chunks covering a bbox (lat/lon) into data/raw/gugik/orto/<E>_<N>.jpg; `near`
+ *  skips chunks ([s, w, n, e]) the region does not need. */
+export async function fetchOrtho(bbox: number[], near: (box: number[]) => boolean = () => true) {
+  mkdirSync(join(DIR, "orto"), { recursive: true });
+  const [e0, n0, e1, n1] = projected(bbox);
+  let count = 0;
+  for (let E = Math.floor(e0 / ORTO_KM) * ORTO_KM; E < e1; E += ORTO_KM)
+    for (let N = Math.floor(n0 / ORTO_KM) * ORTO_KM; N < n1; N += ORTO_KM) {
+      const c = [fromPuwg(E, N), fromPuwg(E + ORTO_KM, N), fromPuwg(E, N + ORTO_KM), fromPuwg(E + ORTO_KM, N + ORTO_KM)];
+      if (!near([Math.min(...c.map((p) => p[0])), Math.min(...c.map((p) => p[1])), Math.max(...c.map((p) => p[0])), Math.max(...c.map((p) => p[1]))])) continue;
+      count++;
+      const q = new URLSearchParams({
+        SERVICE: "WMS", VERSION: "1.1.1", REQUEST: "GetMap", LAYERS: "Raster", STYLES: "", SRS: "EPSG:2180",
+        BBOX: `${E},${N},${E + ORTO_KM},${N + ORTO_KM}`, WIDTH: String(ORTO_PX), HEIGHT: String(ORTO_PX), FORMAT: "image/jpeg",
+      });
+      await download(`${ORTO}?${q}`, orthoFile(`${E}_${N}`), `orthophoto ${E}_${N}`);
+    }
+  console.log(`  orthophoto: ${count} chunk(s) of ${ORTO_KM} m`);
+}
+
+/** Orthophoto pixels, chunks decoded on demand (a few kept at a time). */
+class Ortho {
+  chunks = new Map<string, Buffer | null>();
+  async ensure(pts: P2[]) {
+    for (const key of new Set(pts.map(([e, n]) => orthoKey(e, n)))) {
+      if (this.chunks.has(key)) continue;
+      const f = orthoFile(key);
+      this.chunks.set(key, existsSync(f) ? (await sharp(f).removeAlpha().raw().toBuffer()) : null);
+      if (this.chunks.size > 6) this.chunks.delete(this.chunks.keys().next().value!);
+    }
+  }
+  /** RGB (0…1) at a PUWG 1992 point, null outside the downloaded chunks */
+  at(e: number, n: number): [number, number, number] | null {
+    const key = orthoKey(e, n), d = this.chunks.get(key);
+    if (!d) return null;
+    const [E, N] = key.split("_").map(Number), x = Math.floor((e - E) / ORTO_M), y = Math.floor((N + ORTO_KM - n) / ORTO_M);
+    if (x < 0 || y < 0 || x >= ORTO_PX || y >= ORTO_PX) return null;
+    const i = (y * ORTO_PX + x) * 3;
+    return [d[i] / 255, d[i + 1] / 255, d[i + 2] / 255];
+  }
+}
+
+/** Roof colours of the house style (the renderer's roof palette), one per roofing a photo can tell apart. */
+const ROOFS: Record<string, number[]> = {
+  red: [0.76, 0.36, 0.25], orange: [0.84, 0.52, 0.30], brown: [0.60, 0.36, 0.26], darkBrown: [0.44, 0.29, 0.23],
+  graphite: [0.34, 0.35, 0.38], grey: [0.56, 0.57, 0.60], lightGrey: [0.77, 0.77, 0.76], copper: [0.45, 0.70, 0.60],
+};
+/** Which roofing a photo colour shows: ceramic tiles by hue and lightness, sheet metal and membranes by lightness. */
+function roofing([h, s, l]: [number, number, number]): string {
+  if (s < 0.12 || l < 0.18) return l < 0.32 ? "graphite" : l < 0.58 ? "grey" : "lightGrey";
+  if (h >= 80 && h <= 200) return "copper";
+  if (h > 200 && h < 330) return l < 0.35 ? "graphite" : "grey"; // bluish sheet metal
+  if (l < 0.30) return "darkBrown";
+  if (s < 0.28) return "brown";
+  return h > 20 && h < 50 && l > 0.45 ? "orange" : "red";
+}
+
+/**
+ * A roof's colour in the house style: the median of the photo's pixels in the middle of the largest footprint
+ * (shrunk to 60 % around its centre: the photo leans tall roofs a little off their footprint), without
+ * foliage and deep shadow, tells the roofing; the palette colour of that roofing, with a quarter of the
+ * photo's own colour for variety.
+ */
+function roofColour(xy: P2[][], ortho: Ortho): number[] | null {
+  const ring = xy.reduce((a, b) => (Math.abs(area(b)) > Math.abs(area(a)) ? b : a));
+  const c = centre(ring), r = ring.map(([x, y]) => [c[0] + (x - c[0]) * 0.6, c[1] + (y - c[1]) * 0.6] as P2);
+  const xs = r.map((p) => p[0]), ys = r.map((p) => p[1]), px: number[][] = [];
+  for (let e = Math.min(...xs); e <= Math.max(...xs); e += ORTO_M) for (let n = Math.min(...ys); n <= Math.max(...ys); n += ORTO_M) {
+    if (!inside([e, n], r)) continue;
+    const v = ortho.at(e, n);
+    if (!v) continue;
+    const [R, G, B] = v, lum = 0.299 * R + 0.587 * G + 0.114 * B;
+    if (lum < 0.12 || (G > R + 0.03 && G > B + 0.03)) continue; // shadow, foliage over the roof
+    px.push(v);
+  }
+  if (px.length < 12) return null;
+  const med = [0, 1, 2].map((k) => px.map((p) => p[k]).sort((a, b) => a - b)[px.length >> 1]);
+  const base = ROOFS[roofing(rgbToHsl(med))];
+  return base.map((v, k) => Math.round((v * 0.75 + med[k] * 0.25) * 100) / 100);
+}
+
+const area = (r: P2[]) => r.reduce((a, p, i) => { const q = r[(i + 1) % r.length]; return a + p[0] * q[1] - q[0] * p[1]; }, 0) / 2;
+function rgbToHsl([r, g, b]: number[]): [number, number, number] {
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, s, l];
+}
+
 
 const centre = (r: P2[]): P2 => [r.reduce((a, p) => a + p[0], 0) / r.length, r.reduce((a, p) => a + p[1], 0) / r.length];
 function inside([x, y]: P2, r: P2[]) {

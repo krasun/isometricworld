@@ -33,6 +33,8 @@ export interface Lod2Building {
   xy: P2[][];
   /** What the building is used for, where the source says so other than by an ALKIS `fn` (see alkisKind). */
   kind?: BuildingKind;
+  /** The roof's colour measured by the source (e.g. from an orthophoto), RGB 0…1; OSM roof:colour still wins. */
+  roofRgb?: number[];
 }
 
 /** What a building is used for, as far as its look goes (scene.ts lod2Style). "other" includes homes. */

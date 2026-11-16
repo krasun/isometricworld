@@ -348,7 +348,7 @@ if (LOD2) {
     process.stdout.write("\n");
     ndom = (await rasterSampler("ndom1", box)).px;
   } else {
-    meshes.push(...gugikBuildings(region.teryt ?? [], box, GEOID));
+    meshes.push(...await gugikBuildings(region.teryt ?? [], box, GEOID));
     ndom = gugikNdom(box);
     toXy = toPuwg; fromXy = fromPuwg;
   }
@@ -664,9 +664,9 @@ for (const b of meshes as Mesh[]) {
   for (let i = 0; i < b.wall.length; i += 5) see(b.wall[i], b.wall[i + 1], b.wall[i + 2] - 1);
   const [s, roofKind] = lod2Style(b);
   const fc: P2 = [b.footprint.reduce((a, p) => a + p[0], 0) / b.footprint.length, b.footprint.reduce((a, p) => a + p[1], 0) / b.footprint.length];
-  const look = b.look ?? lookAt(fc);
+  const look = b.look ?? lookAt(fc), roof = look.roof ?? b.roofRgb ?? null; // OSM roof:colour, else the source's measured one
   const entry: unknown[] = [look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
-  if (look.roof || look.wall || ("bare" in look && look.bare)) entry.push(look.roof, look.wall);
+  if (roof || look.wall || ("bare" in look && look.bare)) entry.push(roof, look.wall);
   if ("bare" in look && look.bare) entry.push(look.bare);
   add(minx, miny, maxx, maxy, (bin) => bin.m.push(entry));
 }

@@ -149,7 +149,7 @@ export const REGIONS: Record<string, Region> = {
     municipalities: ["Wieliczka"],
     credits: [
       "Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK)",
-      "Buildings: GUGiK 3D models, BDOT10k · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Trees: GUGiK NMPT",
+      "Buildings: GUGiK 3D models, BDOT10k · Roofs: GUGiK orthophoto · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Trees: GUGiK NMPT",
     ],
     osmExtract: "https://download.geofabrik.de/europe/poland/malopolskie-latest.osm.pbf",
     geoidM: 39.6, // EGM2008 at Rynek Górny (GeographicLib GeoidEval: 39.574 m)
