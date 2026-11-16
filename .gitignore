@@ -14,6 +14,8 @@ pipeline/page/dist/
 data/
 web/public/regions/
 
+# scratch scripts (screenshots etc.)
+.tmp-*
 
 *.log
 .DS_Store
