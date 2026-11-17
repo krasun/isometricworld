@@ -379,7 +379,7 @@ const buildingMaterial = new THREE.ShaderMaterial({
             c = texture2D(roofTex, uv).rgb * vColor / ROOF_MEAN;
           }
           else if (n.z < 0.97) { if (fract(vPos.z / 0.42) < 0.16) c *= 0.93; }   // tile courses
-          else c *= 0.95 + 0.07 * hash(floor(vPos.xy * 2.0));               // gravel
+          else if (abs(floor(vKind + 0.001) - 17.0) > 0.5) c *= 0.95 + 0.07 * hash(floor(vPos.xy * 2.0)); // gravel (car park decks: flat concrete)
         }
         if (vFacade.y > -100.0) {
           // kind = 10 + style + 0.05 + 0.9 * v: v is the building's own variation (addMeshes), every
@@ -449,6 +449,11 @@ const buildingMaterial = new THREE.ShaderMaterial({
             float row = floor(y / 0.55), bl = 0.9 + 0.6 * hash(vec2(row, 3.1)), sx = x / bl + 0.5 * mod(row, 2.0);
             c *= 0.9 + 0.16 * hash(vec2(floor(sx), row));
             if (fract(y / 0.55) < 0.14 || fract(sx) < 0.08) c *= 0.72;
+          } else if (k == 7) {       // multi-storey car park: per level a concrete parapet band, then the dark open deck; columns
+            float FH = 2.9, fy = fract(y / FH);
+            bool column = abs(fract(x / 7.5) - 0.5) > 0.46;
+            if (fy > 0.4 && !column && y > 0.5) c = vec3(0.30, 0.31, 0.34) * (fy > 0.88 ? 0.82 : 1.0);
+            else if (fy < 0.05) c *= 0.88;                                        // slab edge
           } else {                   // offices: ribbon windows or a grid of square windows, shop fronts
             float FH = 3.4 + 0.5 * r1, M = 1.3 + 0.8 * r2, fy = fract(y / FH);
             vec3 g = mix(WIN, r5 < 0.5 ? vec3(0.36, 0.48, 0.58) : vec3(0.40, 0.50, 0.46), 0.5) * (0.9 + 0.2 * hash(vec2(floor(x / M), floor(y / FH)) + v));
@@ -599,10 +604,11 @@ const WALL_BY_STYLE: Record<number, number[][]> = {
   2: [[0.88, 0.79, 0.62], [0.84, 0.76, 0.62], [0.92, 0.88, 0.80]],
   3: [[0.80, 0.84, 0.88]],
   4: [[0.80, 0.79, 0.76], [0.74, 0.74, 0.72], [0.84, 0.82, 0.76]],
+  7: [[0.82, 0.81, 0.78], [0.78, 0.78, 0.76]], // car park concrete
   5: [[0.90, 0.90, 0.89], [0.84, 0.85, 0.86], [0.93, 0.91, 0.86]],
 };
-/** roof kinds (scene.ts lod2Style): red tile, brown tile, slate, gravel, copper, dark membrane, green roof */
-const ROOFS_STR = [[0.76, 0.36, 0.25], [0.62, 0.36, 0.26], [0.50, 0.51, 0.55], [0.86, 0.84, 0.79], [0.45, 0.70, 0.60], [0.74, 0.74, 0.74], [0.56, 0.68, 0.40]];
+/** roof kinds (scene.ts lod2Style): red tile, brown tile, slate, gravel, copper, dark membrane, green roof, parking deck */
+const ROOFS_STR = [[0.76, 0.36, 0.25], [0.62, 0.36, 0.26], [0.50, 0.51, 0.55], [0.86, 0.84, 0.79], [0.45, 0.70, 0.60], [0.74, 0.74, 0.74], [0.56, 0.68, 0.40], [0.62, 0.63, 0.65]];
 
 type Plane = { n: number[]; d: number; tris: number[][]; area: number };
 type Out = { pos: number[]; nor: number[]; col: number[]; fac: number[]; kin: number[] };
@@ -784,6 +790,56 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
   }
 }
 
+/**
+ * Top deck of a multi-storey car park (learned from an AI repaint of the Robert-Bosch-Krankenhaus P1): laid out
+ * along the footprint's longest edge in 16 m modules (5 m bays | 6 m aisle | 5 m bays), white bay lines every
+ * 2.5 m, a few parked cars (rounded boxes, ~1 per 250 m²), a stair/lift box at one end. Plain grey deck below.
+ */
+const CAR_COLOURS = [[0.86, 0.87, 0.88], [0.36, 0.38, 0.42], [0.42, 0.52, 0.66], [0.70, 0.71, 0.73], [0.74, 0.30, 0.26], [0.22, 0.23, 0.25]];
+function parkingDeck(o: Out, ring: P2[], z: number, rnd: () => number) {
+  let t = 0, best = 0;
+  for (let k = 0; k < ring.length; k++) {
+    const [ax, ay] = ring[k], [bx, by] = ring[(k + 1) % ring.length], L = Math.hypot(bx - ax, by - ay);
+    if (L > best) { best = L; t = Math.atan2(by - ay, bx - ax); }
+  }
+  const cu = Math.cos(t), sn = Math.sin(t);
+  const toW = (u: number, v: number): P2 => [u * cu - v * sn, u * sn + v * cu];
+  const us = ring.map(([x, y]) => x * cu + y * sn), vs = ring.map(([x, y]) => -x * sn + y * cu);
+  const u0 = Math.min(...us), u1 = Math.max(...us), v0 = Math.min(...vs), v1 = Math.max(...vs);
+  const ins = (u: number, v: number, m = 0.6) => [[0, 0], [m, 0], [-m, 0], [0, m], [0, -m]].every(([du, dv]) => pointInRing(...toW(u + du, v + dv), ring));
+  const line = (ua: number, va: number, ub: number, vb: number, w: number) => {
+    const du = ub - ua, dv = vb - va, L = Math.hypot(du, dv) || 1, nu = (-dv / L) * w / 2, nv = (du / L) * w / 2;
+    const q = [[ua - nu, va - nv], [ub - nu, vb - nv], [ub + nu, vb + nv], [ua + nu, va + nv]].map(([u, v]) => [...toW(u, v), z + 0.04]);
+    const up = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]) > 0; // counter-clockwise from above
+    quad3(o, up ? q : q.reverse(), [0.97, 0.97, 0.95]);
+  };
+  const W = v1 - v0, n = Math.max(1, Math.floor((W - 1) / 16)), vm = v0 + (W - n * 16) / 2;
+  const bays: Array<[number, number, number]> = []; // u, v (bay centre), side
+  for (let m = 0; m < n; m++) {
+    const vc = vm + m * 16 + 8;
+    for (const side of [-1, 1]) {
+      const va = vc + side * 3, vb = vc + side * 8;
+      let first = true;
+      for (let u = u0 + 1.5; u + 2.5 <= u1 - 1.5; u += 2.5) {
+        if (!ins(u, va) || !ins(u, vb) || !ins(u + 2.5, va) || !ins(u + 2.5, vb)) { first = true; continue; }
+        if (first) line(u, va, u, vb, 0.22);
+        line(u + 2.5, va, u + 2.5, vb, 0.22);
+        bays.push([u + 1.25, (va + vb) / 2, side]);
+        first = false;
+      }
+    }
+  }
+  const area = Math.abs(THREE.ShapeUtils.area(ring.map(([x, y]) => new THREE.Vector2(x, y))));
+  for (let k = Math.min(bays.length, Math.round(area / 250)); k > 0 && bays.length; k--) {
+    const [u, v] = bays.splice(Math.floor(rnd() * bays.length), 1)[0];
+    const [x, y] = toW(u, v), c = CAR_COLOURS[Math.floor(rnd() * CAR_COLOURS.length)];
+    prism(o, x, y, z, 1.8, 4.3, 0.75, 0.75, t, c.map((q) => q * 0.85)); // body
+    prism(o, x, y, z + 0.75, 1.5, 2.3, 0.55, 0.55, t, c);               // cabin
+  }
+  for (const [u, v] of [[u0 + 2.5, v0 + 2.5], [u1 - 2.5, v1 - 2.5], [u0 + 2.5, v1 - 2.5], [u1 - 2.5, v0 + 2.5]])
+    if (ins(u, v, 1.6)) { const [x, y] = toW(u, v); prism(o, x, y, z, 3.2, 3.2, 3.0, 3.0, t, [0.80, 0.79, 0.76]); break; } // stairs / lift
+}
+
 /** LoD2 meshes into the shared building arrays (flat-shaded triangles; walls carry facade coordinates). */
 function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[], fac: number[], kin: number[]) {
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
@@ -796,7 +852,8 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
     const rnd = mulberry(seed * 7919 + 1);
     // style in the integer part, the building's facade variation in the fraction (buildingMaterial)
     const kind = 10 + style + 0.05 + 0.9 * mulberry(seed * 104729 + 7)();
-    const green = roofKind % 10 === 6, landmark = (style === 4 && !!osmRoof) || !!bare; // hand-modelled / LOOKS landmarks: no roof furniture
+    const green = roofKind % 10 === 6, deck = style === 7, landmark = (style === 4 && !!osmRoof) || !!bare || deck; // hand-modelled / LOOKS landmarks / car parks: no roof furniture
+    let deckZ = -Infinity;
     const planes: Plane[] = [];
     for (let i = 0; i + 8 < roof.length; i += 9) {
       a.fromArray(roof, i); b.fromArray(roof, i + 3); c.fromArray(roof, i + 6);
@@ -806,6 +863,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
       if (n.z < 0) n.negate();
       const r = n.z > 0.97 ? flatRoof : tileRoof; // planes within ~14° of level are flat roofs
       for (const v of [a, b, c]) { pos.push(v.x, v.y, v.z); nor.push(n.x, n.y, n.z); col.push(...r); fac.push(0, -1000); kin.push(kind); }
+      if (deck && n.z > 0.97 && area > 1) deckZ = Math.max(deckZ, a.z, b.z, c.z);
       if (landmark || area < 0.01 || n.z < 0.3) continue;
       // group triangles into planes (same normal and offset) for the roof furniture
       const d = n.x * a.x + n.y * a.y + n.z * a.z;
@@ -814,6 +872,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
       pl.tris.push([a.x, a.y, b.x, b.y, c.x, c.y]); pl.area += area;
     }
     if (planes.length) roofFurniture({ pos, nor, col, fac, kin }, planes, footprint, wall, style, green, w, rnd);
+    if (deck && deckZ > -Infinity) parkingDeck({ pos, nor, col, fac, kin }, footprint, deckZ, rnd);
     for (let i = 0; i + 14 < wall.length; i += 15) {
       a.fromArray(wall, i); b.fromArray(wall, i + 5); c.fromArray(wall, i + 10);
       n.subVectors(b, a).cross(c.clone().sub(a)).normalize();

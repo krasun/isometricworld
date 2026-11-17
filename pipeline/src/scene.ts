@@ -101,8 +101,9 @@ function style(height: number, kind: string, id: number, year?: number | null) {
 
 /**
  * LoD2 building -> [facade style, roof kinds] from its ALKIS building function (31001_<code>), AdV roof type
- * and height. Facade styles: 0 old plaster, 1 post-war plaster, 2 public/sandstone, 3 tower, 4 shed, 5 office.
- * Roof kinds: 0 red tile, 1 brown tile, 2 slate, 3 gravel, 4 copper, 5 dark membrane, 6 green roof;
+ * and height. Facade styles: 0 old plaster, 1 post-war plaster, 2 public/sandstone, 3 tower, 4 shed, 5 office,
+ * 7 multi-storey car park (6 is masonry, portals.ts).
+ * Roof kinds: 0 red tile, 1 brown tile, 2 slate, 3 gravel, 4 copper, 5 dark membrane, 6 green roof, 7 parking deck;
  * encoded pitched * 10 + flat, since roofs of mixed form (AdV 5000) have both and the renderer picks per plane.
  */
 /** Muted roof colours for OSM roof:colour names and roof:material (the house palette, not CSS red). */
@@ -160,6 +161,7 @@ function lod2Style(b: Lod2Building): [number, number] {
   const flat = r2 < 0.55 ? 3 : r2 < 0.85 ? 5 : 6;
   const k = (pitched: number, f: number) => pitched * 10 + f;
   if (group !== "31001") return [4, k(2, 5)];                                    // canopies, other structures
+  if (code === "2461" || code === "2462") return [7, k(2, 7)];                  // Parkhaus / Parkdeck: open decks, parking roof
   if (["2463", "2464", "2465", "2723", "2740", "2741"].includes(code) || b.height < 3.5) return [4, k(tile, 5)];
   if (code.startsWith("304")) return [2, k(r < 0.3 ? 4 : 2, 3)];                // churches: slate, some copper
   if (b.height >= 45) return [3, k(2, 5)];
@@ -676,7 +678,7 @@ for (const b of meshes as Mesh[]) {
   const [s, roofKind] = lod2Style(b);
   const fc: P2 = [b.footprint.reduce((a, p) => a + p[0], 0) / b.footprint.length, b.footprint.reduce((a, p) => a + p[1], 0) / b.footprint.length];
   const look = b.look ?? lookAt(fc);
-  const entry: unknown[] = [look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
+  const entry: unknown[] = [s === 7 ? s : look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
   if (look.roof || look.wall || ("bare" in look && look.bare)) entry.push(look.roof, look.wall);
   if ("bare" in look && look.bare) entry.push(look.bare);
   add(minx, miny, maxx, maxy, (bin) => bin.m.push(entry));

@@ -189,6 +189,8 @@ const { values: args, positionals } = parseArgs({
     tag: { type: "string" },
     // painted (detailed, the Tel Aviv look) | simple (flat fills, outlines, low-poly trees; see SIMPLE_STYLE)
     look: { type: "string", default: "painted" },
+    // extra prompt line for this run (cutouts: what the building at the window centre is and how it looks)
+    hint: { type: "string" },
   },
 });
 const areaName = positionals[0] ?? "tlv-core";
@@ -438,7 +440,7 @@ async function paintWindow(i: number, j: number) {
     .replace("{treesOf}", local.treesOf).replace("{treeHint}", local.treeHint).replace("{materials}", local.materials).replace("{ground}", local.ground).replace("{out}", join(work, "out.png"))
     .replace("{continuation}", edges.length ? CONTINUATION.replace("{edges}", edges.join(" and ")) : "")
     .replace("{count}", args.aerial && !HYBRID ? "Five" : "Four").replace("{aerialImage}", args.aerial && !HYBRID ? AERIAL_IMAGE : "")
-    .replace("{facades}", await facadeNotes(i, j))
+    .replace("{facades}", (await facadeNotes(i, j)) + (args.hint ? `- ${args.hint}\n` : ""))
     .replace("{aerialRule}", HYBRID ? HYBRID_RULE : args.aerial ? AERIAL_RULE : "");
   for (let attempt = 1; attempt <= 3; attempt++) {
     while (Date.now() < resumeAt) await sleep(Math.min(60_000, resumeAt - Date.now()));
@@ -768,6 +770,13 @@ async function main() {
   }
   if (args.plan) return console.log(`${wins.length} windows`);
   if (args.assemble) { await harmoniseSea(); return assemble(true); }
+  if (args.window) { // one window, painted directly: a cutout window may sit off the grid (16.5,2.5), so no rings round it
+    if (existsSync(SEA) && !(await looksLikeSea(SEA))) { console.warn("  sea texture is bad, repainting it"); rmSync(SEA); }
+    for (const [i, j] of wins) await paintWindow(i, j);
+    await assemble();
+    writeFileSync(join(base, `paint${SUFFIX}.json`), JSON.stringify({ updated: new Date().toISOString() }));
+    return;
+  }
   // centre first: square rings around the city centre. Each ring runs in two passes over its
   // perimeter (even, then odd positions) so every window continues its painted inner/ring neighbours.
   const [cx, cy] = args.center.split(",").map(Number);

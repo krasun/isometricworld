@@ -388,6 +388,63 @@ for (const w of LGL ? [] : water) { // DGM1 already holds each river's surveyed 
 }
 for (let i = 0; i < n; i++) if (!isWater[i]) h[i] = Math.max(h[i], 0.8);
 
+// track beds (LGL): on the 3 m grid, nodes beside a track in a cutting sit on the cutting wall, so the draped
+// track zig-zags up and down. Every open-air track on the ground gets a smooth long profile (lowest DGM1 point
+// across the bed every metre, running median 15 m, then mean 20 m); nodes within the bed + one grid step take it,
+// blending back to the terrain over the next 4 m; the nearest track wins where beds run side by side
+if (LGL) {
+  const at = (x: number, y: number) => {
+    const fx = Math.max(0, Math.min(grid.nx - 1.001, (x - grid.x0) / STEP)), fy = Math.max(0, Math.min(grid.ny - 1.001, (y - grid.y0) / STEP));
+    const ix = Math.floor(fx), iy = Math.floor(fy), ax = fx - ix, ay = fy - iy, v = (a: number, b: number) => h[b * grid.nx + a];
+    return (v(ix, iy) * (1 - ax) + v(ix + 1, iy) * ax) * (1 - ay) + (v(ix, iy + 1) * (1 - ax) + v(ix + 1, iy + 1) * ax) * ay;
+  };
+  const FLAT = 2.7 + STEP, BLEND = 4;
+  const best = new Float32Array(n).fill(Infinity), target = new Float32Array(n);
+  let tracks = 0;
+  for (const f of features) {
+    if (f.k !== "rail" || f.y || f.b || !f.l || f.l.length < 2) continue;
+    // resample every metre: position, direction, profile
+    const pts: P2[] = [], cum: number[] = [];
+    for (let i = 1; i < f.l.length; i++) {
+      const a = f.l[i - 1], b = f.l[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      for (let s = 0; s < L; s += 1) { pts.push([a[0] + ((b[0] - a[0]) * s) / L, a[1] + ((b[1] - a[1]) * s) / L]); cum.push((cum.at(-1) ?? -1) + 1); }
+    }
+    pts.push(f.l.at(-1)!);
+    if (pts.length < 4) continue;
+    const raw = pts.map((p, k) => {
+      const q = pts[Math.min(pts.length - 1, k + 1)], o = pts[Math.max(0, k - 1)], dx = q[0] - o[0], dy = q[1] - o[1], L = Math.hypot(dx, dy) || 1;
+      return Math.min(...[-1.5, 0, 1.5].map((c) => at(p[0] - (dy / L) * c, p[1] + (dx / L) * c)));
+    });
+    const win = (r: number, fn: (v: number[]) => number, src: number[]) =>
+      src.map((_, k) => fn(src.slice(Math.max(0, k - r), Math.min(src.length, k + r + 1))));
+    const med = win(7, (v) => [...v].sort((a, b) => a - b)[v.length >> 1], raw);
+    const prof = win(10, (v) => v.reduce((a, b) => a + b, 0) / v.length, med);
+    tracks++;
+    // nodes near each 1 m piece take the profile there
+    const R = FLAT + BLEND;
+    for (let k = 1; k < pts.length; k++) {
+      const a = pts[k - 1], b = pts[k], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
+      const gx0 = Math.max(0, Math.floor((Math.min(a[0], b[0]) - R - grid.x0) / STEP)), gx1 = Math.min(grid.nx - 1, Math.ceil((Math.max(a[0], b[0]) + R - grid.x0) / STEP));
+      const gy0 = Math.max(0, Math.floor((Math.min(a[1], b[1]) - R - grid.y0) / STEP)), gy1 = Math.min(grid.ny - 1, Math.ceil((Math.max(a[1], b[1]) + R - grid.y0) / STEP));
+      for (let iy = gy0; iy <= gy1; iy++) for (let ix = gx0; ix <= gx1; ix++) {
+        const x = grid.x0 + ix * STEP, y = grid.y0 + iy * STEP, i = iy * grid.nx + ix;
+        if (isWater[i]) continue;
+        const u = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2)), d = Math.hypot(x - a[0] - u * dx, y - a[1] - u * dy);
+        if (d < R && d < best[i]) { best[i] = d; target[i] = prof[k - 1] + (prof[k] - prof[k - 1]) * u; }
+      }
+    }
+  }
+  let moved = 0;
+  for (let i = 0; i < n; i++) {
+    if (best[i] === Infinity) continue;
+    const t = best[i] <= FLAT ? 1 : 1 - (best[i] - FLAT) / BLEND, s = t * t * (3 - 2 * t);
+    const v = h[i] + (target[i] - h[i]) * s;
+    if (Math.abs(v - h[i]) > 0.05) moved++;
+    h[i] = v;
+  }
+  console.log(`  track beds: ${tracks} open-air track(s) levelled, ${moved} grid nodes moved`);
+}
+
 // orthometric -> ellipsoid -> ENU up (Earth curvature drops the ellipsoid below the tangent plane)
 for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
   const x = grid.x0 + ix * STEP, y = grid.y0 + iy * STEP, i = iy * grid.nx + ix;
