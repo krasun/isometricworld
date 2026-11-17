@@ -693,10 +693,27 @@ function grids(model: Model, bbox: number[]): Grid[] {
     .filter((g) => touches([g.x0, g.y0, g.x0 + g.nx * g.cell, g.y0 + g.ny * g.cell], box));
 }
 
-/** NMT terrain: (lat, lon) -> EVRF2007 height (m), bilinear between cell centres; NaN outside the sheets. */
+/**
+ * NMT terrain: (lat, lon) -> EVRF2007 height (m), bilinear between cell centres; NaN outside the sheets. Sheets
+ * do not quite meet (a few metres between two can have no cell): there, the mean of the nearest cells round it
+ * (8 directions at 2, 4, 8, 16 m), so the gap does not fall back to a coarser model and leave a seam.
+ */
 export function gugikTerrain(bbox: number[]) {
   const gs = grids("nmt", bbox);
   const at = (east: number, north: number) => {
+    const z = sheetAt(east, north);
+    if (Number.isFinite(z)) return z;
+    for (const r of [2, 4, 8, 16]) {
+      let sum = 0, n = 0;
+      for (let k = 0; k < 8; k++) {
+        const v = sheetAt(east + Math.cos((k * Math.PI) / 4) * r, north + Math.sin((k * Math.PI) / 4) * r);
+        if (Number.isFinite(v)) { sum += v; n++; }
+      }
+      if (n) return sum / n;
+    }
+    return NaN;
+  };
+  const sheetAt = (east: number, north: number) => {
     for (const g of gs) {
       const fx = (east - g.x0) / g.cell, fy = (north - g.y0) / g.cell;
       if (fx < 0 || fy < 0 || fx > g.nx - 1 || fy > g.ny - 1) continue;

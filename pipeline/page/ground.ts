@@ -8,7 +8,7 @@
 type P2 = [number, number];
 /** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
 /** s, u: pavement sides and surface (src/ground.ts, preset streetDetail) */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; s?: number; u?: string }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: number[]; s?: number; u?: string }
 interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }
 
 const FILL: Record<string, string> = {
@@ -72,7 +72,9 @@ function grassTexture(): HTMLCanvasElement {
 export function drawGround(
   ctx: CanvasRenderingContext2D, features: Feature[], [x0, y0, x1, y1]: number[], mpt: number,
   objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR, grass = false,
+  detailBridges = false, // preset bridgeDetail: on the deck canvas, a concrete cornice band instead of painted parapets
 ) {
+  const CORNICE = "#cbc6bd";
   const SHADOW_DIR = shadowDir;
   const W = ctx.canvas.width, H = ctx.canvas.height;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -212,7 +214,8 @@ export function drawGround(
   void ground;
 
   // 4. paths and plazas, then pavements under streets
-  for (const f of [...of("path"), ...of("plaza"), ...of("cycle")]) stroke(f.l!, f.w!, (f.u && PATH_SURFACE[f.u]) || PATHS[f.k]);
+  if (detailBridges) for (const f of [...of("path"), ...of("cycle"), ...of("sidewalk")]) stroke(f.l!, f.w! + 2.2, CORNICE);
+  for (const f of [...of("path"), ...of("plaza"), ...of("cycle")]) stroke(f.l!, f.w!, (f.u && PATH_SURFACE[f.u]) || (detailBridges && f.k !== "plaza" ? "#b8b7b3" : PATHS[f.k]));
   // pavements OSM maps as their own ways: a kerbed strip
   for (const f of of("sidewalk")) stroke(f.l!, f.w! + 0.3, KERB);
   for (const f of of("sidewalk")) stroke(f.l!, f.w!, (f.u && PATH_SURFACE[f.u]) || SIDEWALK);
@@ -232,7 +235,8 @@ export function drawGround(
   for (const layer of layers) {
     const rs = roads.filter((f) => (f.y ?? 0) === layer);
     const js = junctions.filter((j) => (j[3] ?? 0) === layer);
-    if (layer > 0) {
+    if (layer > 0 && detailBridges) for (const f of rs) stroke(f.l!, f.w! + 2.2, CORNICE); // the deck's own parapets stand on it
+    else if (layer > 0) {
       // a bridge must read as passing OVER what's below: cast shadow, dark outline, concrete parapets
       for (const f of rs) stroke(f.l!.map(([x, y]) => [x + SHADOW_DIR[0] * 4, y + SHADOW_DIR[1] * 4] as P2), f.w! + 3, "rgba(40,40,48,0.35)");
       for (const f of rs) stroke(f.l!, f.w! + 3, "#55565c");
@@ -274,7 +278,8 @@ export function drawGround(
     // 6. rail of this layer: ballast, sleepers, two rails (a road bridge above covers it)
     ctx.lineCap = "round";
     for (const f of rails.filter((f) => (f.y ?? 0) === layer)) {
-      if (layer > 0) { stroke(f.l!, 5, "#55565c"); stroke(f.l!, 4.4, "#cfcac0"); } // deck edge and parapets, like road bridges
+      if (layer > 0 && detailBridges) stroke(f.l!, 5, CORNICE);
+      else if (layer > 0) { stroke(f.l!, 5, "#55565c"); stroke(f.l!, 4.4, "#cfcac0"); } // deck edge and parapets, like road bridges
       stroke(f.l!, 3.4, "#a9a49a");
       stroke(f.l!, 2.6, "#7d6a58", [0.25, 0.4]);
       ctx.setLineDash([]);

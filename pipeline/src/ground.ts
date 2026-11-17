@@ -13,7 +13,7 @@
  *         data/derived/<area>/ground/height.bin    Float32 ENU "up" of the ground per grid node
  *         data/derived/<area>/ground/features.json drawable features in ENU (see Feature)
  */
-import { bridgeEnds, isBridge, type GraphWay } from "./bridges.ts";
+import { bridgeEnds, carried, isBridge, type GraphWay } from "./bridges.ts";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -37,7 +37,7 @@ const R_EARTH = 6371000;
  */
 /** s: the street's pavements (bit 1 left, 2 right of its direction; unset both), u: the surface (surfaceOf), both
  *  only with the preset's `streetDetail` */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; s?: number; u?: string }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: number[]; s?: number; u?: string }
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
@@ -50,6 +50,8 @@ const STYLED = region.look === "styled";
 const DETAIL = STYLED && styleOf(region.style).streetDetail;
 /** Preset `greenery`: lawns where the orthophoto is green (greenery.ts; GUGiK's orthophoto). */
 const GREENERY = STYLED && styleOf(region.style).greenery && region.sources === "gugik";
+/** Preset `bridgeDetail`: bridge decks carried on to their abutments (below). */
+const BRIDGE_DETAIL = STYLED && styleOf(region.style).bridgeDetail;
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
 const GEOID = region.geoidM;
 /** Terrain grid posting (m) and how far past the area it reaches (deg; the render footprint of an edge tile). */
@@ -427,6 +429,26 @@ const sample = (x: number, y: number) => {
   const ix = Math.floor(fx), iy = Math.floor(fy), ax = fx - ix, ay = fy - iy, i = iy * grid.nx + ix;
   return (h[i] * (1 - ax) + h[i + 1] * ax) * (1 - ay) + (h[i + grid.nx] * (1 - ax) + h[i + grid.nx + 1] * ax) * ay;
 };
+// preset bridgeDetail: an OSM bridge often ends short of its abutment, over the gap the terrain model leaves under
+// the bridge, so the road dips before the deck. Each abutment end (not a joint between bridge ways) runs on along
+// its direction to where the embankment tops out: the first point within 0.3 m of the highest terrain in the
+// next 15 m, at least 1 m (bridges.ts deckHeight, carried).
+if (BRIDGE_DETAIL) {
+  const endUse = new Map<number, number>();
+  for (const w of graph) if (w.bridge) for (const n of [w.nodes[0], w.nodes.at(-1)!]) endUse.set(n, (endUse.get(n) ?? 0) + 1);
+  let n = 0, total = 0;
+  for (const w of graph) {
+    if (!w.bridge || w.l.length < 2 || w.nodes.length !== w.l.length) continue;
+    w.ext = ([0, 1] as const).map((i) => {
+      if ((endUse.get(i ? w.nodes.at(-1)! : w.nodes[0]) ?? 0) > 1) return 0;
+      const prof = Array.from({ length: 16 }, (_, s) => { const p = carried(w.l, i, s); return sample(p[0], p[1]); });
+      const top = Math.max(...prof), s0 = prof.findIndex((v) => v >= top - 0.3);
+      n++; total += s0;
+      return Math.max(1, s0 + 0.5);
+    }) as [number, number];
+  }
+  console.log(`  bridge ends carried to their abutments: ${n}, ${(total / Math.max(1, n)).toFixed(1)} m on average`);
+}
 const ends = bridgeEnds(graph, sample);
 for (const [id, e] of ends) { const f = deckFeatures.get(id); if (f) f.e = e; }
 writeFileSync(join(out, "bridge-ends.json"), JSON.stringify(Object.fromEntries(ends)));

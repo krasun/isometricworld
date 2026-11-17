@@ -184,6 +184,10 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   foliage shading (clumps of leaves, a darker underside); each keeps the top the surface model measured.
   `bushes`: bushes and hedges from the surface model 0.7–3.5 m above the ground where the orthophoto is green,
   away from buildings and taller vegetation (`gugik.ts` bushes), drawn as lobed bushes and thujas.
+  `bridgeDetail`: OSM bridges often end short of their abutments, over the gap the terrain model leaves under
+  them; each abutment end is carried on to where the embankment tops out (`ground.ts`; `deckHeight` takes the
+  extensions, so traffic drives on the drawn deck), decks are as wide as the road plus a cornice, with 3D
+  parapets, and piers stand under high spans, off the roads and rails below (`renderer.ts` buildDecks).
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).

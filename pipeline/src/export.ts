@@ -571,10 +571,10 @@ async function exportBorders(heights: Heights) {
  */
 /** bridge deck end heights (OSM way id -> [start, end]) that ground.ts computed for these areas (bridges.ts bridgeEnds) */
 function bridgeEndsOf(areas: string[]) {
-  const m = new Map<number, [number, number]>();
+  const m = new Map<number, number[]>();
   for (const a of areas) {
     const f = join(DERIVED, a, "ground", "bridge-ends.json");
-    if (existsSync(f)) for (const [id, e] of Object.entries(readJson(f))) m.set(Number(id), e as [number, number]);
+    if (existsSync(f)) for (const [id, e] of Object.entries(readJson(f))) m.set(Number(id), e as number[]);
   }
   return m;
 }

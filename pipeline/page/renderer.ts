@@ -9,7 +9,7 @@ import { REGIONS } from "../src/places.ts";
 import { styleOf } from "../src/styles.ts";
 import { drawGround, type Feature } from "./ground.ts";
 import { richBushes, richTrees } from "./trees.ts";
-import { deckHeight } from "../src/bridges.ts";
+import { carried, deckHeight } from "../src/bridges.ts";
 
 const params = new URLSearchParams(location.search);
 const REGION = params.get("region") ?? "israel-center";
@@ -147,7 +147,7 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   const ctx = cv.getContext("2d")!;
   // regions with cast shadows (post pass) skip the short contact shadows, which would point the same way
   drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, SHADOWS ? { b: [], t: [] } : shadows, ground, STYLED ? SHADOW : undefined, STYLED && STYLE.greenery);
-  buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h);
+  buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h, visible.filter((f) => !f.b && f.l && (f.k === "rail" || ["highway", "street", "lane", "dirtroad"].includes(f.k))));
   if (STYLED) deckShadows(ctx, data);
   groundTexture.needsUpdate = true;
   // terrain mesh: 5 m grid draped on the terrain, UVs into the canvas
@@ -196,21 +196,43 @@ const FASCIA = 1.3;
  * a ribbon carrying it at the deck height, concrete fascias along both edges, and the deck's shadow on
  * the ground canvas `ctx` (still in ENU metres after drawGround).
  */
-function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, x1, y1]: number[], w: number, h: number) {
+/** Preset bridgeDetail: decks carried on to their abutments, as wide as the road and a 1.1 m cornice each side, with
+ *  a 0.95 m parapet along both edges and piers under high spans (every ~25 m, off the roads and rails below). */
+const BRIDGE_DETAIL = STYLED && STYLE.bridgeDetail;
+const CORNICE = 1.1, PARAPET = 0.95, SPAN = 25;
+function buildDecks(ctx: CanvasRenderingContext2D, osmBridges: Feature[], [x0, y0, x1, y1]: number[], w: number, h: number, under: Feature[] = []) {
   for (const c of decks.children) (c as THREE.Mesh).geometry.dispose();
   decks.clear();
-  if (!bridges.length) return;
+  if (!osmBridges.length) return;
+  // preset bridgeDetail: a deck carried on past its OSM line's ends to the abutments (ground.ts: e[2], e[3] m)
+  const bridges = osmBridges.map((f) => {
+    if (!f.e || f.e.length < 4 || !f.l || f.l.length < 2) return f;
+    const l = [...f.l];
+    l[0] = carried(f.l, 0, f.e[2]); l[l.length - 1] = carried(f.l, 1, f.e[3]);
+    return { ...f, l, e: [f.e[0], f.e[1]] };
+  });
   const cv = deckTexture.image as HTMLCanvasElement;
   if (w !== cv.width || h !== cv.height) deckTexture.dispose();
   cv.width = w; cv.height = h;
-  drawGround(cv.getContext("2d")!, bridges, [x0, y0, x1, y1], GROUND_MPT, { b: [], t: [] }, ground, SHADOW);
+  drawGround(cv.getContext("2d")!, bridges, [x0, y0, x1, y1], GROUND_MPT, { b: [], t: [] }, ground, SHADOW, false, BRIDGE_DETAIL);
   deckTexture.needsUpdate = true;
+  // what a pier must not stand on: the roads and rails under the decks
+  const onWay = (x: number, y: number) => under.some((f) => {
+    const l = f.l!, r = (f.k === "rail" ? 2.5 : (f.w ?? 6) / 2) + 1.2;
+    for (let i = 1; i < l.length; i++) {
+      const [ax, ay] = l[i - 1], [bx, by] = l[i], dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
+      if (Math.hypot(x - ax - dx * t, y - ay - dy * t) < r) return true;
+    }
+    return false;
+  });
+  /** a concrete quad into the fascia mesh (both sides drawn), lit by its normal */
+  const quad = (q: number[][], n: number[]) => { for (const k of [0, 1, 2, 0, 2, 3]) { side.push(...q[k]); sideN.push(...n); } };
   const top: number[] = [], uv: number[] = [], side: number[] = [], sideN: number[] = [];
   const U = (x: number, y: number) => [(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)];
   ctx.save();
   ctx.fillStyle = "rgba(40,40,48,0.28)";
   for (const f of bridges) {
-    const l = f.l!, deck = deckHeight(l, ground, f.e), half = f.k === "rail" ? 2.5 : (f.w ?? 6) / 2 + 1.5;
+    const l = f.l!, deck = deckHeight(l, ground, f.e), half = f.k === "rail" ? 2.5 : (f.w ?? 6) / 2 + (BRIDGE_DETAIL ? CORNICE : 1.5);
     // samples every ≤ 2 m along the line, with the direction there
     const pts: Array<{ x: number; y: number; z: number; dx: number; dy: number; g: number }> = [];
     for (let i = 0; i + 1 < l.length; i++) {
@@ -243,6 +265,15 @@ function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, 
         const ex = s1[0] - s0[0], ey = s1[1] - s0[1], el = Math.hypot(ex, ey) || 1, nx = -ey / el, ny = ex / el; // outward: left of the way for A, right for B (walked backwards)
         for (const k of [0, 1, 2, 0, 2, 3]) { side.push(...q[k]); sideN.push(nx, ny, 0); }
       }
+      // parapets on both edges (preset bridgeDetail): outer face, inner face and top of a 0.3 m wall
+      if (BRIDGE_DETAIL) for (const sgn of [1, -1]) {
+        const at = (p: typeof a, n: number[], ln: number, o: number) => [p.x + (sgn * n[0] * o) / ln, p.y + (sgn * n[1] * o) / ln];
+        const ao = at(a, na, la, half - 0.1), bo = at(b, nb, lb, half - 0.1), ai = at(a, na, la, half - 0.4), bi = at(b, nb, lb, half - 0.4);
+        const out = [(sgn * na[0]) / la, (sgn * na[1]) / la, 0];
+        quad([[ao[0], ao[1], a.z], [bo[0], bo[1], b.z], [bo[0], bo[1], b.z + PARAPET], [ao[0], ao[1], a.z + PARAPET]], out);
+        quad([[ai[0], ai[1], a.z], [bi[0], bi[1], b.z], [bi[0], bi[1], b.z + PARAPET], [ai[0], ai[1], a.z + PARAPET]], [-out[0], -out[1], 0]);
+        quad([[ao[0], ao[1], a.z + PARAPET], [bo[0], bo[1], b.z + PARAPET], [bi[0], bi[1], b.z + PARAPET], [ai[0], ai[1], a.z + PARAPET]], [0, 0, 1]);
+      }
       // shadow on the ground: the deck strip shifted away from the sun by its clearance
       const clear = (a.z + b.z - a.g - b.g) / 2;
       if (clear > 1) {
@@ -250,6 +281,32 @@ function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, 
         ctx.beginPath();
         ctx.moveTo(A[0][0] + sx, A[0][1] + sy); ctx.lineTo(B[0][0] + sx, B[0][1] + sy); ctx.lineTo(B[1][0] + sx, B[1][1] + sy); ctx.lineTo(A[1][0] + sx, A[1][1] + sy);
         ctx.closePath(); ctx.fill();
+      }
+    }
+    // piers (preset bridgeDetail): every ~25 m where the deck stands over 4.5 m clear, at least 10 m from its ends,
+    // moved up to 8 m along it off the roads and rails below; two columns under a wide deck
+    if (BRIDGE_DETAIL && pts.length > 2) {
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+      const total = cum.at(-1)!, r = f.k === "path" || f.k === "cycle" || f.k === "sidewalk" ? 0.35 : 0.6;
+      const across = half > 5 ? [-(half - 2), half - 2] : [0];
+      const column = (cx: number, cy: number, z0: number, z1: number) => {
+        for (let k = 0; k < 8; k++) {
+          const t0 = (k * Math.PI) / 4, t1 = ((k + 1) * Math.PI) / 4, tm = (t0 + t1) / 2;
+          const p0 = [cx + Math.cos(t0) * r, cy + Math.sin(t0) * r], p1 = [cx + Math.cos(t1) * r, cy + Math.sin(t1) * r];
+          quad([[p0[0], p0[1], z0], [p1[0], p1[1], z0], [p1[0], p1[1], z1], [p0[0], p0[1], z1]], [Math.cos(tm), Math.sin(tm), 0]);
+        }
+      };
+      for (let s = Math.min(SPAN, total / 2); s <= total - 10; s += SPAN) {
+        if (s < 10) continue;
+        for (const shift of [0, 2, -2, 4, -4, 6, -6, 8, -8]) {
+          const i = cum.findIndex((c) => c >= s + shift);
+          if (i < 0) continue;
+          const p = pts[i], nx = -p.dy, ny = p.dx, spots = across.map((o) => [p.x + nx * o, p.y + ny * o]);
+          if (p.z - p.g < 4.5 || spots.some(([x, y]) => onWay(x, y))) continue;
+          for (const [x, y] of spots) column(x, y, ground(x, y) - 0.5, p.z - FASCIA);
+          break;
+        }
       }
     }
   }

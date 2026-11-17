@@ -51,6 +51,9 @@ export interface StylePreset {
   /** Bushes and hedges from the low surface model (0.7–3.5 m) where the orthophoto is green (gugik.ts bushes,
    *  drawn by page/trees.ts; sources gugik). */
   bushes: boolean;
+  /** Bridges built out (ground.ts, page/renderer.ts): decks carried on to where the embankment tops out (an OSM
+   *  bridge often ends over the gap under it). */
+  bridgeDetail: boolean;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -63,7 +66,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -85,6 +88,7 @@ export const STYLES = {
     greenery: true,
     richTrees: true,
     bushes: true,
+    bridgeDetail: true,
   },
 } satisfies Record<string, StylePreset>;
 
