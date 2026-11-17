@@ -8,7 +8,7 @@ import { CAMERA, axes, ecefToEnu, llhToEcef, tileCamera, useRegion } from "../sr
 import { REGIONS } from "../src/places.ts";
 import { styleOf } from "../src/styles.ts";
 import { drawGround, type Feature } from "./ground.ts";
-import { richTrees } from "./trees.ts";
+import { richBushes, richTrees } from "./trees.ts";
 import { deckHeight } from "../src/bridges.ts";
 
 const params = new URLSearchParams(location.search);
@@ -363,6 +363,7 @@ type P2 = [number, number];
 export interface TileObjects {
   b: Array<[P2[], number, number, number | null]>; // ring, height, style, ground hint (ellipsoid)
   t: Array<[number, number, number, number]>;      // x, y, radius, crown height
+  s?: Array<[number, number, number, number]>;     // bushes and hedges: x, y, radius, top (preset bushes)
   /** LoD2 meshes: style, roof kind, roof xyz[], wall (xyz, along, above base)[], footprint, height, seed */
   m?: Array<[number, number, number[], number[], P2[], number, number, (number[] | null)?, (number[] | null)?, (number | null)?, number?, number?]>; // … osm roof, osm wall, bare (no roof furniture), storeys, façade flags (scene.ts facadeFlags)
 }
@@ -1203,6 +1204,7 @@ function buildObjects(data: TileObjects) {
     objects.add(new THREE.Mesh(geo, buildingMaterial));
   }
   if (data.t.length && STYLED && STYLE.richTrees) objects.add(...richTrees(data.t, ground, treeMaterial, SUN));
+  if (data.s?.length && STYLED && STYLE.richTrees) objects.add(...richBushes(data.s, ground, SUN));
   else if (data.t.length) {
     const crowns = new THREE.InstancedMesh(STYLED ? CROWN : new THREE.IcosahedronGeometry(1, 2), treeMaterial, data.t.length);
     const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6).rotateX(Math.PI / 2).translate(0, 0, 0.5), treeMaterial, data.t.length);

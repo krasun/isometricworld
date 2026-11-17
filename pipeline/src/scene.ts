@@ -14,6 +14,7 @@
  *   b: buildings  [ring (ENU x,y pairs, CCW), height above ground, style, groundHint]
  *   m: LoD2 meshes [style, roof kind, roof xyz[], wall xyz+facade[], footprint ring, height, seed]
  *   t: tree crowns [x, y, radius, crown height above ground]
+ *   s: bushes and hedges [x, y, radius, top above ground] (preset bushes; only where there are some)
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,7 +27,7 @@ import { ARCADES, arcade, LOOKS, PLACED, type Piece, type Rings, STRUCTURES, typ
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
 import { deckHeight } from "./bridges.ts";
-import { foliageSeen, fromPuwg, gugikBuildings, gugikNdom, type OsmOutline, toPuwg } from "./gugik.ts";
+import { bushes, foliageSeen, fromPuwg, gugikBuildings, gugikNdom, type OsmOutline, toPuwg } from "./gugik.ts";
 import { lod2Files, rasterSampler } from "./lgl.ts";
 import { alkisKind, type Lod2Building, parseLod2 } from "./lod2.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
@@ -234,6 +235,7 @@ const tlvCover: P2[][] = [];
 const tlvRecs: Array<{ b: Building; holes: P2[][]; id: number }> = [];
 
 const trees: Array<[number, number, number, number]> = [];
+const shrubs: Array<[number, number, number, number]> = []; // bushes and hedges (preset bushes)
 const meshes: Lod2Building[] = [];
 
 // 1. Tel Aviv-Yafo municipal buildings: surveyed heights.
@@ -437,6 +439,15 @@ if (LOD2) {
     if ((c.r < 4 || c.h < 8) && noTrees.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && inside([p[0], p[1]], r))) { masked++; continue; }
     trees.push([p[0], p[1], c.r, Math.max(c.r * 0.6 + 1, c.h - c.r * 0.85)]);
   }
+  // preset bushes: the low surface model where the photo is green, off buildings and crowns (gugik.ts bushes)
+  if (region.sources === "gugik" && STYLED && styleOf(region.style).bushes) {
+    const kept = cs.filter((_, i) => !foliage || foliage[i]);
+    for (const b of await bushes(ndom, meshes.flatMap((m) => m.xy), kept, box)) {
+      const [lat, lon] = fromXy(b.e, b.n), p = toEnu(lon, lat);
+      if (!onDeck([p[0], p[1]]) && !overWater([p[0], p[1]])) shrubs.push([p[0], p[1], b.r, b.h]);
+    }
+    console.log(`  bushes and hedges: ${shrubs.length}`);
+  }
   console.log(`  ${region.sources === "lgl" ? "ndom1" : "nmpt − nmt"} tree crowns: ${cs.length - masked - bridged - bare} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water${foliage ? `, ${bare} with no foliage on the orthophoto` : ""})`);
 }
 
@@ -586,7 +597,7 @@ for (const f of can.features) {
 console.log(`  tree crowns: ${trees.length}`);
 
 // 4. Bin objects by the render tiles they can appear on (base … top, + margin).
-type Bin = { b: Array<[P2[], number, number, number | null]>; m: unknown[]; t: Array<[number, number, number, number]> };
+type Bin = { b: Array<[P2[], number, number, number | null]>; m: unknown[]; t: Array<[number, number, number, number]>; s?: Array<[number, number, number, number]> };
 const bins = new Map<string, Bin>();
 const add = (minx: number, miny: number, maxx: number, maxy: number, fn: (bin: Bin) => void) => {
   for (let ty = Math.floor((miny - 8) / T); ty <= Math.floor((maxy + 8) / T); ty++)
@@ -712,7 +723,10 @@ if (STYLED) {
 }
 // structures on their OSM outline and models at measured points (landmarks.ts); the surface model reads both
 // as tree crowns, so crowns on them go
-const dropCrowns = (hit: (p: P2) => boolean) => { for (let i = trees.length - 1; i >= 0; i--) if (hit([trees[i][0], trees[i][1]])) trees.splice(i, 1); };
+const dropCrowns = (hit: (p: P2) => boolean) => {
+  for (let i = trees.length - 1; i >= 0; i--) if (hit([trees[i][0], trees[i][1]])) trees.splice(i, 1);
+  for (let i = shrubs.length - 1; i >= 0; i--) if (hit([shrubs[i][0], shrubs[i][1]])) shrubs.splice(i, 1);
+};
 for (const { rings, structure, t } of structures) {
   meshes.push(...structure.model(rings, groundAt, t).map(fromPiece));
   dropCrowns((p) => rings.outer.some((r) => inside(p, r)));
@@ -827,7 +841,13 @@ for (const t of trees) {
   add(Math.min(a[0], c[0]) - r, Math.min(a[1], c[1]) - r, Math.max(a[0], c[0]) + r, Math.max(a[1], c[1]) + r,
     (bin) => bin.t.push(t.map((v) => Math.round(v * 10) / 10) as [number, number, number, number]));
 }
-for (const [k, v] of bins) writeFileSync(join(out, `${k}.json`), JSON.stringify(v.m.length ? v : { b: v.b, t: v.t }));
+for (const s of shrubs) {
+  const g = groundAt(s[0], s[1]), r = s[2] / CAMERA.mpp;
+  const a = enuToPixel([s[0], s[1], g - 3]), c = enuToPixel([s[0], s[1], g + 3 + s[3]]);
+  add(Math.min(a[0], c[0]) - r, Math.min(a[1], c[1]) - r, Math.max(a[0], c[0]) + r, Math.max(a[1], c[1]) + r,
+    (bin) => (bin.s ??= []).push(s.map((v) => Math.round(v * 10) / 10) as [number, number, number, number]));
+}
+for (const [k, v] of bins) writeFileSync(join(out, `${k}.json`), JSON.stringify(v.m.length ? v : { b: v.b, t: v.t, ...(v.s ? { s: v.s } : {}) }));
 console.log(`  ${bins.size} tile bins -> ${out}`);
 if (region.sources === "tlv") writeFileSync(join(DERIVED, name, "osm-parts.json"), JSON.stringify(swapped, null, 1));
 if (!existsSync(join(DERIVED, name))) mkdirSync(join(DERIVED, name), { recursive: true });

@@ -441,6 +441,77 @@ export async function foliageSeen(crowns: Array<{ e: number; n: number; r: numbe
   return keep;
 }
 
+/**
+ * Bushes and hedges: the surface model 0.7–3.5 m above the ground where the orthophoto is green (at least half
+ * of the 4 × 4 photo pixels of a 1 m cell), off buildings (+1 m) and tree crowns (1.1 × their radius), with
+ * nothing taller than 3.5 m within 2 m (a crown's fringe, a wall's foot are not bushes), covered greedily by round
+ * bushes, the highest cell first, each as wide as its height allows (0.6–1.5 m radius); a lone green cell is
+ * dropped. A hedge comes out as a chain of bushes. Crowns and outlines in PUWG 1992 metres, as are the bushes.
+ */
+export async function bushes(ndom: (x: number, y: number) => number, blocked: P2[][], crowns: Array<{ e: number; n: number; r: number }>,
+  bbox: number[]): Promise<Array<{ e: number; n: number; r: number; h: number }>> {
+  const box = projected(bbox), out: Array<{ e: number; n: number; r: number; h: number }> = [];
+  const rings = blocked.map((r) => ({ r, b: [Math.min(...r.map((p) => p[0])), Math.min(...r.map((p) => p[1])), Math.max(...r.map((p) => p[0])), Math.max(...r.map((p) => p[1]))] }));
+  for (const ch of orthoChunks(bbox)) {
+    const E = ch.e, N = ch.n, K = ch.size, sub = Math.round(1 / ch.px); // 1 m cells, sub × sub photo pixels each
+    const { data, info } = await sharp(ch.file).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    // not here: buildings (+1 m) and crowns (1.1 × their radius)
+    const off = new Uint8Array(K * K);
+    for (const { r, b } of rings) {
+      if (b[2] < E - 1 || b[0] > E + K + 1 || b[3] < N - 1 || b[1] > N + K + 1) continue;
+      for (let j = Math.max(0, Math.floor(b[1] - N) - 1); j <= Math.min(K - 1, Math.ceil(b[3] - N) + 1); j++)
+        for (let i = Math.max(0, Math.floor(b[0] - E) - 1); i <= Math.min(K - 1, Math.ceil(b[2] - E) + 1); i++) {
+          const x = E + i + 0.5, y = N + j + 0.5;
+          if (inside([x, y], r) || [[-1, 0], [1, 0], [0, -1], [0, 1]].some(([dx, dy]) => inside([x + dx, y + dy], r))) off[j * K + i] = 1;
+        }
+    }
+    for (const c of crowns) {
+      const R = c.r * 1.1;
+      if (c.e + R < E || c.e - R > E + K || c.n + R < N || c.n - R > N + K) continue;
+      for (let j = Math.max(0, Math.floor(c.n - R - N)); j <= Math.min(K - 1, Math.ceil(c.n + R - N)); j++)
+        for (let i = Math.max(0, Math.floor(c.e - R - E)); i <= Math.min(K - 1, Math.ceil(c.e + R - E)); i++)
+          if (Math.hypot(E + i + 0.5 - c.e, N + j + 0.5 - c.n) <= R) off[j * K + i] = 1;
+    }
+    // the surface everywhere, and where anything over 3.5 m stands within 2 m (5 × 5 cells)
+    const surf = new Float32Array(K * K);
+    for (let j = 0; j < K; j++) for (let i = 0; i < K; i++) { const h = ndom(E + i, N + j); surf[j * K + i] = Number.isFinite(h) ? h : 0; }
+    const tall = new Uint8Array(K * K), row = new Uint8Array(K * K);
+    for (let j = 0; j < K; j++) for (let i = 0; i < K; i++) for (let d = -2; d <= 2; d++) if (surf[j * K + Math.min(K - 1, Math.max(0, i + d))] > 3.5) { row[j * K + i] = 1; break; }
+    for (let j = 0; j < K; j++) for (let i = 0; i < K; i++) for (let d = -2; d <= 2; d++) if (row[Math.min(K - 1, Math.max(0, j + d)) * K + i]) { tall[j * K + i] = 1; break; }
+    // candidates: green, low, free
+    const cand: number[] = [], height = new Float32Array(K * K);
+    for (let j = 0; j < K; j++) for (let i = 0; i < K; i++) {
+      const x = E + i, y = N + j;
+      if (off[j * K + i] || tall[j * K + i] || x < box[0] || x > box[2] || y < box[1] || y > box[3]) continue;
+      let g = 0;
+      for (let v = 0; v < sub; v++) for (let u = 0; u < sub; u++) {
+        const q = ((info.height - 1 - (j * sub + v)) * info.width + i * sub + u) * 3, R = data[q], G = data[q + 1], B = data[q + 2];
+        if ((2 * G - R - B) / (R + G + B + 1) > 0.05) g++;
+      }
+      if (g * 2 < sub * sub) continue;
+      const h = surf[j * K + i];
+      if (!(h >= 0.7 && h <= 3.5)) continue;
+      height[j * K + i] = h;
+      cand.push(j * K + i);
+    }
+    // greedy cover, the highest first
+    cand.sort((a, b) => height[b] - height[a]);
+    const taken = new Uint8Array(K * K);
+    for (const q of cand) {
+      if (taken[q]) continue;
+      const i = q % K, j = (q - i) / K, h = height[q], r = Math.max(0.6, Math.min(1.5, 0.45 + 0.3 * h)), R = Math.ceil(r);
+      let n = 0;
+      for (let dj = -R; dj <= R; dj++) for (let di = -R; di <= R; di++) {
+        const ii = i + di, jj = j + dj;
+        if (ii < 0 || jj < 0 || ii >= K || jj >= K || di * di + dj * dj > r * r) continue;
+        if (height[jj * K + ii] > 0 && !taken[jj * K + ii]) { taken[jj * K + ii] = 1; n++; }
+      }
+      if (n >= 2) out.push({ e: E + i + 0.5, n: N + j + 0.5, r, h });
+    }
+  }
+  return out;
+}
+
 /** Roof colours of the house style (the renderer's roof palette), one per roofing a photo can tell apart. */
 const ROOFS: Record<string, number[]> = {
   red: [0.76, 0.36, 0.25], orange: [0.84, 0.52, 0.30], brown: [0.60, 0.36, 0.26], darkBrown: [0.44, 0.29, 0.23],

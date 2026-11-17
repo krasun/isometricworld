@@ -235,3 +235,32 @@ export function richTrees(trees: Array<[number, number, number, number]>, ground
   return out;
 }
 const TRUNK = new THREE.CylinderGeometry(1, 1, 1, 6).rotateX(Math.PI / 2).translate(0, 0, 0.5);
+
+/** Shrub greens: privet and hornbeam hedges, box, thuja, lilac and hazel bushes. */
+const SHRUBS = [[0.34, 0.52, 0.20], [0.30, 0.47, 0.19], [0.24, 0.41, 0.21], [0.40, 0.56, 0.24], [0.36, 0.50, 0.26]];
+/**
+ * Instanced bushes and hedges ([x, y, radius, top above the ground]): lobed round bushes from the ground up to
+ * their measured top, tall narrow ones (2 m+, under 1.1 m radius) mostly thujas; no trunks.
+ */
+export function richBushes(bushes: Array<[number, number, number, number]>, ground: (x: number, y: number) => number, sun: THREE.Vector3): THREE.Object3D[] {
+  const G = geometries(), groups = new Map<THREE.BufferGeometry, Array<[THREE.Matrix4, THREE.Color]>>();
+  const q = new THREE.Quaternion(), Z = new THREE.Vector3(0, 0, 1);
+  for (const [x, y, r, top] of bushes) {
+    const g = ground(x, y), v = Math.floor(hash(x * 2.7, y * 3.3) * VARIANTS), m = new THREE.Matrix4();
+    const thuja = top >= 2 && r < 1.1 && hash(y * 1.9, x * 4.1) < 0.7;
+    q.setFromAxisAngle(Z, hash(x * 5.3, y * 2.9) * Math.PI * 2);
+    if (thuja) m.compose(new THREE.Vector3(x, y, g + 0.02), q, new THREE.Vector3(r * 0.85, r * 0.85, Math.max(0.8, top)));
+    else m.compose(new THREE.Vector3(x, y, g + top / 2), q, new THREE.Vector3(r, r, Math.max(0.35, top / 2)));
+    const base = thuja ? SHRUBS[2] : SHRUBS[Math.floor(hash(Math.floor(x / 25), Math.floor(y / 25)) * SHRUBS.length)];
+    const j = (k: number) => 0.9 + 0.2 * hash(x + k * 17.3, y - k * 5.1);
+    const geo = (thuja ? G.thuja : G.round)[v];
+    (groups.get(geo) ?? groups.set(geo, []).get(geo)!).push([m, new THREE.Color(base[0] * j(0), base[1] * j(1), base[2] * j(2))]);
+  }
+  const out: THREE.Object3D[] = [];
+  for (const [geo, list] of groups) {
+    const mesh = new THREE.InstancedMesh(geo, material(sun), list.length);
+    list.forEach(([m, c], i) => { mesh.setMatrixAt(i, m); mesh.setColorAt(i, c); });
+    out.push(mesh);
+  }
+  return out;
+}

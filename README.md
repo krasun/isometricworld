@@ -182,6 +182,8 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   crowns of several lobes in a few variants, a Central European species mix with its own shapes, colours and
   bark (limes, oaks, birches, fruit trees, poplars, willows, tiered spruces, umbrella pines, thujas), and
   foliage shading (clumps of leaves, a darker underside); each keeps the top the surface model measured.
+  `bushes`: bushes and hedges from the surface model 0.7–3.5 m above the ground where the orthophoto is green,
+  away from buildings and taller vegetation (`gugik.ts` bushes), drawn as lobed bushes and thujas.
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).

@@ -86,12 +86,12 @@ const SHADOWS = REGIONS[area.region].look === "styled" && styleOf(REGIONS[area.r
 
 /** A tile's objects and its 8 neighbours' (each once): everything that can cast a shadow into the tile. */
 function withNeighbours(outDir: string, tx: number, ty: number) {
-  const out: Record<string, unknown[]> = { b: [], t: [], m: [] }, seen = new Set<string>();
+  const out: Record<string, unknown[]> = { b: [], t: [], m: [], s: [] }, seen = new Set<string>();
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     const f = join(outDir, "scene", `${tx + dx}_${ty + dy}.json`);
     if (!existsSync(f)) continue;
     const bin = JSON.parse(readFileSync(f, "utf8"));
-    for (const k of ["b", "t", "m"]) for (const e of bin[k] ?? []) {
+    for (const k of ["b", "t", "m", "s"]) for (const e of bin[k] ?? []) {
       const id = `${k}${JSON.stringify(e)}`;
       if (!seen.has(id)) { seen.add(id); out[k].push(e); }
     }
