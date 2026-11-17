@@ -284,6 +284,46 @@ function deckShadows(ctx: CanvasRenderingContext2D, data?: TileObjects) {
   ctx.restore();
 }
 
+/**
+ * Foreground mask (places.ts life.foreground): white where the visible surface stands at least 2.5 m above the
+ * terrain under it (tree crowns, walls and roofs over a car's height), black elsewhere. Drawn twice with the same
+ * vertex code, so the second pass meets the first one's depth exactly: `on` 0 everything black with its depth,
+ * then `on` 1 all but the ground and the bridge decks (cars drive on those: the decks stay black).
+ */
+const FOREGROUND = STYLED && !!REGIONS[REGION].life?.foreground;
+const fgMaterial = new THREE.ShaderMaterial({
+  vertexShader: /* glsl */ `
+    varying vec3 vEnu;
+    void main() {
+      #ifdef USE_INSTANCING
+        vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.0);
+      #else
+        vec4 w = modelMatrix * vec4(position, 1.0);
+      #endif
+      vEnu = w.xyz;
+      gl_Position = projectionMatrix * viewMatrix * w;
+    }`,
+  fragmentShader: /* glsl */ `
+    uniform highp sampler2D terrain;
+    uniform vec3 grid; // terrain grid: x0, y0, step
+    uniform float on;
+    varying vec3 vEnu;
+    float at(ivec2 i) { return texelFetch(terrain, clamp(i, ivec2(0), textureSize(terrain, 0) - 1), 0).r; }
+    void main() {
+      vec2 f = (vEnu.xy - grid.xy) / grid.z, a = fract(f);
+      ivec2 k = ivec2(floor(f));
+      float t = mix(mix(at(k), at(k + ivec2(1, 0)), a.x), mix(at(k + ivec2(0, 1)), at(k + ivec2(1, 1)), a.x), a.y);
+      gl_FragColor = vec4(vec3(on * step(2.5, vEnu.z - t)), 1.0);
+    }`,
+  side: THREE.DoubleSide,
+  uniforms: { terrain: { value: null }, grid: { value: new THREE.Vector3(meta.x0, meta.y0, meta.step) }, on: { value: 0 } },
+});
+if (FOREGROUND) {
+  const t = new THREE.DataTexture(terrain, meta.nx, meta.ny, THREE.RedFormat, THREE.FloatType);
+  t.needsUpdate = true;
+  fgMaterial.uniforms.terrain.value = t;
+}
+
 /** Ellipsoid height (cm + 10000, 16 bit in RG) of whatever surface is visible. */
 const heightMaterial = new THREE.ShaderMaterial({
   vertexShader: /* glsl */ `
@@ -1374,6 +1414,24 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
     renderer.render(scene, camera);
   }
   const color = renderer.domElement.toDataURL("image/png");
+  let fg: string | undefined;
+  if (FOREGROUND) {
+    renderer.setRenderTarget(null);
+    renderer.setClearColor(0x000000, 1);
+    renderer.clear(true, true, true);
+    scene.overrideMaterial = fgMaterial;
+    fgMaterial.uniforms.on.value = 0;
+    renderer.render(scene, camera);
+    groundMesh.visible = false; decks.visible = false;
+    fgMaterial.uniforms.on.value = 1;
+    const auto = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.render(scene, camera);
+    renderer.autoClear = auto;
+    groundMesh.visible = true; decks.visible = true;
+    scene.overrideMaterial = null;
+    fg = renderer.domElement.toDataURL("image/png");
+  }
 
   scene.overrideMaterial = heightMaterial;
   renderer.setRenderTarget(heightTarget);
@@ -1385,7 +1443,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
   renderer.readRenderTargetPixels(heightTarget, 0, 0, HEIGHT_SIZE, HEIGHT_SIZE, buf);
   renderer.setRenderTarget(null);
   scene.overrideMaterial = null;
-  return { color, height: bufToB64(buf) };
+  return { color, height: bufToB64(buf), fg };
 }
 
 function bufToB64(buf: Uint8Array) {

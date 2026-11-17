@@ -6,6 +6,7 @@ import type { Cats } from "./cats.ts";
 import type { Planes, Parrots, Airport } from "./sky.ts";
 import { TiltShift } from "./tiltshift.ts";
 import type { Pigeons } from "./pigeons.ts";
+import { Foreground, type FgIndex } from "./foreground.ts";
 import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
@@ -24,7 +25,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; borders?: string; roads?: string; trains?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; borders?: string; roads?: string; trains?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -125,6 +126,11 @@ let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
 let trains: Trains | null = null;
 let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, planes: Planes | null = null, pigeons: Pigeons | null = null;
+/** what stands higher than a car, drawn back over the vehicles (life.foreground; AVIF only) */
+let foreground: Foreground | null = null;
+if (modern && files["tiles-fg"]) json<FgIndex>(files["tiles-fg"]).then((index) => {
+  foreground = new Foreground(index, (z, x, y, v) => `${BASE}/tiles/fg/${z}/${x}/${y}.${EXT}?v=${v}`, TS, NZ, world.min_zoom);
+});
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
@@ -223,6 +229,7 @@ function frame(t: number) {
   if (traffic && showTraffic && px >= 0.14) {
     traffic.step(dt);
     traffic.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+    foreground?.draw(ctx, k, tx, ty, traffic.boxes);
   }
   if (cats && showTraffic && px >= 0.6) {
     cats.step(dt);

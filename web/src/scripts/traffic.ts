@@ -94,6 +94,8 @@ export class Traffic {
   private lastView: number[] | null = null;
   /** vehicles drawn in the last frame (debug / tests) */
   drawn = 0;
+  /** canvas boxes of the vehicles drawn last ([x0, y0, x1, y1], shadows included): where the foreground goes over them */
+  boxes: number[][] = [];
   /** coach parks (life.coaches); the sun's shadow per metre of height, like the styled render's */
   private parks: Park[] = [];
   private shadow: [number, number];
@@ -544,7 +546,12 @@ export class Traffic {
     }
     items.sort((a, b) => b.depth - a.depth); // back to front
     this.drawn = items.length;
+    this.boxes = [];
     for (const { v, c, d } of items) {
+      // its canvas box with the shadow, for the foreground drawn over it (foreground.ts)
+      const [L, W, H] = DIMS[v.kind], R = Math.max(L, W) / 2 + H + 0.8;
+      const pts = [proj([c[0] - R, c[1] - R, c[2]]), proj([c[0] + R, c[1] - R, c[2]]), proj([c[0] - R, c[1] + R, c[2]]), proj([c[0] + R, c[1] + R, c[2]]), proj([c[0], c[1], c[2] + H + 0.5])];
+      this.boxes.push([Math.min(...pts.map((q) => q[0])), Math.min(...pts.map((q) => q[1])), Math.max(...pts.map((q) => q[0])), Math.max(...pts.map((q) => q[1]))]);
       const fade = v.parkedAt !== undefined ? Math.max(0, 1 - (this.t - v.parkedAt)) : v.born !== undefined && v.leaving ? Math.min(1, (this.t - v.born) / 0.8) : 1;
       if (fade < 1) { const a = v.alpha; v.alpha *= fade; this.opts.detailed ? this.detailed(ctx, proj, c, d, v) : this.box(ctx, proj, c, d, v); v.alpha = a; }
       else if (this.opts.detailed) this.detailed(ctx, proj, c, d, v);

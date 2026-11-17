@@ -9,6 +9,7 @@
  * `npm run publish -- <region>` uploads and empties it):
  *   tiles/map/{z}/{x}/{y}.avif         painted tiles where available, 3D render elsewhere
  *   tiles/photo/{z}/{x}/{y}.avif       3D render only (toggle)
+ *   tiles/fg/{z}/{x}/{y}.avif          what stands higher than a car, transparent elsewhere (life.foreground)
  *   data/world.json                    camera, bounds, tile origin, ENU→pixel map, attributions, and
  *                                      the names of the files below (the only mutable file)
  *   data/tiles-<layer>.<hash>.json     every tile of a layer per zoom with its content hash (URL ?v=)
@@ -375,6 +376,100 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
   checkpoint(true);
 }
 
+/**
+ * The foreground layer (places.ts life.foreground; web foreground.ts): the render's pixels where its fg mask says
+ * the surface stands higher than a car, transparent elsewhere (faded at the map's edge like the map), at the native
+ * zoom and down to FG_MIN_Z (vehicles show from ~1/7 scale). Tiles with nothing tall are left out of the index.
+ * Stamps as in exportLayer: native and the next level from the render, its mask and its edge fade; further out from
+ * the stamps of the render tiles they cover. Every level is built from the render tiles directly.
+ */
+const FG_MIN_Z = 5;
+async function exportForeground(renders: Map<Key, string>) {
+  const layer = "fg", root = join(OUT, "tiles", layer), st = (state.layers[layer] ??= { sources: {}, hashes: {} }), produced = new Set<string>();
+  index[layer] = {};
+  const maskOf = (file: string) => file.replace(/\/render\/([^/]+)$/, "/fg/$1");
+  const srcs = [...renders].filter(([, f]) => existsSync(maskOf(f)));
+  const A = CAMERA.tile, stampOf = new Map<Key, string>();
+  for (const [k, f] of srcs) {
+    const [tx, ty] = parse(k), grids: string[] = [];
+    for (let j = 0; j < SPLIT; j++) for (let i = 0; i < SPLIT; i++) {
+      const g = edgeGrid((tx * SPLIT + i) * TS, (ty * SPLIT + j) * TS);
+      grids.push(g ? hash(Buffer.from(g.buffer)) : "in");
+    }
+    stampOf.set(k, hash(`fg1:${sourceHash(f)}:${sourceHash(maskOf(f))}:${grids.join(",")}@${FORMAT}${QUALITY}`));
+  }
+  // a render tile as RGBA, its alpha the mask faded at the map's edge (a few kept: the levels out reuse them)
+  const cache = new Map<Key, Promise<Buffer>>();
+  const source = (k: Key) => {
+    let b = cache.get(k);
+    if (b) { cache.delete(k); cache.set(k, b); return b; }
+    b = (async () => {
+      const f = renders.get(k)!, [tx, ty] = parse(k);
+      const rgb = await sharp(f).removeAlpha().raw().toBuffer(), mask = await sharp(maskOf(f)).extractChannel(0).raw().toBuffer();
+      const out = Buffer.alloc(A * A * 4);
+      for (let p = 0; p < A * A; p++) { out[p * 4] = rgb[p * 3]; out[p * 4 + 1] = rgb[p * 3 + 1]; out[p * 4 + 2] = rgb[p * 3 + 2]; out[p * 4 + 3] = mask[p]; }
+      for (let j = 0; j < SPLIT; j++) for (let i = 0; i < SPLIT; i++) {
+        const g = edgeGrid((tx * SPLIT + i) * TS, (ty * SPLIT + j) * TS);
+        if (!g) continue;
+        const a = edgeAlpha(g);
+        for (let y = 0; y < TS; y++) for (let x = 0; x < TS; x++) { const q = ((j * TS + y) * A + i * TS + x) * 4 + 3; out[q] = Math.round((out[q] * a[y * TS + x]) / 255); }
+      }
+      return out;
+    })();
+    cache.set(k, b);
+    if (cache.size > 40) cache.delete(cache.keys().next().value!);
+    return b;
+  };
+  const empty = (b: Buffer) => { for (let p = 3; p < b.length; p += 4) if (b[p] > 4) return false; return true; };
+  let encoded = 0;
+  const put = async (z: number, x: number, y: number, stamp: string, make: () => Promise<Buffer>) => {
+    const id = `${z}/${x}_${y}`, at = () => ((index[layer][z] ??= {})[key(x, y)] = st.hashes[id]);
+    produced.add(id);
+    if (st.sources[id] === stamp) { if (st.hashes[id]) at(); return; } // fresh (an empty tile has no hash)
+    const rgba = await make();
+    st.sources[id] = stamp;
+    if (empty(rgba)) { delete st.hashes[id]; checkpoint(); return; }
+    const buf = await sharp(rgba, { raw: { width: TS, height: TS, channels: 4 } }).avif({ quality: QUALITY, effort: 4 }).toBuffer();
+    mkdirSync(join(root, `${z}`, `${x}`), { recursive: true });
+    writeFileSync(join(root, `${z}`, `${x}`, `${y}.${FORMAT}`), buf);
+    st.hashes[id] = hash(buf);
+    at();
+    encoded++;
+    checkpoint();
+  };
+  const raw = (b: Buffer, size: number) => sharp(b, { raw: { width: size, height: size, channels: 4 } });
+  const jobs: Array<() => Promise<void>> = [];
+  // native zoom: each render tile split in four; one level out: the render tile halved
+  for (const [k] of srcs) {
+    const [tx, ty] = parse(k), stamp = stampOf.get(k)!;
+    for (let j = 0; j < SPLIT; j++) for (let i = 0; i < SPLIT; i++)
+      jobs.push(() => put(NATIVE_Z, tx * SPLIT + i, ty * SPLIT + j, `${stamp}:${i}${j}`,
+        async () => raw(await source(k), A).extract({ left: i * TS, top: j * TS, width: TS, height: TS }).raw().toBuffer()));
+    jobs.push(() => put(NATIVE_Z - 1, tx, ty, stamp, async () => raw(await source(k), A).resize(TS, TS, { kernel: "lanczos3" }).raw().toBuffer()));
+  }
+  // further out: n × n render tiles shrunk into one
+  for (let z = NATIVE_Z - 2; z >= FG_MIN_Z; z--) {
+    const n = 2 ** (NATIVE_Z - 1 - z), parents = new Map<Key, Key[]>();
+    for (const [k] of srcs) { const [tx, ty] = parse(k), p = key(Math.floor(tx / n), Math.floor(ty / n)); (parents.get(p) ?? parents.set(p, []).get(p)!).push(k); }
+    for (const [p, kids] of parents) {
+      const [px, py] = parse(p), stamp = hash(kids.map((k) => `${k}:${stampOf.get(k)}`).sort().join(","));
+      jobs.push(() => put(z, px, py, stamp, async () => {
+        const S = A * n, big = Buffer.alloc(S * S * 4);
+        for (const k of kids) {
+          const [tx, ty] = parse(k), b = await source(k), ox = (tx - px * n) * A, oy = (ty - py * n) * A;
+          for (let y = 0; y < A; y++) b.copy(big, ((oy + y) * S + ox) * 4, y * A * 4, (y + 1) * A * 4);
+        }
+        return raw(big, S).resize(TS, TS, { kernel: "lanczos3" }).raw().toBuffer();
+      }));
+    }
+  }
+  await pool(jobs);
+  for (const id of Object.keys(st.sources)) if (!produced.has(id)) { delete st.sources[id]; delete st.hashes[id]; }
+  const count = Object.values(index[layer]).reduce((a, m) => a + Object.keys(m).length, 0);
+  console.log(`  fg z${FG_MIN_Z}–${NATIVE_Z}: ${count} tiles with something tall, ${encoded} encoded`);
+  checkpoint(true);
+}
+
 /** Content hash of a source PNG, cached in the state by path, size and mtime (a re-render with the same pixels changes nothing). */
 function sourceHash(file: string) {
   const { mtimeMs, size } = statSync(file), id = `${mtimeMs}:${size}`, rel = relative(DERIVED, file);
@@ -560,7 +655,9 @@ async function exportRoads(areas: string[], heights: Heights) {
             const j = start + i, ud = deck ? deck.at(deck.cum[j] + (deck.cum[j + 1] - deck.cum[j]) * f2, e0[0], e0[1]) : terrainU(e0[0], e0[1]);
             const u = ud !== null && Number.isFinite(ud) ? ud : null;
             if (u === null) fallback++;
-            const { e, vis } = await placePoint(heights, lat, lon, u);
+            const { e, vis: cover } = await placePoint(heights, lat, lon, u);
+            // the foreground layer covers them under trees and behind houses (only bridges still hide them, below)
+            const vis = REGIONS[activeRegion()].life?.foreground ? 1 : cover;
             total++; occluded += 1 - vis;
             samples.push(Math.round(e[0] * 10) / 10, Math.round(e[1] * 10) / 10, Math.round(e[2] * 10) / 10, vis);
           }
@@ -975,6 +1072,7 @@ async function main() {
   if (!process.argv.includes("--data-only")) {
     await exportLayer("map", new Map([...photo, ...art])); // painted wins
     await exportLayer("photo", photo);
+    if (REGIONS[activeRegion()].life?.foreground) await exportForeground(photo);
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
   }
   await exportBorders(heights);
@@ -993,7 +1091,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains") },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains") },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {

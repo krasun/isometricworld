@@ -39,9 +39,13 @@ export interface Region {
    * (traffic.ts). `coaches`: a tourist site's coach parks, each a row of parked coaches as measured on the
    * orthophoto (its centre, the coaches' heading and the row's direction in compass °, how many, metres
    * apart); coaches drive to and from them on the roads. `pigeons`: squares with a flock (pigeons.ts).
+   * `foreground` (styled look): the render also writes what stands higher than a car (crowns, walls and roofs
+   * above ~2.5 m), exported as the "fg" tile layer and drawn back over the vehicles (foreground.ts), so they
+   * pass under trees and behind houses, partly covered, instead of fading out there.
    */
   life?: {
     vehicles?: "detailed";
+    foreground?: boolean;
     coaches?: Array<{ name: string; at: [number, number]; heading: number; row: number; count: number; step: number }>;
     pigeons?: Array<{ name: string; at: [number, number]; r: number; count: number }>;
   };
@@ -180,6 +184,7 @@ export const REGIONS: Record<string, Region> = {
     effects: { tiltShift: true },
     life: {
       vehicles: "detailed",
+      foreground: true,
       // the salt mine's coach parks by Szyb Daniłowicza, the rows as parked on the 2025 orthophoto
       coaches: [
         { name: "parking autokarowy, ul. Daniłowicza", at: [49.98425, 20.054817], heading: 0.8, row: 76, count: 7, step: 4.3 },

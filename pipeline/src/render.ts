@@ -9,6 +9,7 @@
  *
  * Output: data/derived/<area>/render/<tx>_<ty>.png  (1024² colour)
  *         data/derived/<area>/height/<tx>_<ty>.png  (256², ellipsoid height cm+10000 in R<<8|G)
+ *         data/derived/<area>/fg/<tx>_<ty>.png      (1024², grey: the foreground mask; regions with life.foreground)
  *         data/derived/<area>/manifest.json
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -108,12 +109,14 @@ async function renderOne(page: Page, tx: number, ty: number, outDir: string) {
   await writeAtomic(sharp(color).resize(T, T, { kernel: "lanczos3" }).png({ compressionLevel: 6 }), join(outDir, "render", `${tx}_${ty}.png`));
   // GL rows are bottom-up; flip so row 0 is the top of the tile.
   await writeAtomic(sharp(Buffer.from(r.height, "base64"), { raw: { width: 256, height: 256, channels: 4 } }).flip().png(), join(outDir, "height", `${tx}_${ty}.png`));
+  // the foreground mask (life.foreground), at the colour's size: one channel, its edges smoothed by the resize
+  if (r.fg) await writeAtomic(sharp(Buffer.from(r.fg.split(",")[1], "base64")).extractChannel(0).resize(T, T, { kernel: "lanczos3" }).png({ compressionLevel: 6 }), join(outDir, "fg", `${tx}_${ty}.png`));
   console.log(`  ${tx}_${ty}: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
 
 async function main() {
   const outDir = join(DERIVED, areaName);
-  for (const d of ["render", "height"]) mkdirSync(join(outDir, d), { recursive: true });
+  for (const d of ["render", "height", ...(REGIONS[area.region].life?.foreground ? ["fg"] : [])]) mkdirSync(join(outDir, d), { recursive: true });
   let tiles = areaTiles(area.bbox);
   const all = tiles;
   if (args.only) tiles = args.only.split(";").map((t) => t.split(",").map(Number) as [number, number]);
