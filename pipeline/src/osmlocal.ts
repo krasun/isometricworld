@@ -110,6 +110,8 @@ export const FILTERS = {
   rails: ((type, t) => (type === "relation" && /^(train|light_rail|subway|tram)$/.test(t.route ?? ""))
     || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge)$/.test(t.railway ?? ""))) as OsmFilter,
   roads: ((type, t) => type === "way" && ROAD.test(t.highway ?? "") && t.area !== "yes") as OsmFilter,
+  /** watercourses drawn as lines (preset waterDetail) */
+  waterways: ((type, t) => type === "way" && /^(river|stream|canal|ditch|drain)$/.test(t.waterway ?? "")) as OsmFilter,
   /** playgrounds and their equipment (preset playgrounds) */
   play: ((_type, t) => t.leisure === "playground" || !!t.playground) as OsmFilter,
   /** high-voltage power lines and their towers and portals (preset powerLines) */

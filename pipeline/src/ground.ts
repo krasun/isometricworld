@@ -51,6 +51,8 @@ const STYLED = region.look === "styled";
 const DETAIL = STYLED && styleOf(region.style).streetDetail;
 /** Preset `greenery`: lawns where the orthophoto is green (greenery.ts; GUGiK's orthophoto). */
 const GREENERY = STYLED && styleOf(region.style).greenery && region.sources === "gugik";
+/** Preset `waterDetail`: watercourses as lines, treatment basins murky (page/ground.ts draws the water's depth). */
+const WATER_DETAIL = STYLED && styleOf(region.style).waterDetail;
 /** Preset `playgrounds`: rubber safety pads and sandpits of the playgrounds (playgrounds.ts). */
 const PLAYGROUNDS = STYLED && styleOf(region.style).playgrounds;
 /** Preset `bridgeDetail`: bridge decks carried on to their abutments (below). */
@@ -188,6 +190,7 @@ function fieldShade(t: Record<string, string>, id: number): number {
 
 function areaKind(t: Record<string, string>): string | null {
   const lu = t.landuse, le = t.leisure, na = t.natural, am = t.amenity;
+  if (WATER_DETAIL && t.water === "wastewater") return "wastewater";
   if (na === "water" || t.water || t.waterway === "riverbank" || lu === "basin" || lu === "reservoir") return "water";
   if (le === "swimming_pool") return "pool";
   // golf courses: bunkers, greens and tees, fairways (over the course's lawn)
@@ -300,7 +303,7 @@ for (const el of osm.elements) {
   const r = rings.map((q) => simplifyRing(q, 0.3)).filter((q) => q.length >= 4);
   if (!r.length) continue;
   features.push(k === "farm" || k === "meadow" ? { k, r, v: fieldShade(t, el.id) } : { k, r });
-  if (k === "water") water.push(r);
+  if (k === "water" || k === "wastewater") water.push(r);
 }
 
 /** junction entry: [x, y, radius (half width + 3 m), layer, kind of the widest road, (streetDetail) 1 if a street
@@ -455,6 +458,19 @@ if (BRIDGE_DETAIL) {
 const ends = bridgeEnds(graph, sample);
 for (const [id, e] of ends) { const f = deckFeatures.get(id); if (f) f.e = e; }
 writeFileSync(join(out, "bridge-ends.json"), JSON.stringify(Object.fromEntries(ends)));
+// watercourses: rivers, streams, canals, ditches and drains above ground, at their OSM width or the usual one
+if (WATER_DETAIL && existsSync(join(RAW, name, "osm-water.json"))) {
+  const WIDTH: Record<string, number> = { river: 6, canal: 5, stream: 2, ditch: 1.2, drain: 1 };
+  let n = 0;
+  for (const el of readJson(join(RAW, name, "osm-water.json")).elements) {
+    const t = el.tags ?? {};
+    if (el.type !== "way" || !el.geometry || el.geometry.length < 2 || (t.tunnel && t.tunnel !== "no") || t.location === "underground") continue;
+    const w = Number(String(t.width ?? "").replace(",", ".")), l = simplifyLine(geom(el.geometry), 0.3);
+    features.push({ k: "stream", l, w: r1(w > 0.3 && w < 60 ? w : WIDTH[t.waterway] ?? 1.5) });
+    n++;
+  }
+  console.log(`  watercourses: ${n}`);
+}
 // playgrounds: sandpits and the rubber pads under the equipment (the equipment itself: scene.ts)
 if (PLAYGROUNDS && existsSync(join(RAW, name, "osm-play.json"))) {
   const { sand, pads } = playLayout(readJson(join(RAW, name, "osm-play.json")), (lon, lat) => toEnu(lon, lat));

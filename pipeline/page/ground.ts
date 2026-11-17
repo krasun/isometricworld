@@ -17,7 +17,7 @@ const FILL: Record<string, string> = {
   park: "#9dcb6c", wood: "#73a851", scrub: "#adbb7b", sand: "#eedbab", pitch: "#6db35a", track: "#c97a5c",
   playground: "#dccba1", parking: "#bebcb7", paving: "#e6e0d4", water: "#3f95c2", pool: "#5ccbe6",
   vineyard: "#bfc27a", allotments: "#a9c676", orchard: "#b4cc7e", meadow: "#b6cf7e",
-  flowerbed: "#86b45a", gravel: "#ddd0b4", lawn: "#a5c972", sandpit: "#efdfb0",
+  flowerbed: "#86b45a", gravel: "#ddd0b4", lawn: "#a5c972", sandpit: "#efdfb0", wastewater: "#7d9286",
   fairway: "#8fca62", green: "#76c158", bunker: "#f0e2b4", airgrass: "#a8cf78", tarmac: "#8e9196",
 };
 /** field shades (ground.ts fieldShade): wheat, maize, grass, vegetables, rapeseed, then unmapped fields by id */
@@ -29,7 +29,7 @@ const NESTED = new Set(["park", "flowerbed", "paving", "gravel"]);
 const BLOOM = ["#e0525e", "#f2c94c", "#f4f1ea", "#c86bb0"];
 /** paint order of area kinds: broad landuse first, details on top */
 const AREA_ORDER = ["residential", "commercial", "industrial", "campus", "lawn", "farm", "meadow", "orchard", "vineyard", "allotments",
-  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "sandpit", "playpad", "water", "pool"];
+  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "sandpit", "playpad", "water", "wastewater", "pool"];
 /** rubber safety surface under playground equipment: red-brown, green, blue (v) */
 const PADS = ["#b8604c", "#5f9c4c", "#557fb5"];
 const BASE = "#d9d3c4";
@@ -41,6 +41,34 @@ const SIDEWALK = "#e4ded2", KERB = "#c9c4b9";
 const ROAD_SURFACE: Record<string, string> = { paving: "#a9a49b", sett: "#988e83", gravel: "#cdbd98", dirt: "#c3ab82", grass: "#a6c27a", concrete: "#a9a9a6" };
 const PATH_SURFACE: Record<string, string> = { paving: "#e3dccf", sett: "#d0c7b9", gravel: "#ddd0b4", dirt: "#d6c4a0", grass: "#b9d58c", concrete: "#dddcd7" };
 const SHADOW_DIR: P2 = [0.84, 0.54]; // away from the renderer's sun (-0.55, -0.35, 0.76)
+
+let waterTile: HTMLCanvasElement | null = null;
+/**
+ * Ripples and glints on water (preset waterDetail), 256 px square (≈ 38 m at 0.15 m): short light and dark
+ * wavelets ~1–3 m long and a few sun glints, drawn wrapped round so the tile repeats without a seam.
+ */
+function waterTexture(): HTMLCanvasElement {
+  if (waterTile) return waterTile;
+  const N = 256, c = document.createElement("canvas");
+  c.width = c.height = N;
+  const g = c.getContext("2d")!;
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  g.lineCap = "round";
+  for (let i = 0; i < 90; i++) {
+    const x = rnd() * N, y = rnd() * N, L = 6 + rnd() * 12, light = rnd() < 0.7;
+    g.strokeStyle = light ? "rgba(235,248,255,0.16)" : "rgba(20,60,95,0.12)"; g.lineWidth = 1.2;
+    for (const dx of [-N, 0, N]) for (const dy of [-N, 0, N]) {
+      g.beginPath(); g.moveTo(x + dx, y + dy); g.quadraticCurveTo(x + dx + L / 2, y + dy - 1.5, x + dx + L, y + dy); g.stroke();
+    }
+  }
+  g.fillStyle = "rgba(255,255,240,0.55)";
+  for (let i = 0; i < 18; i++) {
+    const x = rnd() * N, y = rnd() * N;
+    for (const dx of [-N, 0, N]) for (const dy of [-N, 0, N]) g.fillRect(x + dx, y + dy, 1.5, 1.5);
+  }
+  return (waterTile = c);
+}
 
 /** Grass kinds that get the grass texture (preset `greenery`). */
 const GRASSY = new Set(["lawn", "park", "meadow", "scrub", "orchard", "cemetery", "allotments", "airgrass"]);
@@ -75,6 +103,7 @@ export function drawGround(
   ctx: CanvasRenderingContext2D, features: Feature[], [x0, y0, x1, y1]: number[], mpt: number,
   objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR, grass = false,
   detailBridges = false, // preset bridgeDetail: on the deck canvas, a concrete cornice band instead of painted parapets
+  water = false, // preset waterDetail: depth, banks, ripples; watercourses
 ) {
   const CORNICE = "#cbc6bd";
   const SHADOW_DIR = shadowDir;
@@ -106,9 +135,18 @@ export function drawGround(
     if (!NESTED.has(k)) areas.push(...of(k));
     else if (k === "park") areas.push(...features.filter((f) => NESTED.has(f.k)).sort((a, b) => ringArea(b.r![0]) - ringArea(a.r![0])));
   }
+  // watercourses (preset waterDetail): a muddy bank, then the water; drawn just before the lakes and ponds, so a
+  // stream running through one is hidden by it, and under paths and roads (bridges, culverts)
+  let streams = !water;
+  const drawStreams = () => {
+    for (const f of of("stream")) stroke(f.l!, f.w! + 1.2, "rgba(95,115,80,0.7)");
+    for (const f of of("stream")) stroke(f.l!, f.w!, "#4c97c3");
+    streams = true;
+  };
   for (const f of areas) {
     const k = f.k;
-    path(f.r!); ctx.fillStyle = k === "playpad" ? PADS[f.v ?? 0] : (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL[k] : FILL[k]; ctx.fill("evenodd");
+    if (!streams && (k === "water" || k === "wastewater" || k === "pool")) drawStreams();
+    path(f.r!); ctx.fillStyle = k === "playpad" ? PADS[f.v ?? 0] : water && k === "water" ? "#3786b5" : (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL[k] : FILL[k]; ctx.fill("evenodd");
     if (k === "farm" && f.v !== undefined) { // tramlines / furrows: faint parallel lines, own angle per field
       ctx.save(); ctx.clip("evenodd");
       const [bx0, by0, bx1, by1] = bounds(f.r!), cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, R = Math.hypot(bx1 - bx0, by1 - by0) / 2;
@@ -165,7 +203,19 @@ export function drawGround(
       ctx.stroke(); ctx.restore();
     }
     if (k === "pool") { ctx.lineWidth = 0.6; ctx.strokeStyle = "#e9ecee"; ctx.stroke(); }
-    if (k === "water") { ctx.lineWidth = 1; ctx.strokeStyle = "rgba(220,235,240,0.5)"; ctx.stroke(); }
+    if ((k === "water" || k === "wastewater") && water) {
+      // depth: lighter shallows along the shore fading inwards (the outline's strokes, their inner halves inside),
+      // a muddy edge, then ripples and glints fixed to the map
+      ctx.save(); ctx.clip("evenodd");
+      const shallow = k === "water" ? [[14, "rgba(110,180,205,0.18)"], [8, "rgba(120,188,210,0.22)"], [4, "rgba(135,198,215,0.3)"]] : [[6, "rgba(150,160,140,0.25)"]];
+      for (const [w, c] of [...shallow, [1.6, "rgba(90,112,88,0.45)"]] as Array<[number, string]>) { ctx.lineWidth = w; ctx.strokeStyle = c; ctx.stroke(); }
+      const pattern = ctx.createPattern(waterTexture(), "repeat")!;
+      pattern.setTransform(new DOMMatrix().scale(mpt));
+      const [bx0, by0, bx1, by1] = bounds(f.r!), ax = Math.max(bx0, x0), ay = Math.max(by0, y0);
+      ctx.fillStyle = pattern; ctx.fillRect(ax, ay, Math.min(bx1, x1) - ax, Math.min(by1, y1) - ay);
+      ctx.restore();
+      path(f.r!); ctx.lineWidth = 0.8; ctx.strokeStyle = "rgba(95,115,80,0.55)"; ctx.stroke(); // the bank, just outside
+    } else if (k === "water") { ctx.lineWidth = 1; ctx.strokeStyle = "rgba(220,235,240,0.5)"; ctx.stroke(); }
   }
 
   // 2. sea: deep, shallows along the shore (clipped to the water), surf line
@@ -215,6 +265,7 @@ export function drawGround(
   ctx.restore();
   void ground;
 
+  if (!streams) drawStreams(); // no lake in this tile
   // 4. paths and plazas, then pavements under streets
   if (detailBridges) for (const f of [...of("path"), ...of("cycle"), ...of("sidewalk")]) stroke(f.l!, f.w! + 2.2, CORNICE);
   for (const f of [...of("path"), ...of("plaza"), ...of("cycle")]) stroke(f.l!, f.w!, (f.u && PATH_SURFACE[f.u]) || (detailBridges && f.k !== "plaza" ? "#b8b7b3" : PATHS[f.k]));

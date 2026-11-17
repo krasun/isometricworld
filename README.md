@@ -193,7 +193,9 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   from OSM or the voltage, since the surface model does not see a lattice (`power.ts`). `playgrounds`: the
   equipment OSM maps on playgrounds as small bright models, on public playgrounds without any a set by their
   size (sandpit, swing, tower with a slide, seesaw, spring riders, roundabout), rubber safety pads under it and
-  sandpits on the ground (`playgrounds.ts`).
+  sandpits on the ground (`playgrounds.ts`). `waterDetail`: water with lighter shallows along the shore, a muddy
+  bank, ripples and sun glints fixed to the map, murky treatment basins, and the rivers, streams, ditches and
+  drains OSM maps as lines (`fetch.ts` osm-water.json, culverts left out).
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).

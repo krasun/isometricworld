@@ -59,6 +59,9 @@ export interface StylePreset {
   /** Playground equipment (fetch.ts osm-play.json, playgrounds.ts): what OSM maps, on public playgrounds without
    *  any a set by their size; rubber safety pads under it and sandpits on the ground. */
   playgrounds: boolean;
+  /** Water drawn with depth (lighter shallows at the shore, a dark bank), ripples and glints, murky treatment
+   *  basins, and the streams, rivers, ditches and drains OSM maps as lines (fetch.ts osm-water.json). */
+  waterDetail: boolean;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -71,7 +74,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -96,6 +99,7 @@ export const STYLES = {
     bridgeDetail: true,
     powerLines: true,
     playgrounds: true,
+    waterDetail: true,
   },
 } satisfies Record<string, StylePreset>;
 
