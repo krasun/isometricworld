@@ -19,7 +19,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openArea } from "./areas.ts";
+import { openArea, osmExtractFor } from "./areas.ts";
 import { LOOKS, TOWERS } from "./landmarks.ts";
 import { download } from "./lgl.ts";
 import { FILTERS, localOsm, type OsmFilter } from "./osmlocal.ts";
@@ -73,7 +73,7 @@ async function arcgis(layer: number, bbox: [number, number, number, number], fie
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
 const sources = area.sources ?? REGIONS[area.region].sources;
-const extract = REGIONS[area.region].osmExtract;
+const extract = osmExtractFor(area);
 /** Overpass query, or the same selection from the region's local extract. */
 const osmQuery = (ql: string, bbox: number[], filter: OsmFilter) => extract ? localOsm(extract, bbox, filter) : overpass(ql);
 const dir = join(RAW, name);

@@ -4,6 +4,7 @@ import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { HOSTING } from "../../../pipeline/src/hosting.ts";
 declare const __WEB_CACHE__: string; // data/web/, injected by astro.config.mjs
+declare const __OG_CARDS__: string[]; // existing public/og files, injected by astro.config.mjs
 interface Props { city: string; home?: boolean }
 interface Preview { file: string; lqip: string }
 interface World { files?: Record<string, string>; previews?: Record<string, { land: Preview; port: Preview }> }
@@ -29,7 +30,9 @@ const title = home ? "Isometric World" : `${c.title} · Isometric World`;
 const description = home ? "An isometric city map from open data." : `${c.title}: an isometric city map from open data.`;
 // crawlers need absolute URLs: site comes from SITE_DOMAIN (astro.config.mjs)
 const site = Astro.site ?? Astro.url;
-const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), site).href, ogImage = new URL(`/og/${home ? "index" : city}.jpg`, site).href;
+const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), site).href;
+const ogFile = `${home ? "index" : city}.jpg`;
+const ogImage = __OG_CARDS__.includes(ogFile) ? new URL(`/og/${ogFile}`, site).href : undefined;
 ---
 
 <html lang="en">
@@ -54,14 +57,16 @@ const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), site).href, 
 		<meta property="og:description" content={description} />
 		<link rel="canonical" href={pageUrl} />
 		<meta property="og:url" content={pageUrl} />
+		{ogImage && <>
 		<meta property="og:image" content={ogImage} />
 		<meta property="og:image:width" content="1200" />
 		<meta property="og:image:height" content="630" />
 		<meta property="og:image:alt" content={home ? "Isometric World, an isometric city map from open data" : `${c.title}, isometric city map`} />
-		<meta name="twitter:card" content="summary_large_image" />
+		</>}
+		<meta name="twitter:card" content={ogImage ? "summary_large_image" : "summary"} />
 		<meta name="twitter:title" content={title} />
 		<meta name="twitter:description" content={description} />
-		<meta name="twitter:image" content={ogImage} />
+		{ogImage && <meta name="twitter:image" content={ogImage} />}
 		{/* Pirsch Analytics (cookie-free), proxied first-party by worker/index.ts; the access key is a Worker secret */}
 		{!import.meta.env.DEV && <script is:inline defer src="/p/s.js" id="pianjs" data-hit-endpoint="/p/v" data-event-endpoint="/p/e" data-session-endpoint="/p/k"></script>}
 	</head>

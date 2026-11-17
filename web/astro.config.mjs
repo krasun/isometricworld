@@ -1,5 +1,5 @@
 // @ts-check
-import { createReadStream, existsSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'astro/config';
 import { HOSTING } from '../pipeline/src/hosting.ts';
@@ -16,6 +16,7 @@ if (existsSync(ENV)) process.loadEnvFile(ENV);
  * The built site loads R2 directly.
  */
 const CACHE = fileURLToPath(new URL('../data/web/', import.meta.url));
+const OG_CARDS = readdirSync(fileURLToPath(new URL('./public/og/', import.meta.url))).filter((f) => f.endsWith('.jpg'));
 const TYPES = { avif: 'image/avif', webp: 'image/webp', json: 'application/json' };
 
 /** @returns {import('vite').Plugin} */
@@ -72,7 +73,7 @@ export default defineConfig({
 	site: process.env.SITE_DOMAIN ? `https://${process.env.SITE_DOMAIN}` : undefined,
 	vite: {
 		// the browser has no process.env: bake the tile origin into the viewer
-		define: { __TILES_ORIGIN__: JSON.stringify(HOSTING.origin), __WEB_CACHE__: JSON.stringify(CACHE) },
+		define: { __TILES_ORIGIN__: JSON.stringify(HOSTING.origin), __WEB_CACHE__: JSON.stringify(CACHE), __OG_CARDS__: JSON.stringify(OG_CARDS) },
 		// pre-bundle the viewer so the dev server never serves a stale dependency
 		optimizeDeps: { include: ['openseadragon'] },
 		plugins: [regionsOverlay()],

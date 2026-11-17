@@ -10,6 +10,8 @@ export interface Area {
   bbox: [number, number, number, number];
   /** Override the region's data sources for this area (e.g. Herzliya municipal data inside israel-center). */
   sources?: Region["sources"];
+  /** Optional area-only OSM extract; avoids changing every area in a shared region. */
+  osmExtract?: string;
 }
 
 export const AREAS: Record<string, Area> = {
@@ -19,6 +21,7 @@ export const AREAS: Record<string, Area> = {
     region: "israel-center",
     bbox: [32.158, 34.808, 32.172, 34.826],
     sources: "hzl",
+    osmExtract: "https://download.geofabrik.de/asia/israel-and-palestine-latest.osm.pbf",
   },
   /** The whole city: Marina and Herzliya Pituach to the eastern neighbourhoods, including the sea. */
   herzliya: {
@@ -26,6 +29,7 @@ export const AREAS: Record<string, Area> = {
     region: "israel-center",
     bbox: [32.142, 34.785, 32.205, 34.87], // south edge below the city boundary's southern tip (32.1440, OSM relation 1382820)
     sources: "hzl",
+    osmExtract: "https://download.geofabrik.de/asia/israel-and-palestine-latest.osm.pbf",
   },
   /** Jaffa → Yarkon Park → Ramat Gan, including the sea off the coast. */
   "tlv-core": {
@@ -80,6 +84,9 @@ export const AREAS: Record<string, Area> = {
   "metro-west-south": { title: "Sindelfingen", region: "stuttgart", bbox: [48.70, 8.9, 48.775, 9.04] },
   "metro-west-south-2": { title: "Böblingen", region: "stuttgart", bbox: [48.62, 8.9, 48.705, 9.04] },
 };
+
+/** Area-specific extract first; other areas keep their region's existing OSM route. */
+export const osmExtractFor = (area: Area): string | undefined => area.osmExtract ?? REGIONS[area.region].osmExtract;
 
 /** Look up an area and switch the camera to its region: call before any projection. */
 export function openArea(name: string): Area {
