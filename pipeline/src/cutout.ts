@@ -17,18 +17,26 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
 import { openArea } from "./areas.ts";
-import { CAMERA, ecefToEnu, enuToPixel, llhToEcef } from "./camera.ts";
+import { axes, CAMERA, ecefToEnu, enuHeight, enuToPixel, llhToEcef } from "./camera.ts";
+import { readHeights } from "./heights.ts";
 import { lod2Files } from "./lgl.ts";
 import { type Lod2Building, parseLod2 } from "./lod2.ts";
 import { DERIVED, readJson, writeAtomic } from "./paths.ts";
 import { REGIONS } from "./places.ts";
 
 type P2 = [number, number];
+/** a screen triangle: art px x, y and ellipsoid height per vertex */
+type Tri = Array<[number, number, number]>;
 interface Cutout { name: string; at: [number, number]; window: [number, number] }
 
 const WIN = 1024, STRIDE = 896, T = CAMERA.tile;
-/** silhouette grown by GROW px (outlines, eaves), then feathered over FEATHER px */
-const GROW = 3, FEATHER = 4;
+/** silhouette grown by GROW px (the painted outline), anti-aliased over ~1 px */
+const GROW = 1.5;
+/** the height pass is this much above the building's own surface: something stands in front of it. Small:
+ *  a tree a metre in front of a wall is only ~1 m above the wall point behind it on the same line of sight;
+ *  both heights are sampled at the same pixel centre, so the building itself matches to centimetres. */
+const IN_FRONT = 0.4;
+const CELL = 4; // height pass resolution (art px)
 /** room a silhouette needs to the window edge (the painter is least reliable at the border) */
 const MARGIN = 48;
 
@@ -69,25 +77,76 @@ const gap = (r: P2[], s: P2[]) => Math.min(
   ...s.flatMap((p) => r.map((_, i) => segDist(p, r[i], r[(i + 1) % r.length]))),
 );
 
-/** screen triangles (global art px) of the buildings' roofs and walls */
-function silhouette(bs: Lod2Building[]): P2[][] {
-  const tris: P2[][] = [];
+/** screen triangles (global art px + height) of the buildings' roofs and walls */
+function silhouette(bs: Lod2Building[]): Tri[] {
+  const tris: Tri[] = [];
+  const at = (e: number, n: number, u: number): [number, number, number] => [...enuToPixel([e, n, u]), enuHeight([e, n, u])];
   for (const b of bs) {
-    for (let k = 0; k + 9 <= b.roof.length; k += 9)
-      tris.push([0, 1, 2].map((v) => enuToPixel([b.roof[k + v * 3], b.roof[k + v * 3 + 1], b.roof[k + v * 3 + 2]])));
-    for (let k = 0; k + 15 <= b.wall.length; k += 15)
-      tris.push([0, 1, 2].map((v) => enuToPixel([b.wall[k + v * 5], b.wall[k + v * 5 + 1], b.wall[k + v * 5 + 2]])));
+    for (let k = 0; k + 9 <= b.roof.length; k += 9) tris.push([0, 1, 2].map((v) => at(b.roof[k + v * 3], b.roof[k + v * 3 + 1], b.roof[k + v * 3 + 2])));
+    for (let k = 0; k + 15 <= b.wall.length; k += 15) tris.push([0, 1, 2].map((v) => at(b.wall[k + v * 5], b.wall[k + v * 5 + 1], b.wall[k + v * 5 + 2])));
   }
   return tris;
 }
 
-const bounds = (tris: P2[][]) => {
+/** ENU ground position of the surface seen at global art pixel (x, y) with ellipsoid height h */
+function pixelToEnu(x: number, y: number, h: number): P2 {
+  const { right: r, up: v } = axes();
+  let e = 0, n = 0;
+  for (let it = 0; it < 3; it++) { // enuHeight adds the earth's curvature: solve for u, then e, n again
+    const u = h - (e * e + n * n) / (2 * 6371000), a = x * CAMERA.mpp, b = -y * CAMERA.mpp - u * v[2], det = r[0] * v[1] - r[1] * v[0];
+    e = (a * v[1] - b * r[1]) / det; n = (r[0] * b - v[0] * a) / det;
+  }
+  return [e, n];
+}
+
+/**
+ * Cells (CELL px, window grid) where something stands in front of the building: along a pixel's line of sight
+ * everything nearer the camera is higher, so a height pass well above the building's own surface there
+ * (the highest of its triangles at that pixel) is a tree, mast or other building in front. Grown by a cell.
+ */
+async function inFront(tris: Tri[], [i, j]: [number, number], bs: Lod2Building[]) {
+  // the renderer's own roof furniture (plant rooms, solar, AC units, eaves) stands on the footprint: not in front
+  const onBuilding = (p: P2) => bs.some((b) => inside(p, b.footprint) || b.footprint.some((q, k) => segDist(p, q, b.footprint[(k + 1) % b.footprint.length]) < 1));
+  const ox = i * STRIDE, oy = j * STRIDE, n = WIN / CELL;
+  const own = new Float32Array(n * n).fill(-Infinity);
+  for (const t of tris) {
+    const [a, b, c] = t.map(([x, y, h]) => [(x - ox) / CELL - 0.5, (y - oy) / CELL - 0.5, h]);
+    const d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+    if (Math.abs(d) < 1e-9) continue;
+    for (let cy = Math.max(0, Math.floor(Math.min(a[1], b[1], c[1]))); cy <= Math.min(n - 1, Math.ceil(Math.max(a[1], b[1], c[1]))); cy++)
+      for (let cx = Math.max(0, Math.floor(Math.min(a[0], b[0], c[0]))); cx <= Math.min(n - 1, Math.ceil(Math.max(a[0], b[0], c[0]))); cx++) {
+        const w0 = ((b[1] - c[1]) * (cx - c[0]) + (c[0] - b[0]) * (cy - c[1])) / d, w1 = ((c[1] - a[1]) * (cx - c[0]) + (a[0] - c[0]) * (cy - c[1])) / d, w2 = 1 - w0 - w1;
+        if (w0 < -0.05 || w1 < -0.05 || w2 < -0.05) continue;
+        const k = cy * n + cx;
+        own[k] = Math.max(own[k], w0 * a[2] + w1 * b[2] + w2 * c[2]);
+      }
+  }
+  const front = new Uint8Array(n * n);
+  for (let tx = Math.floor(ox / T); tx <= Math.floor((ox + WIN - 1) / T); tx++)
+    for (let ty = Math.floor(oy / T); ty <= Math.floor((oy + WIN - 1) / T); ty++) {
+      const f = join(base, "height", `${tx}_${ty}.png`);
+      if (!existsSync(f)) continue;
+      const hp = await readHeights(f), m = T / CELL;
+      for (let y = 0; y < m; y++) for (let x = 0; x < m; x++) {
+        const cx = (tx * T - ox) / CELL + x, cy = (ty * T - oy) / CELL + y;
+        if (cx < 0 || cy < 0 || cx >= n || cy >= n) continue;
+        const k = cy * n + cx, v = hp[y * m + x];
+        if (own[k] > -Infinity && v > own[k] + IN_FRONT && !onBuilding(pixelToEnu(ox + (cx + 0.5) * CELL, oy + (cy + 0.5) * CELL, v))) front[k] = 1;
+      }
+    }
+  const grown = new Uint8Array(n * n);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (front[y * n + x])
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (x + dx >= 0 && y + dy >= 0 && x + dx < n && y + dy < n) grown[(y + dy) * n + x + dx] = 255;
+  return grown;
+}
+
+const bounds = (tris: Tri[]) => {
   const xs = tris.flat().map((p) => p[0]), ys = tris.flat().map((p) => p[1]);
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 };
 
 /** the grid window that holds the silhouette with the most room to its edges */
-function pickWindow(tris: P2[][]): { win: [number, number]; room: number } {
+function pickWindow(tris: Tri[]): { win: [number, number]; room: number } {
   const [x0, y0, x1, y1] = bounds(tris);
   let best = { win: [0, 0] as [number, number], room: -Infinity };
   for (let i = Math.floor(x1 / STRIDE) - 1; i <= Math.floor(x0 / STRIDE); i++)
@@ -98,12 +157,17 @@ function pickWindow(tris: P2[][]): { win: [number, number]; room: number } {
   return best;
 }
 
-/** feathered alpha mask of the silhouette in window pixels */
-async function mask(tris: P2[][], [i, j]: [number, number]) {
-  const ox = i * STRIDE, oy = j * STRIDE;
+/** alpha mask in window pixels: the silhouette (anti-aliased edge) minus whatever stands in front of it */
+async function mask(tris: Tri[], win: [number, number], bs: Lod2Building[]) {
+  const ox = win[0] * STRIDE, oy = win[1] * STRIDE;
   const polys = tris.map((t) => `<polygon points="${t.map((p) => `${(p[0] - ox).toFixed(1)},${(p[1] - oy).toFixed(1)}`).join(" ")}"/>`).join("");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${WIN}" height="${WIN}"><rect width="100%" height="100%" fill="black"/><g fill="white" stroke="white" stroke-width="${GROW * 2}" stroke-linejoin="round">${polys}</g></svg>`;
-  return sharp(Buffer.from(svg)).blur(FEATHER / 2).greyscale().raw().toBuffer();
+  const sil = await sharp(Buffer.from(svg)).extractChannel(0).raw().toBuffer();
+  const n = WIN / CELL, front = await sharp(await inFront(tris, win, bs), { raw: { width: n, height: n, channels: 1 } })
+    .resize(WIN, WIN, { kernel: "nearest" }).blur(0.8).extractChannel(0).raw().toBuffer(); // blur returns 3 channels
+  if (sil.length !== WIN * WIN || front.length !== WIN * WIN) throw new Error("cutout mask: expected one channel");
+  for (let k = 0; k < sil.length; k++) sil[k] = Math.round(sil[k] * (1 - front[k] / 255));
+  return sil;
 }
 
 /** rebuild every cutout tile of the area: render + the painted buildings over it */
@@ -115,8 +179,8 @@ async function compose() {
   for (const c of list) {
     const win = join(base, `windows-cutout-${c.name}`, `${c.window[0]}_${c.window[1]}.png`);
     if (!existsSync(win)) { console.warn(`  ${c.name}: not painted yet (${win})`); continue; }
-    const tris = silhouette(buildingsAt(...c.at));
-    const img = await sharp(win).removeAlpha().resize(WIN, WIN).raw().toBuffer(), a = await mask(tris, c.window);
+    const bs = buildingsAt(...c.at), tris = silhouette(bs);
+    const img = await sharp(win).removeAlpha().resize(WIN, WIN).raw().toBuffer(), a = await mask(tris, c.window, bs);
     const ox = c.window[0] * STRIDE, oy = c.window[1] * STRIDE;
     for (let tx = Math.floor(ox / T); tx <= Math.floor((ox + WIN - 1) / T); tx++)
       for (let ty = Math.floor(oy / T); ty <= Math.floor((oy + WIN - 1) / T); ty++)
@@ -164,7 +228,7 @@ if (flag === "--plan" || flag === "--add") {
         const f = join(base, "render", `${tx}_${ty}.png`);
         if (existsSync(f)) parts.push({ input: await sharp(f).resize(T, T).toBuffer(), left: tx * T - ox + T, top: ty * T - oy + T });
       }
-    const a = await mask(tris, win);
+    const a = await mask(tris, win, bs);
     const tint = await sharp({ create: { width: WIN, height: WIN, channels: 3, background: { r: 255, g: 0, b: 160 } } })
       .joinChannel(Buffer.from(a.map((v) => v * 0.45)), { raw: { width: WIN, height: WIN, channels: 1 } }).png().toBuffer();
     const under = await sharp({ create: { width: WIN + 2 * T, height: WIN + 2 * T, channels: 3, background: "#000" } }).composite(parts).png().toBuffer();

@@ -35,27 +35,64 @@ const ASPHALT: Record<string, string> = { highway: "#6c7077", street: "#7b7e85",
 const PATHS: Record<string, string> = { path: "#ebe5d6", cycle: "#c98e6c", plaza: "#e6e0d4" };
 const SIDEWALK = "#e4ded2", KERB = "#c9c4b9";
 const SHADOW_DIR: P2 = [0.84, 0.54]; // away from the renderer's sun (-0.55, -0.35, 0.76)
+/** styled regions (final look, no paint step): gardens and parks green like the painted house style, so grey
+ *  streets and light paths stand out (measured from the AI paint over the same render) */
+const STYLED_FILL: Record<string, string> = { residential: "#a2bf62", campus: "#acc574", park: "#8fc350" };
+const STYLED_BASE = "#a8c06c";
+/** inside-corner radius (m) where ways meet, styled regions */
+const FILLET = { path: 1, street: 3, asphalt: 2 };
+/** water bodies smaller than this (m²) get a light shore path; rivers and big lakes keep their banks */
+const POND = 60000;
+
+/**
+ * SVG filter that turns a shape drawn grown by r into the shape with its inside corners rounded: blur by
+ * σ = 0.7 r, then cut alpha where a straight edge lies r inside (Φ(1/0.7)), ramped over one pixel.
+ * Roughly a morphological closing; done by the GPU, no pixel loop.
+ */
+function filletFilter(rPx: number) {
+  const id = `fillet-${rPx.toFixed(2)}`;
+  if (!document.getElementById(id)) {
+    const sigma = 0.7 * rPx, t = 0.9234, slope = sigma / 0.1438;
+    document.body.insertAdjacentHTML("beforeend", `<svg width="0" height="0" style="position:absolute"><filter id="${id}" filterUnits="userSpaceOnUse" x="-1e5" y="-1e5" width="2e5" height="2e5" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="${sigma}"/><feComponentTransfer><feFuncA type="linear" slope="${slope}" intercept="${0.5 - slope * t}"/></feComponentTransfer></filter></svg>`);
+  }
+  return `url(#${id})`;
+}
 
 export function drawGround(
   ctx: CanvasRenderingContext2D, features: Feature[], [x0, y0, x1, y1]: number[], mpt: number,
-  objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR,
+  objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR, styled = false,
 ) {
   const SHADOW_DIR = shadowDir;
+  const FILL_ = styled ? { ...FILL, ...STYLED_FILL } : FILL;
   const W = ctx.canvas.width, H = ctx.canvas.height;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = BASE;
+  ctx.fillStyle = styled ? STYLED_BASE : BASE;
   ctx.fillRect(0, 0, W, H);
   ctx.setTransform(1 / mpt, 0, 0, -1 / mpt, -x0 / mpt, y1 / mpt); // ENU meters -> canvas px (north up)
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
 
+  // dc: where the helpers draw (ctx, or the fillet mask while one is being built)
+  let dc = ctx;
   const path = (rings: P2[][]) => {
-    ctx.beginPath();
-    for (const r of rings) { r.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); }
+    dc.beginPath();
+    for (const r of rings) { r.forEach(([x, y], i) => (i ? dc.lineTo(x, y) : dc.moveTo(x, y))); dc.closePath(); }
   };
-  const line = (l: P2[]) => { ctx.beginPath(); l.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); };
+  const line = (l: P2[]) => { dc.beginPath(); l.forEach(([x, y], i) => (i ? dc.lineTo(x, y) : dc.moveTo(x, y))); };
   const stroke = (l: P2[], w: number, c: string, dash?: number[]) => {
-    line(l); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.setLineDash(dash ?? []); ctx.stroke();
+    line(l); dc.lineWidth = w; dc.strokeStyle = c; dc.setLineDash(dash ?? []); dc.stroke();
+  };
+  /** draw(grow) strokes shapes grown by `grow` m; styled: drawn grown by r and closed (inside corners rounded) */
+  let mask: HTMLCanvasElement | null = null;
+  const fillet = (r: number, draw: (grow: number) => void) => {
+    if (!styled) { draw(0); return; }
+    mask ??= document.createElement("canvas");
+    if (mask.width !== W || mask.height !== H) { mask.width = W; mask.height = H; }
+    const m = mask.getContext("2d")!;
+    m.setTransform(1, 0, 0, 1, 0, 0); m.clearRect(0, 0, W, H);
+    m.setTransform(ctx.getTransform()); m.lineJoin = "round"; m.lineCap = ctx.lineCap;
+    dc = m; draw(r); dc = ctx;
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = filletFilter(r / mpt); ctx.drawImage(mask, 0, 0); ctx.restore();
   };
   const of = (k: string) => features.filter((f) => f.k === k);
   const inView = (p: number[]) => p[0] > x0 - 50 && p[0] < x1 + 50 && p[1] > y0 - 50 && p[1] < y1 + 50;
@@ -71,7 +108,7 @@ export function drawGround(
   }
   for (const f of areas) {
     const k = f.k;
-    path(f.r!); ctx.fillStyle = (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL[k] : FILL[k]; ctx.fill("evenodd");
+    path(f.r!); ctx.fillStyle = (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL_[k] : FILL_[k]; ctx.fill("evenodd");
     if (k === "farm" && f.v !== undefined) { // tramlines / furrows: faint parallel lines, own angle per field
       ctx.save(); ctx.clip("evenodd");
       const [bx0, by0, bx1, by1] = bounds(f.r!), cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, R = Math.hypot(bx1 - bx0, by1 - by0) / 2;
@@ -119,7 +156,17 @@ export function drawGround(
       ctx.stroke(); ctx.restore();
     }
     if (k === "pool") { ctx.lineWidth = 0.6; ctx.strokeStyle = "#e9ecee"; ctx.stroke(); }
-    if (k === "water") { ctx.lineWidth = 1; ctx.strokeStyle = "rgba(220,235,240,0.5)"; ctx.stroke(); }
+    if (k === "water" && styled) {
+      // ponds: a light shore path (stroke over the edge, the water refilled over its inner half)
+      if (ringArea(f.r![0]) < POND) { ctx.lineWidth = 5; ctx.strokeStyle = PATHS.path; ctx.stroke(); path(f.r!); ctx.fillStyle = FILL.water; ctx.fill("evenodd"); }
+      // inner shadow under the sunward bank, then a thin darker rim
+      ctx.save(); ctx.clip("evenodd");
+      ctx.filter = `blur(${1.4 / mpt}px)`;
+      ctx.translate(SHADOW_DIR[0] * 0.5, SHADOW_DIR[1] * 0.5);
+      path(f.r!); ctx.lineWidth = 3; ctx.strokeStyle = "rgba(12,48,78,0.25)"; ctx.stroke();
+      ctx.restore();
+      path(f.r!); ctx.lineWidth = 0.5; ctx.strokeStyle = "rgba(20,70,100,0.6)"; ctx.stroke();
+    } else if (k === "water") { ctx.lineWidth = 1; ctx.strokeStyle = "rgba(220,235,240,0.5)"; ctx.stroke(); }
   }
 
   // 2. sea: deep, shallows along the shore (clipped to the water), surf line
@@ -170,7 +217,7 @@ export function drawGround(
   void ground;
 
   // 4. paths and plazas, then pavements under streets
-  for (const f of [...of("path"), ...of("plaza"), ...of("cycle")]) stroke(f.l!, f.w!, PATHS[f.k]);
+  for (const k of ["path", "plaza", "cycle"]) fillet(FILLET.path, (g) => { for (const f of of(k)) stroke(f.l!, f.w! + 2 * g, PATHS[k]); });
   for (const f of of("pier")) stroke(f.l!, f.w!, "#d8d2c4");
   // Roads have butt ends: a round cap on a bridge end or a wide road's end bulges over whatever it
   // meets. Joins between ways are filled by junction disks instead, drawn in the junction's layer.
@@ -180,8 +227,8 @@ export function drawGround(
   const layers = [...new Set([...roads, ...rails].map((f) => f.y ?? 0))].sort((a, b) => a - b);
   const disks = (js: number[][], grow: number, c?: string) => {
     for (const [x, y, r, , k] of js) {
-      ctx.beginPath(); ctx.arc(x, y, r - 3 + grow, 0, Math.PI * 2);
-      ctx.fillStyle = c ?? ASPHALT[CLASS[k] ?? "street"]; ctx.fill();
+      dc.beginPath(); dc.arc(x, y, r - 3 + grow, 0, Math.PI * 2);
+      dc.fillStyle = c ?? ASPHALT[CLASS[k] ?? "street"]; dc.fill();
     }
   };
   for (const layer of layers) {
@@ -194,13 +241,16 @@ export function drawGround(
       for (const f of rs) stroke(f.l!, f.w! + 2.4, "#e2ddd2");
     }
     const streets = rs.filter((f) => f.k === "street");
-    for (const f of streets) stroke(f.l!, f.w! + 6, KERB);
     const streetJs = layer === 0 ? js.filter((j) => CLASS[j[4]] === "street") : []; // pavements round street corners
-    disks(streetJs, 3, KERB);
-    for (const f of streets) stroke(f.l!, f.w! + 5.4, SIDEWALK);
-    disks(streetJs, 2.7, SIDEWALK);
-    for (const f of rs) stroke(f.l!, f.w!, ASPHALT[f.k]);
-    disks(js, 0);
+    const r = layer === 0 ? FILLET.street : 0, ra = layer === 0 ? FILLET.asphalt : 0;
+    const filleted = (r: number, draw: (g: number) => void) => (r ? fillet(r, draw) : draw(0));
+    filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + 6 + 2 * g, KERB); disks(streetJs, 3 + g, KERB); });
+    filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + 5.4 + 2 * g, SIDEWALK); disks(streetJs, 2.7 + g, SIDEWALK); });
+    if (ra) for (const k of CLASS) filleted(ra, (g) => {
+      for (const f of rs) if (f.k === k) stroke(f.l!, f.w! + 2 * g, ASPHALT[k]);
+      disks(js.filter((j) => (CLASS[j[4]] ?? "street") === k), g);
+    });
+    else { for (const f of rs) stroke(f.l!, f.w!, ASPHALT[f.k]); disks(js, 0); }
     // 5. markings, kept out of junctions (lines of crossing roads would scribble over each other)
     ctx.save();
     ctx.beginPath();

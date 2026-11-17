@@ -139,7 +139,7 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   // LoD2 footprints cast the same contact shadows as extruded buildings
   const shadows = { b: [...(data?.b ?? []), ...(data?.m ?? []).filter((m) => !m[9] || m[9] < 2).map((m) => [m[4], m[5], m[0], null] as [P2[], number, number, null])], t: data?.t ?? [] };
   const ctx = cv.getContext("2d")!;
-  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, shadows, ground, STYLED ? SHADOW : undefined);
+  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, shadows, ground, STYLED ? SHADOW : undefined, STYLED);
   buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h);
   if (STYLED) deckShadows(ctx, data);
   groundTexture.needsUpdate = true;
@@ -196,7 +196,7 @@ function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, 
   const cv = deckTexture.image as HTMLCanvasElement;
   if (w !== cv.width || h !== cv.height) deckTexture.dispose();
   cv.width = w; cv.height = h;
-  drawGround(cv.getContext("2d")!, bridges, [x0, y0, x1, y1], GROUND_MPT, { b: [], t: [] }, ground, SHADOW);
+  drawGround(cv.getContext("2d")!, bridges, [x0, y0, x1, y1], GROUND_MPT, { b: [], t: [] }, ground, SHADOW, STYLED);
   deckTexture.needsUpdate = true;
   const top: number[] = [], uv: number[] = [], side: number[] = [], sideN: number[] = [];
   const U = (x: number, y: number) => [(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)];
@@ -871,7 +871,7 @@ function buildObjects(data: TileObjects) {
   if (data.t.length) {
     const crowns = new THREE.InstancedMesh(STYLED ? CROWN : new THREE.IcosahedronGeometry(1, 2), treeMaterial, data.t.length);
     const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6).rotateX(Math.PI / 2).translate(0, 0, 0.5), treeMaterial, data.t.length);
-    const m = new THREE.Matrix4(), c = new THREE.Color(), bark = new THREE.Color(0.45, 0.36, 0.28);
+    const m = new THREE.Matrix4(), c = new THREE.Color(), bark = new THREE.Color(0.40, 0.31, 0.23);
     data.t.forEach(([x, y, r, ch], i) => {
       const g = ground(x, y), [name, , col, sxy, sz, palm] = species(x, y, r);
       if (palm && STYLED) {
@@ -889,9 +889,17 @@ function buildObjects(data: TileObjects) {
         m.makeScale(0.4, 0.4, top - g).setPosition(x, y, g);
         trunks.setMatrixAt(i, m);
       } else {
-        m.makeScale(r * sxy, r * sxy, r * sz).setPosition(x, y, g + ch);
-        crowns.setMatrixAt(i, m);
-        m.makeScale(0, 0, 0);
+        if (STYLED) {
+          // crown stretched down into an oval (at most 1.7× as tall as wide) so only a short trunk shows under it
+          const top = ch + r * sz, bot = Math.min(ch - r * sz, Math.max(2, 0.28 * top, top - 3.4 * r * sxy)), hz = (top - bot) / 2;
+          m.makeScale(r * sxy, r * sxy, hz).setPosition(x, y, g + bot + hz);
+          crowns.setMatrixAt(i, m);
+          m.makeScale(Math.max(0.35, r * 0.12), Math.max(0.35, r * 0.12), bot + hz * 0.5).setPosition(x, y, g);
+        } else {
+          m.makeScale(r * sxy, r * sxy, r * sz).setPosition(x, y, g + ch);
+          crowns.setMatrixAt(i, m);
+          m.makeScale(0, 0, 0);
+        }
         trunks.setMatrixAt(i, m);
       }
       crowns.setColorAt(i, c.setRGB(col[0], col[1], col[2]));
