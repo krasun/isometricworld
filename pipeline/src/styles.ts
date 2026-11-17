@@ -45,6 +45,9 @@ export interface StylePreset {
   /** Lawns and gardens where the orthophoto is green (ground.ts, greenery.ts; sources with an orthophoto: gugik),
    *  over the plain residential, commercial and campus land; false: that land is one flat colour. */
   greenery: boolean;
+  /** Trees of several lobes, species shapes (birches, poplars, willows, spruces, pines, thujas…) and foliage
+   *  shading (page/trees.ts); false: one lumpy ball per broadleaf crown. */
+  richTrees: boolean;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -57,7 +60,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -77,6 +80,7 @@ export const STYLES = {
     trunks: true,
     streetDetail: true,
     greenery: true,
+    richTrees: true,
   },
 } satisfies Record<string, StylePreset>;
 

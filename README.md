@@ -178,7 +178,10 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   them, separately mapped sidewalks drawn as kerbed pavement, and road and path surfaces (paving, setts,
   gravel, dirt, grass, concrete) from OSM `surface` (`ground.ts`, `page/ground.ts`). `greenery`: lawns and
   gardens where the orthophoto is green, traced as smooth outlines over plain residential land (`greenery.ts`),
-  and a grass texture fixed to the map on lawns, parks, meadows and the like.
+  and a grass texture fixed to the map on lawns, parks, meadows and the like. `richTrees` (`page/trees.ts`):
+  crowns of several lobes in a few variants, a Central European species mix with its own shapes, colours and
+  bark (limes, oaks, birches, fruit trees, poplars, willows, tiered spruces, umbrella pines, thujas), and
+  foliage shading (clumps of leaves, a darker underside); each keeps the top the surface model measured.
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).

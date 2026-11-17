@@ -8,6 +8,7 @@ import { CAMERA, axes, ecefToEnu, llhToEcef, tileCamera, useRegion } from "../sr
 import { REGIONS } from "../src/places.ts";
 import { styleOf } from "../src/styles.ts";
 import { drawGround, type Feature } from "./ground.ts";
+import { richTrees } from "./trees.ts";
 import { deckHeight } from "../src/bridges.ts";
 
 const params = new URLSearchParams(location.search);
@@ -1161,7 +1162,8 @@ function buildObjects(data: TileObjects) {
     geo.setAttribute("grid", new THREE.Float32BufferAttribute(grd, 4));
     objects.add(new THREE.Mesh(geo, buildingMaterial));
   }
-  if (data.t.length) {
+  if (data.t.length && STYLED && STYLE.richTrees) objects.add(...richTrees(data.t, ground, treeMaterial, SUN));
+  else if (data.t.length) {
     const crowns = new THREE.InstancedMesh(STYLED ? CROWN : new THREE.IcosahedronGeometry(1, 2), treeMaterial, data.t.length);
     const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6).rotateX(Math.PI / 2).translate(0, 0, 0.5), treeMaterial, data.t.length);
     const m = new THREE.Matrix4(), c = new THREE.Color(), bark = new THREE.Color(0.45, 0.36, 0.28);
