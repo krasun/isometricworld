@@ -22,6 +22,7 @@ import { ecefToEnu, enuToLlh, llhToEcef } from "./camera.ts";
 import { fromPuwg, gugikTerrain, orthoChunks, toPuwg } from "./gugik.ts";
 import { lawns } from "./greenery.ts";
 import { playLayout } from "./playgrounds.ts";
+import { parkLayout } from "./parking.ts";
 import { rasterSampler, toUtm } from "./lgl.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
@@ -53,6 +54,8 @@ const DETAIL = STYLED && styleOf(region.style).streetDetail;
 const GREENERY = STYLED && styleOf(region.style).greenery && region.sources === "gugik";
 /** Preset `waterDetail`: watercourses as lines, treatment basins murky (page/ground.ts draws the water's depth). */
 const WATER_DETAIL = STYLED && styleOf(region.style).waterDetail;
+/** Preset `parkedCars`: the stall lines of the parking lots (parking.ts; the cars: scene.ts). */
+const PARKED = STYLED && styleOf(region.style).parkedCars;
 /** Preset `playgrounds`: rubber safety pads and sandpits of the playgrounds (playgrounds.ts). */
 const PLAYGROUNDS = STYLED && styleOf(region.style).playgrounds;
 /** Preset `bridgeDetail`: bridge decks carried on to their abutments (below). */
@@ -470,6 +473,12 @@ if (WATER_DETAIL && existsSync(join(RAW, name, "osm-water.json"))) {
     n++;
   }
   console.log(`  watercourses: ${n}`);
+}
+// parking lots: their stall lines (the cars on them: scene.ts)
+if (PARKED && existsSync(join(RAW, name, "osm-parking.json"))) {
+  const { lines } = parkLayout(readJson(join(RAW, name, "osm-parking.json")), (lon, lat) => toEnu(lon, lat));
+  for (const l of lines) features.push({ k: "stalls", r: l.rings.map((r) => r.map(([x, y]) => [r1(x), r1(y)] as P2)) });
+  console.log(`  parking: stall lines on ${lines.length} lots`);
 }
 // playgrounds: sandpits and the rubber pads under the equipment (the equipment itself: scene.ts)
 if (PLAYGROUNDS && existsSync(join(RAW, name, "osm-play.json"))) {

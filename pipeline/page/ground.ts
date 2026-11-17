@@ -266,6 +266,8 @@ export function drawGround(
   void ground;
 
   if (!streams) drawStreams(); // no lake in this tile
+  // parking stall lines (preset parkedCars)
+  for (const f of of("stalls")) { path(f.r!); ctx.lineWidth = 0.12; ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.setLineDash([]); ctx.stroke(); }
   // 4. paths and plazas, then pavements under streets
   if (detailBridges) for (const f of [...of("path"), ...of("cycle"), ...of("sidewalk")]) stroke(f.l!, f.w! + 2.2, CORNICE);
   for (const f of [...of("path"), ...of("plaza"), ...of("cycle")]) stroke(f.l!, f.w!, (f.u && PATH_SURFACE[f.u]) || (detailBridges && f.k !== "plaza" ? "#b8b7b3" : PATHS[f.k]));

@@ -25,6 +25,9 @@ import { crowns } from "./canopy.ts";
 import { styleOf } from "./styles.ts";
 import { powerLines } from "./power.ts";
 import { playLayout, playPieces } from "./playgrounds.ts";
+import { parkLayout, parkPieces } from "./parking.ts";
+import { barriers } from "./barriers.ts";
+import { roofsOnPosts, streetLamps } from "./props.ts";
 import { ARCADES, arcade, LOOKS, PLACED, type Piece, type Rings, STRUCTURES, type Structure, TOPS, TOWERS } from "./landmarks.ts";
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
@@ -835,6 +838,87 @@ if (STYLED && styleOf(region.style).playgrounds && existsSync(join(raw, "osm-pla
   const pieces = playPieces(layout, groundAt);
   meshes.push(...pieces.map(fromPiece));
   console.log(`  playgrounds: ${layout.items.length} pieces of equipment`);
+}
+// presets streetLamps, roofsOnPosts (props.ts, osm-furniture.json)
+const STYLE_PRESET = styleOf(region.style);
+if (STYLED && (STYLE_PRESET.streetLamps || STYLE_PRESET.roofsOnPosts) && existsSync(join(raw, "osm-furniture.json"))) {
+  const furniture = readJson(join(raw, "osm-furniture.json")), en = (lon: number, lat: number): P2 => { const e = toEnu(lon, lat); return [e[0], e[1]]; };
+  const cs = [[bbox[0], bbox[1]], [bbox[0], bbox[3]], [bbox[2], bbox[1]], [bbox[2], bbox[3]]].map(([la, lo]) => toEnu(lo, la));
+  const ex = [Math.min(...cs.map((c) => c[0])) - 50, Math.min(...cs.map((c) => c[1])) - 50, Math.max(...cs.map((c) => c[0])) + 50, Math.max(...cs.map((c) => c[1])) + 50];
+  const inBox = (p: P2) => p[0] >= ex[0] && p[0] <= ex[2] && p[1] >= ex[1] && p[1] <= ex[3];
+  if (STYLE_PRESET.streetLamps) {
+    // the nearest drivable road within 15 m (roads.json), on a 30 m grid of segments
+    const segs = new Map<string, Array<[P2, P2]>>();
+    for (const w of readJson(join(raw, "roads.json")).elements) {
+      const g: P2[] = (w.geometry ?? []).map((q: any) => en(q.lon, q.lat));
+      for (let i = 1; i < g.length; i++) {
+        const [a, b] = [g[i - 1], g[i]];
+        for (let cx = Math.floor(Math.min(a[0], b[0]) / 30); cx <= Math.floor(Math.max(a[0], b[0]) / 30); cx++)
+          for (let cy = Math.floor(Math.min(a[1], b[1]) / 30); cy <= Math.floor(Math.max(a[1], b[1]) / 30); cy++)
+            (segs.get(`${cx}_${cy}`) ?? segs.set(`${cx}_${cy}`, []).get(`${cx}_${cy}`)!).push([a, b]);
+      }
+    }
+    const road = (p: P2): P2 | null => {
+      let best = 15, at: P2 | null = null;
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [a, b] of segs.get(`${Math.floor(p[0] / 30) + i}_${Math.floor(p[1] / 30) + j}`) ?? []) {
+        const dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+        const q: P2 = [a[0] + dx * t, a[1] + dy * t], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+        if (d < best) { best = d; at = q; }
+      }
+      return at;
+    };
+    const lamps = streetLamps(furniture, en, groundAt, inBox, road);
+    meshes.push(...lamps.pieces.map(fromPiece));
+    console.log(`  street lamps: ${lamps.count}`);
+  }
+  if (STYLE_PRESET.roofsOnPosts) {
+    // a building already there (its footprint holds the outline's centre); the surface model's height inside
+    const fps = new Map<string, P2[][]>();
+    for (const m of meshes as Mesh[]) { const f = m.footprint; if (!f?.length) continue; const k = `${Math.floor(f[0][0] / 50)}_${Math.floor(f[0][1] / 50)}`; (fps.get(k) ?? fps.set(k, []).get(k)!).push(f); }
+    const covered = (ring: P2[]) => {
+      const c: P2 = [ring.reduce((a, q) => a + q[0], 0) / ring.length, ring.reduce((a, q) => a + q[1], 0) / ring.length];
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const f of fps.get(`${Math.floor(c[0] / 50) + i}_${Math.floor(c[1] / 50) + j}`) ?? []) if (inside(c, f)) return true;
+      return false;
+    };
+    const nd = region.sources === "gugik" ? gugikNdom(bbox) : null;
+    const seen = (ring: P2[]) => {
+      if (!nd) return NaN;
+      const xs = ring.map((q) => q[0]), ys = ring.map((q) => q[1]), v: number[] = [];
+      for (let x = Math.min(...xs) + 0.5; x < Math.max(...xs); x += 1) for (let y = Math.min(...ys) + 0.5; y < Math.max(...ys); y += 1) {
+        if (!inside([x, y], ring)) continue;
+        const [la, lo] = enuToLlh([x, y, 0]), [px, py] = toPuwg(la, lo), h = nd(px, py);
+        if (Number.isFinite(h)) v.push(h);
+      }
+      v.sort((a, b) => a - b);
+      return v.length >= 4 ? v[v.length >> 1] : NaN;
+    };
+    const roofs = roofsOnPosts(furniture, en, groundAt, inBox, covered, seen);
+    meshes.push(...roofs.map(fromPiece));
+    console.log(`  roofs on posts: ${roofs.length / 2}`);
+  }
+}
+// preset barriers: fences, walls, rails (pieces) and hedges (rows of bushes where the surface model found none)
+if (STYLED && styleOf(region.style).barriers && existsSync(join(raw, "osm-barriers.json"))) {
+  const cs = [[bbox[0], bbox[1]], [bbox[0], bbox[3]], [bbox[2], bbox[1]], [bbox[2], bbox[3]]].map(([la, lo]) => toEnu(lo, la));
+  const ex = [Math.min(...cs.map((c) => c[0])) - 50, Math.min(...cs.map((c) => c[1])) - 50, Math.max(...cs.map((c) => c[0])) + 50, Math.max(...cs.map((c) => c[1])) + 50];
+  const near = new Map<string, P2[]>();
+  for (const s of shrubs) { const k = `${Math.floor(s[0] / 2)}_${Math.floor(s[1] / 2)}`; (near.get(k) ?? near.set(k, []).get(k)!).push([s[0], s[1]]); }
+  const nearBush = (x: number, y: number) => {
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++)
+      for (const q of near.get(`${Math.floor(x / 2) + i}_${Math.floor(y / 2) + j}`) ?? []) if (Math.hypot(q[0] - x, q[1] - y) < 1) return true;
+    return false;
+  };
+  const b = barriers(readJson(join(raw, "osm-barriers.json")), (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }, groundAt,
+    (p) => p[0] >= ex[0] && p[0] <= ex[2] && p[1] >= ex[1] && p[1] <= ex[3], nearBush);
+  meshes.push(...b.pieces.map(fromPiece));
+  shrubs.push(...b.hedges);
+  console.log(`  barriers: ${b.pieces.length} fences, walls and rails, ${b.hedges.length} hedge bushes, ${b.km.toFixed(0)} km`);
+}
+// preset parkedCars: cars on the parking lots and bays (parking.ts; the stall lines are on the ground, ground.ts)
+if (STYLED && styleOf(region.style).parkedCars && existsSync(join(raw, "osm-parking.json"))) {
+  const layout = parkLayout(readJson(join(raw, "osm-parking.json")), (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; });
+  meshes.push(...parkPieces(layout, groundAt).map(fromPiece));
+  console.log(`  parked cars: ${layout.cars.length}`);
 }
 for (const b of meshes as Mesh[]) {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;

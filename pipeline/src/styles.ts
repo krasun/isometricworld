@@ -62,6 +62,14 @@ export interface StylePreset {
   /** Water drawn with depth (lighter shallows at the shore, a dark bank), ripples and glints, murky treatment
    *  basins, and the streams, rivers, ditches and drains OSM maps as lines (fetch.ts osm-water.json). */
   waterDetail: boolean;
+  /** Parked cars on the parking lots and bays OSM maps (fetch.ts osm-parking.json, parking.ts), with stall lines. */
+  parkedCars: boolean;
+  /** Fences, walls, noise barriers, guard rails and hedges OSM maps (fetch.ts osm-barriers.json, barriers.ts). */
+  barriers: boolean;
+  /** Street lamps OSM maps (fetch.ts osm-furniture.json, props.ts), arms reaching over the nearest road. */
+  streetLamps: boolean;
+  /** Roofs on posts (building=roof, carport: fuel station canopies, carports, shelters), at the surface model's height. */
+  roofsOnPosts: boolean;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -74,7 +82,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -100,6 +108,10 @@ export const STYLES = {
     powerLines: true,
     playgrounds: true,
     waterDetail: true,
+    parkedCars: true,
+    barriers: true,
+    streetLamps: true,
+    roofsOnPosts: true,
   },
 } satisfies Record<string, StylePreset>;
 

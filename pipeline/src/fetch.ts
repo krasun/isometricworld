@@ -13,6 +13,9 @@
  * data/raw/<area>/osm-power.json         OSM high-voltage power lines and their towers (preset powerLines)
  * data/raw/<area>/osm-play.json          OSM playgrounds and their equipment (preset playgrounds)
  * data/raw/<area>/osm-water.json         OSM rivers, streams, canals, ditches and drains as lines (preset waterDetail)
+ * data/raw/<area>/osm-parking.json       OSM parking lots, bays and stalls (preset parkedCars)
+ * data/raw/<area>/osm-barriers.json      OSM fences, walls, hedges, guard rails (preset barriers)
+ * data/raw/<area>/osm-furniture.json     OSM street lamps, roofs on posts, shelters, benches, shrines… (presets streetLamps …)
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
  * data/raw/<area>/rails.json             OSM rail routes (S-Bahn, regional, Stadtbahn…) and their tracks (trains)
  * data/raw/<area>/ground.json            OSM ground surface: roads/paths, landuse, parks, water,
@@ -170,6 +173,36 @@ way["waterway"~"^(river|stream|canal|ditch|drain)$"]${b};
 out body geom;`, [s - m, w - m, n + m, e + m], FILTERS.waterways);
   writeFileSync(join(dir, "osm-water.json"), JSON.stringify(data));
   console.log(`  osm watercourses: ${data.elements.length} ways`);
+}
+// the look's street furniture and roofs on posts (presets streetLamps, roofsOnPosts)
+const STYLE = styleOf(REGIONS[area.region].style);
+if (STYLED && (STYLE.streetLamps || STYLE.roofsOnPosts) && !existsSync(join(dir, "osm-furniture.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(node["highway"~"^(street_lamp|traffic_signals|bus_stop)$"]${b}; node["amenity"~"^(bench|waste_basket|shelter)$"]${b};
+ node["man_made"="flagpole"]${b}; node["advertising"~"^(column|billboard)$"]${b}; node["historic"~"^(wayside_shrine|wayside_cross|memorial)$"]${b};
+ way["building"~"^(roof|carport)$"]${b}; way["amenity"="shelter"]${b};);
+out body geom;`, area.bbox, FILTERS.furniture);
+  writeFileSync(join(dir, "osm-furniture.json"), JSON.stringify(data));
+  console.log(`  osm furniture: ${data.elements.length} elements`);
+}
+// the look's fences, walls and hedges (preset barriers)
+if (STYLED && styleOf(REGIONS[area.region].style).barriers && !existsSync(join(dir, "osm-barriers.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+way["barrier"~"^(fence|wall|hedge|retaining_wall|guard_rail|noise_barrier|city_wall)$"]${b};
+out body geom;`, area.bbox, FILTERS.barriers);
+  writeFileSync(join(dir, "osm-barriers.json"), JSON.stringify(data));
+  console.log(`  osm barriers: ${data.elements.length} ways`);
+}
+// the look's parked cars (preset parkedCars): lots, bays and stalls
+if (STYLED && styleOf(REGIONS[area.region].style).parkedCars && !existsSync(join(dir, "osm-parking.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(way["amenity"~"^(parking|parking_space)$"]${b}; relation["amenity"~"^(parking|parking_space)$"]${b};);
+out body geom;`, area.bbox, FILTERS.parking);
+  writeFileSync(join(dir, "osm-parking.json"), JSON.stringify(data));
+  console.log(`  osm parking: ${data.elements.length} elements`);
 }
 // the look's playgrounds (preset playgrounds): the areas and the equipment on them
 if (STYLED && styleOf(REGIONS[area.region].style).playgrounds && !existsSync(join(dir, "osm-play.json"))) {

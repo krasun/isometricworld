@@ -110,6 +110,15 @@ export const FILTERS = {
   rails: ((type, t) => (type === "relation" && /^(train|light_rail|subway|tram)$/.test(t.route ?? ""))
     || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge)$/.test(t.railway ?? ""))) as OsmFilter,
   roads: ((type, t) => type === "way" && ROAD.test(t.highway ?? "") && t.area !== "yes") as OsmFilter,
+  /** street furniture and roofs on posts (presets streetLamps, roofsOnPosts …) */
+  furniture: ((type, t) => (type === "node" && (/^(street_lamp|traffic_signals|bus_stop)$/.test(t.highway ?? "")
+      || /^(bench|waste_basket|shelter)$/.test(t.amenity ?? "") || t.man_made === "flagpole" || /^(column|billboard)$/.test(t.advertising ?? "")
+      || /^(wayside_shrine|wayside_cross|memorial)$/.test(t.historic ?? "")))
+    || (type === "way" && (/^(roof|carport)$/.test(t.building ?? "") || t.amenity === "shelter"))) as OsmFilter,
+  /** fences, walls, hedges and rails as lines (preset barriers) */
+  barriers: ((type, t) => type === "way" && /^(fence|wall|hedge|retaining_wall|guard_rail|noise_barrier|city_wall)$/.test(t.barrier ?? "")) as OsmFilter,
+  /** parking lots, bays and stalls (preset parkedCars) */
+  parking: ((type, t) => type !== "node" && (t.amenity === "parking" || t.amenity === "parking_space")) as OsmFilter,
   /** watercourses drawn as lines (preset waterDetail) */
   waterways: ((type, t) => type === "way" && /^(river|stream|canal|ditch|drain)$/.test(t.waterway ?? "")) as OsmFilter,
   /** playgrounds and their equipment (preset playgrounds) */

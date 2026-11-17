@@ -195,7 +195,13 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   size (sandpit, swing, tower with a slide, seesaw, spring riders, roundabout), rubber safety pads under it and
   sandpits on the ground (`playgrounds.ts`). `waterDetail`: water with lighter shallows along the shore, a muddy
   bank, ripples and sun glints fixed to the map, murky treatment basins, and the rivers, streams, ditches and
-  drains OSM maps as lines (`fetch.ts` osm-water.json, culverts left out).
+  drains OSM maps as lines (`fetch.ts` osm-water.json, culverts left out). `parkedCars`: cars on the parking
+  lots and bays OSM maps, about two thirds occupied: on its stalls where mapped, else laid out by the lot's shape
+  (a kerbside lane, a row, or rows between aisles), with stall lines on lots (`parking.ts`). `barriers`: OSM
+  fences (see-through: posts and rails), walls, noise barriers, retaining walls and guard rails on the terrain,
+  hedges as rows of bushes (`barriers.ts`). `streetLamps`: OSM street lamps with an arm over the nearest road;
+  `roofsOnPosts`: building=roof and carport outlines (fuel canopies, carports, shelters) as slabs on posts at the
+  surface model's height (`props.ts`).
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).
