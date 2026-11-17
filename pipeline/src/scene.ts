@@ -27,7 +27,8 @@ import { powerLines } from "./power.ts";
 import { playLayout, playPieces } from "./playgrounds.ts";
 import { parkLayout, parkPieces } from "./parking.ts";
 import { barriers } from "./barriers.ts";
-import { roofsOnPosts, streetLamps } from "./props.ts";
+import { type Road, roofsOnPosts, streetFurniture, streetLamps } from "./props.ts";
+import { roadWidth } from "./roadspec.ts";
 import { ARCADES, arcade, LOOKS, PLACED, type Piece, type Rings, STRUCTURES, type Structure, TOPS, TOWERS } from "./landmarks.ts";
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
@@ -841,40 +842,49 @@ if (STYLED && styleOf(region.style).playgrounds && existsSync(join(raw, "osm-pla
 }
 // presets streetLamps, roofsOnPosts (props.ts, osm-furniture.json)
 const STYLE_PRESET = styleOf(region.style);
-if (STYLED && (STYLE_PRESET.streetLamps || STYLE_PRESET.roofsOnPosts) && existsSync(join(raw, "osm-furniture.json"))) {
+if (STYLED && (STYLE_PRESET.streetLamps || STYLE_PRESET.roofsOnPosts || STYLE_PRESET.streetFurniture) && existsSync(join(raw, "osm-furniture.json"))) {
   const furniture = readJson(join(raw, "osm-furniture.json")), en = (lon: number, lat: number): P2 => { const e = toEnu(lon, lat); return [e[0], e[1]]; };
   const cs = [[bbox[0], bbox[1]], [bbox[0], bbox[3]], [bbox[2], bbox[1]], [bbox[2], bbox[3]]].map(([la, lo]) => toEnu(lo, la));
   const ex = [Math.min(...cs.map((c) => c[0])) - 50, Math.min(...cs.map((c) => c[1])) - 50, Math.max(...cs.map((c) => c[0])) + 50, Math.max(...cs.map((c) => c[1])) + 50];
   const inBox = (p: P2) => p[0] >= ex[0] && p[0] <= ex[2] && p[1] >= ex[1] && p[1] <= ex[3];
-  if (STYLE_PRESET.streetLamps) {
-    // the nearest drivable road within 15 m (roads.json), on a 30 m grid of segments
-    const segs = new Map<string, Array<[P2, P2]>>();
-    for (const w of readJson(join(raw, "roads.json")).elements) {
-      const g: P2[] = (w.geometry ?? []).map((q: any) => en(q.lon, q.lat));
-      for (let i = 1; i < g.length; i++) {
-        const [a, b] = [g[i - 1], g[i]];
-        for (let cx = Math.floor(Math.min(a[0], b[0]) / 30); cx <= Math.floor(Math.max(a[0], b[0]) / 30); cx++)
-          for (let cy = Math.floor(Math.min(a[1], b[1]) / 30); cy <= Math.floor(Math.max(a[1], b[1]) / 30); cy++)
-            (segs.get(`${cx}_${cy}`) ?? segs.set(`${cx}_${cy}`, []).get(`${cx}_${cy}`)!).push([a, b]);
-      }
+  // the nearest drivable road (roads.json) within `max` m: the point on it, its direction and width (30 m grid)
+  const segs = new Map<string, Array<[P2, P2, number]>>();
+  for (const w of readJson(join(raw, "roads.json")).elements) {
+    const g: P2[] = (w.geometry ?? []).map((q: any) => en(q.lon, q.lat)), width = roadWidth(w.tags ?? {}) || 6;
+    for (let i = 1; i < g.length; i++) {
+      const [a, b] = [g[i - 1], g[i]];
+      for (let cx = Math.floor(Math.min(a[0], b[0]) / 30); cx <= Math.floor(Math.max(a[0], b[0]) / 30); cx++)
+        for (let cy = Math.floor(Math.min(a[1], b[1]) / 30); cy <= Math.floor(Math.max(a[1], b[1]) / 30); cy++)
+          (segs.get(`${cx}_${cy}`) ?? segs.set(`${cx}_${cy}`, []).get(`${cx}_${cy}`)!).push([a, b, width]);
     }
-    const road = (p: P2): P2 | null => {
-      let best = 15, at: P2 | null = null;
-      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [a, b] of segs.get(`${Math.floor(p[0] / 30) + i}_${Math.floor(p[1] / 30) + j}`) ?? []) {
-        const dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
-        const q: P2 = [a[0] + dx * t, a[1] + dy * t], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
-        if (d < best) { best = d; at = q; }
-      }
-      return at;
-    };
-    const lamps = streetLamps(furniture, en, groundAt, inBox, road);
+  }
+  const road = (p: P2, max: number): Road => {
+    let best = max, out: Road = null;
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [a, b, w] of segs.get(`${Math.floor(p[0] / 30) + i}_${Math.floor(p[1] / 30) + j}`) ?? []) {
+      const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1, t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (L * L)));
+      const q: P2 = [a[0] + dx * t, a[1] + dy * t], d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (d < best) { best = d; out = { q, dir: [dx / L, dy / L], w }; }
+    }
+    return out;
+  };
+  if (STYLE_PRESET.streetFurniture) {
+    const f = streetFurniture(furniture, en, groundAt, inBox, road);
+    meshes.push(...f.pieces.map(fromPiece));
+    console.log(`  street furniture: ${Object.entries(f.counts).map(([k, v]) => `${v} ${k}`).join(", ")}`);
+  }
+  if (STYLE_PRESET.streetLamps) {
+    const lamps = streetLamps(furniture, en, groundAt, inBox, (p) => road(p, 15)?.q ?? null);
     meshes.push(...lamps.pieces.map(fromPiece));
     console.log(`  street lamps: ${lamps.count}`);
   }
   if (STYLE_PRESET.roofsOnPosts) {
     // a building already there (its footprint holds the outline's centre); the surface model's height inside
     const fps = new Map<string, P2[][]>();
-    for (const m of meshes as Mesh[]) { const f = m.footprint; if (!f?.length) continue; const k = `${Math.floor(f[0][0] / 50)}_${Math.floor(f[0][1] / 50)}`; (fps.get(k) ?? fps.set(k, []).get(k)!).push(f); }
+    for (const m of meshes as Mesh[]) { // buildings only: hand-built props (bare 3) carry a bounding box or a 100 m cell
+      const f = m.footprint;
+      if (!f?.length || (m as { look?: { bare?: number } }).look?.bare === 3) continue;
+      const k = `${Math.floor(f[0][0] / 50)}_${Math.floor(f[0][1] / 50)}`; (fps.get(k) ?? fps.set(k, []).get(k)!).push(f);
+    }
     const covered = (ring: P2[]) => {
       const c: P2 = [ring.reduce((a, q) => a + q[0], 0) / ring.length, ring.reduce((a, q) => a + q[1], 0) / ring.length];
       for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const f of fps.get(`${Math.floor(c[0] / 50) + i}_${Math.floor(c[1] / 50) + j}`) ?? []) if (inside(c, f)) return true;

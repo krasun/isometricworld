@@ -176,7 +176,7 @@ out body geom;`, [s - m, w - m, n + m, e + m], FILTERS.waterways);
 }
 // the look's street furniture and roofs on posts (presets streetLamps, roofsOnPosts)
 const STYLE = styleOf(REGIONS[area.region].style);
-if (STYLED && (STYLE.streetLamps || STYLE.roofsOnPosts) && !existsSync(join(dir, "osm-furniture.json"))) {
+if (STYLED && (STYLE.streetLamps || STYLE.roofsOnPosts || STYLE.streetFurniture) && !existsSync(join(dir, "osm-furniture.json"))) {
   const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
   const data = await osmQuery(`[out:json][timeout:300];
 (node["highway"~"^(street_lamp|traffic_signals|bus_stop)$"]${b}; node["amenity"~"^(bench|waste_basket|shelter)$"]${b};

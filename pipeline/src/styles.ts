@@ -70,6 +70,9 @@ export interface StylePreset {
   streetLamps: boolean;
   /** Roofs on posts (building=roof, carport: fuel station canopies, carports, shelters), at the surface model's height. */
   roofsOnPosts: boolean;
+  /** Bus shelters and stop signs, benches, waste baskets, flagpoles, advertising columns and billboards, wayside
+   *  shrines and crosses, memorials, traffic signals (props.ts streetFurniture, osm-furniture.json). */
+  streetFurniture: boolean;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -82,7 +85,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -112,6 +115,7 @@ export const STYLES = {
     barriers: true,
     streetLamps: true,
     roofsOnPosts: true,
+    streetFurniture: true,
   },
 } satisfies Record<string, StylePreset>;
 
