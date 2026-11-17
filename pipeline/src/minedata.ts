@@ -69,7 +69,7 @@ export const COLLAR = 242.9;
 
 export const LEVELS: MineLevel[] = [
   { id: "I", name: "Bono", depth: 57.4, tourist: 64, chambers: 126, span: [0, 1], note: "the start of the Tourist Route (Daniłowicz shaft stairs) and of the Miners' Route (Regis)", pl: "tu zaczyna się Trasa Turystyczna (schody szybu Daniłowicza) i Trasa Górnicza (szyb Regis)" },
-  { id: "IIw", name: "Braci Markowskich", depth: 84.3, tourist: 90, chambers: 46, span: [0.05, 0.95], note: "level II, upper", pl: "poziom II wyższy" },
+  { id: "IIw", name: "Braci Markowskich", depth: 84.3, tourist: 90, chambers: 46, span: [0.05, 0.95], note: "level II, upper: the Groty Kryształowe reserve (~80 m below the town, between IIw and IIn)", pl: "tu, około 80 m pod miastem, leży rezerwat przyrody Groty Kryształowe (obrys GDOŚ z OSM, sama grota orientacyjnie)" },
   { id: "IIn", name: "Mickiewicz", depth: 103.5, tourist: 110, chambers: 246, span: [0, 1], note: "level II, lower: St. Kinga's Chapel, Michałowice, Drozdowice", pl: "poziom II niższy: kaplica św. Kingi, komory Michałowice i Drozdowice" },
   { id: "III", name: "Słowacki", depth: 129.4, tourist: 135, chambers: 378, span: [0, 1], note: "with the Kazanów inter-level: Warszawa, the museum, the health resort, the lift up", pl: "z międzypoziomem Kazanów: komora Warszawa, muzeum, uzdrowisko, winda na powierzchnię" },
   { id: "IV", name: "Grunwald", depth: 170.3, chambers: 512, span: [0, 0.95], note: "kept as a stable support; not open to visitors", pl: "pozostawiony jako stabilna podpora, niedostępny dla zwiedzających" },

@@ -49,7 +49,18 @@ const CSS = `
 #mine-info details { margin-top: 4px; color: #b9ae98; }
 #mine-info details a { color: #e7c98a; }
 #mine-info summary { cursor: pointer; }
-@media (max-width: 640px) { #mine-panel { right: 6px; padding: 6px 4px; } #mine-panel button { padding: 3px 6px; } #mine-info { left: 6px; right: 6px; max-width: none; bottom: 40px; } }
+#mine-panel .s { display: none; }
+#mine-info .hint { display: none; }
+@media (max-width: 640px) {
+  #mine-panel { right: 6px; top: 46%; padding: 6px 3px; gap: 1px; }
+  #mine-panel h3 { font-size: 9px; margin: 0 2px 3px; text-align: center; }
+  #mine-panel button { padding: 4px 7px; justify-content: center; }
+  #mine-panel .l, #mine-panel .d { display: none; }
+  #mine-panel .s { display: inline; }
+  #mine-info { left: 6px; right: 64px; max-width: none; top: 10px; bottom: auto; padding: 8px 10px; cursor: pointer; max-height: 60vh; overflow: auto; }
+  #mine-info:not(.open) .more { display: none; }
+  #mine-info .hint { display: inline; color: #b9ae98; }
+}
 `;
 
 export class Mine {
@@ -58,7 +69,9 @@ export class Mine {
   private items = new Map<string, Promise<Item>>();
   private buttons: HTMLButtonElement[] = [];
   private info: HTMLElement;
-  private fade = 0; // 0 surface … 1 underground, eased
+  /** opacities eased towards their targets each frame (draw): the levels' layers and the surface */
+  private shown = new Map<string, { item: Item; now: number }>();
+  private surface = 1;
   underground = false;
 
   constructor(private data: MineData, private host: MineHost) {
@@ -69,13 +82,14 @@ export class Mine {
     panel.id = "mine-panel";
     panel.setAttribute("aria-label", "Poziomy kopalni soli");
     panel.innerHTML = `<h3>Kopalnia</h3>`;
-    const entries = [{ label: "Powierzchnia", depth: "0 m" }, ...data.levels.map((l) => ({
+    const entries = [{ label: "Powierzchnia", short: "0", depth: "0 m" }, ...data.levels.map((l) => ({
       label: l.historic ? "I · plan z 1645 r." : `${LEVEL_NAMES_PL[l.id] ?? l.id}${l.name ? ` · ${l.name}` : ""}`,
+      short: l.historic ? "1645" : l.id,
       depth: l.historic ? "" : `${Math.round(l.tourist ?? l.depth)} m`,
     }))];
     entries.forEach((e, i) => {
       const b = document.createElement("button");
-      b.innerHTML = `<span>${e.label}</span><span class="d">${e.depth}</span>`;
+      b.innerHTML = `<span class="l">${e.label}</span><span class="s">${e.short}</span><span class="d">${e.depth}</span>`;
       b.title = !i ? "Miasto" : data.levels[i - 1].historic ? "Poziom I na planie Hondiusa z 1645 r." : `Poziom ${data.levels[i - 1].id}: ${Math.round(data.levels[i - 1].depth)} m pod nadszybiem szybu św. Kingi`;
       b.addEventListener("click", () => this.go(i));
       panel.appendChild(b);
@@ -85,6 +99,7 @@ export class Mine {
     this.info = document.createElement("aside");
     this.info.id = "mine-info";
     this.info.hidden = true;
+    this.info.addEventListener("click", (e) => { if (!(e.target as HTMLElement).closest("a, details")) this.info.classList.toggle("open"); });
     document.getElementById("map")!.appendChild(this.info);
     window.addEventListener("keydown", (e) => {
       if (e.key === "PageDown") { e.preventDefault(); this.go(Math.min(this.data.levels.length, this.at + 1)); }
@@ -105,10 +120,9 @@ export class Mine {
     this.at = i;
     this.underground = i > 0;
     this.buttons.forEach((b, k) => b.setAttribute("aria-pressed", String(k === i)));
-    // show the chosen level's layer, hide the others (already loaded ones only)
-    for (const [id, item] of this.items) item.then((it) => it.setOpacity(this.data.levels[i - 1]?.id === id ? 1 : 0));
-    if (i) this.layer(i).then((it) => { if (this.at === i) it.setOpacity(1); });
-    this.host.dimSurface(i ? 0.18 : 1);
+    // the chosen level's layer fades in, the others out (draw eases them), the surface dims below ground
+    if (i) { const id = this.data.levels[i - 1].id; this.layer(i).then((item) => { if (!this.shown.has(id)) this.shown.set(id, { item, now: 0 }); }); }
+    if (first) { this.surface = i ? 0.18 : 1; this.host.dimSurface(this.surface); }
     if (!first) {
       const u = new URL(location.href);
       if (i) u.searchParams.set("poziom", this.data.levels[i - 1].id); else u.searchParams.delete("poziom");
@@ -125,24 +139,31 @@ export class Mine {
     if (l.historic) {
       const h = this.data.sources.hondius;
       this.info.innerHTML = `
-        <b>Poziom I na planie z 1645 r.</b>, rytowanym przez Willema Hondiusa według pomiarów Marcina Germana z 1638 r. (<a href="${h?.url ?? "#"}" target="_blank" rel="noopener">Wikimedia Commons</a>, domena publiczna).
+        <b>Poziom I na planie z 1645 r.</b> <span class="hint">▸</span><span class="more">, rytowanym przez Willema Hondiusa według pomiarów Marcina Germana z 1638 r. (<a href="${h?.url ?? "#"}" target="_blank" rel="noopener">Wikimedia Commons</a>, domena publiczna).
         <br>Plan jest dopasowany do trzech szybów, które istnieją do dziś: Regis, Daniłowicza i Górsko. Rozbieżność wynosi ${l.fit ? `${Math.round(Math.min(...l.fit.residuals))}–${Math.round(Math.max(...l.fit.residuals))}` : "kilka"} m. Na oryginale północ jest na dole, dlatego napisy są do góry nogami. Szyby oznaczone ≈ już nie istnieją, ich położenie wynika z planu.
-        <small>Niezależny projekt, niezwiązany z Kopalnią Soli „Wieliczka” S.A.</small>`;
+        <small>Niezależny projekt, niezwiązany z Kopalnią Soli „Wieliczka” S.A.</small></span>`;
       this.info.hidden = false;
       return;
     }
     this.info.innerHTML = `
-      <b>Poziom ${LEVEL_NAMES_PL[l.id] ?? l.id}${l.name ? ` „${l.name}”` : ""}</b> · ${Math.round(l.depth)} m pod nadszybiem szybu św. Kingi${l.tourist ? ` (${l.tourist} m według kopalni)` : ""}
+      <b>Poziom ${LEVEL_NAMES_PL[l.id] ?? l.id}${l.name ? ` „${l.name}”` : ""}</b> · ${Math.round(l.depth)} m <span class="hint">▸</span><span class="more">pod nadszybiem szybu św. Kingi${l.tourist ? ` (${l.tourist} m według kopalni)` : ""}
       <br>${l.chambers} komór według publikacji${named ? `, ${named} nazwanych na mapie` : ""}. ${l.note.replace(/^./, (c) => c.toUpperCase())}.
       <div class="legend"><span><i></i>znane (OSM)</span><span><i class="a"></i>położenie orientacyjne</span><span><i class="i"></i>ilustracja</span></div>
       <small>Widok poglądowy, nie do nawigacji. Głębokości poziomów, liczby komór i kolejność komór na trasach pochodzą z otwartych źródeł. Położenie komór jest orientacyjne. Pozostałe chodniki i komory są ilustracją, nie planem kopalni. Niezależny projekt, niezwiązany z Kopalnią Soli „Wieliczka” S.A.</small>
-      <details><summary>Źródła</summary><ul>${src}</ul></details>`;
+      <details><summary>Źródła</summary><ul>${src}</ul></details></span>`;
     this.info.hidden = false;
   }
 
   /** labels of the current level on the overlay canvas; `px`: screen px per art px */
   draw(ctx: CanvasRenderingContext2D, toScreen: (x: number, y: number) => [number, number], px: number, dpr: number, [x0, y0, x1, y1]: number[]) {
-    this.fade += ((this.underground ? 1 : 0) - this.fade) * 0.2;
+    const ease = (now: number, to: number) => (Math.abs(to - now) < 0.01 ? to : now + (to - now) * 0.18);
+    const want = this.at ? this.data.levels[this.at - 1].id : null;
+    for (const [id, s] of this.shown) {
+      const to = id === want ? 1 : 0, next = ease(s.now, to);
+      if (next !== s.now) { s.now = next; s.item.setOpacity(next); }
+    }
+    const dim = ease(this.surface, this.at ? 0.18 : 1);
+    if (dim !== this.surface) { this.surface = dim; this.host.dimSurface(dim); }
     if (!this.at || px < 0.06) return;
     const l = this.data.levels[this.at - 1], m = this.host.enu2px;
     ctx.save();

@@ -19,7 +19,7 @@ const FLOOR = "#a7a090", FLOOR_ILL = "#b7b2a6";
 const ROOM: Record<string, string> = {
   chamber: "#b2ab9b", hall: "#bcb4a2", chapel: "#d8cfb9", museum: "#c3b598", podszybie: "#a29b8b", grotto: "#c8d4d8", lake: "#b2ab9b",
 };
-const ROCK = "#5e5a52";
+const ROCK = "#4f4b45";
 const EDGE = "#d4ccbb";
 
 let noiseTile: HTMLCanvasElement | null = null;
@@ -144,8 +144,6 @@ export function drawMineFloor(ctx: CanvasRenderingContext2D, feats: MineFeature[
     line(ctx, f.l!); ctx.strokeStyle = "#a58861"; ctx.lineWidth = 1.8; ctx.stroke();
     ctx.setLineDash([0.08, 0.5]); line(ctx, f.l!); ctx.strokeStyle = "rgba(70,50,30,0.55)"; ctx.lineWidth = 1.8; ctx.stroke(); ctx.setLineDash([]);
   }
-  // the reserve's boundary (GDOŚ via OSM)
-  for (const f of of("mzone")) { path(ctx, f.r!); ctx.setLineDash([3, 2]); ctx.strokeStyle = "rgba(90,150,175,0.9)"; ctx.lineWidth = 0.6; ctx.stroke(); ctx.setLineDash([]); }
   // shafts: a dark pit in a timber collar
   for (const f of of("mshaft")) {
     const [[x, y]] = f.l!, r = f.w!;
@@ -170,14 +168,14 @@ export function drawMineCap(ctx: CanvasRenderingContext2D, feats: MineFeature[],
   if (feats.some((f) => f.k === "mimg")) return; // an old plan has no rock over it: all transparent
   ctx.fillStyle = ROCK; ctx.fillRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
   ctx.save(); ctx.globalCompositeOperation = "multiply"; texture(ctx, rect, mpt, 0.2); ctx.restore();
-  // strata: faint wavy bands along the deposit (roughly east–west), every 7 m
-  ctx.lineWidth = 1.6;
-  for (let y = Math.floor(rect[1] / 7) * 7 - 7; y < rect[3] + 7; y += 7) {
-    const k = Math.round(y / 7);
-    ctx.strokeStyle = k % 3 === 0 ? "rgba(255,250,235,0.06)" : "rgba(15,14,10,0.08)";
+  // strata: faint wavy bands along the deposit (roughly east–west), 5–11 m apart
+  for (let y = Math.floor(rect[1] / 8) * 8 - 8; y < rect[3] + 8; y += 8) {
+    const k = Math.round(y / 8), j = Math.abs(Math.sin(k * 12.9898) * 43758.5453) % 1;
+    ctx.lineWidth = 0.8 + j * 1.8;
+    ctx.strokeStyle = j < 0.3 ? "rgba(255,250,235,0.045)" : "rgba(10,9,6,0.07)";
     ctx.beginPath();
     for (let i = 0, x = rect[0] - 6; x <= rect[2] + 6; i++, x += 4) {
-      const yy = y + 2.2 * Math.sin(x / 37 + k * 1.7) + 1.1 * Math.sin(x / 11 + k);
+      const yy = y + (j - 0.5) * 6 + 2.6 * Math.sin(x / 53 + k * 1.7) + 0.9 * Math.sin(x / 17 + k);
       if (i) ctx.lineTo(x, yy); else ctx.moveTo(x, yy);
     }
     ctx.stroke();
@@ -200,6 +198,11 @@ export function drawMineCap(ctx: CanvasRenderingContext2D, feats: MineFeature[],
       }
       ctx.setLineDash(dash); ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
     }
+  }
+  // the underground reserve's boundary (GDOŚ via OSM), on the cut rock: a protected block, not a void
+  for (const f of feats.filter((q) => q.k === "mzone")) {
+    path(ctx, f.r!); ctx.fillStyle = "rgba(110,170,190,0.10)"; ctx.fill("evenodd");
+    ctx.setLineDash([3, 2]); ctx.strokeStyle = "rgba(130,190,210,0.9)"; ctx.lineWidth = 0.7; ctx.stroke();
   }
   ctx.setLineDash([]);
 }
