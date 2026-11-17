@@ -5,7 +5,8 @@
  *   npm -w pipeline run scene -- tlv-core
  *
  * Sources per region (places.ts `sources`): Tel Aviv-Yafo municipal buildings + canopy ("tlv"),
- * LGL LoD2 buildings + nDOM1 tree crowns ("lgl"), else OSM buildings + trees. Regions with look
+ * LGL LoD2 buildings + nDOM1 tree crowns ("lgl"), GUGiK LoD2/LoD1 buildings (with BDOT10k and OSM outlines of
+ * those they lack) + NMPT crowns ("gugik"), else OSM buildings + trees. Regions with look
  * "styled" also take roof/facade looks, tall towers and landmarks from OSM, and get tunnel portals
  * and bridge models.
  *
@@ -25,7 +26,7 @@ import { ARCADES, arcade, LOOKS, PLACED, type Piece, type Rings, STRUCTURES, typ
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
 import { deckHeight } from "./bridges.ts";
-import { foliageSeen, fromPuwg, gugikBuildings, gugikNdom, toPuwg } from "./gugik.ts";
+import { foliageSeen, fromPuwg, gugikBuildings, gugikNdom, type OsmOutline, toPuwg } from "./gugik.ts";
 import { lod2Files, rasterSampler } from "./lgl.ts";
 import { alkisKind, type Lod2Building, parseLod2 } from "./lod2.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
@@ -377,7 +378,15 @@ if (LOD2) {
     process.stdout.write("\n");
     ndom = (await rasterSampler("ndom1", box)).px;
   } else {
-    meshes.push(...await gugikBuildings(region.teryt ?? [], box, GEOID));
+    // OSM outlines (fetch.ts osm-buildings.json): closed outer rings
+    const outlines: OsmOutline[] = [], file = join(raw, "osm-buildings.json");
+    if (existsSync(file)) for (const el of readJson(file).elements) {
+      const rings = el.type === "way" ? [el.geometry] : (el.members ?? []).filter((m: any) => m.role === "outer").map((m: any) => m.geometry);
+      for (const g of rings) if (g?.length >= 4 && g[0].lat === g.at(-1).lat && g[0].lon === g.at(-1).lon)
+        outlines.push({ id: `osm-${el.type}-${el.id}`, ring: g.map((q: any) => [q.lat, q.lon]), tags: el.tags ?? {} });
+    }
+    else console.log(`  no ${file}: run fetch for the OSM outlines of buildings the 3D models lack`);
+    meshes.push(...await gugikBuildings(region.teryt ?? [], box, GEOID, outlines));
     ndom = gugikNdom(box);
     toXy = toPuwg; fromXy = fromPuwg;
   }

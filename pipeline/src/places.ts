@@ -60,8 +60,9 @@ export interface Region {
    * Where buildings, trees and terrain come from beyond OSM (data only; how they are drawn is `look`):
    *   "tlv"  Tel Aviv-Yafo municipal GIS (buildings + canopy), Copernicus GLO-30 terrain
    *   "lgl"  LGL Baden-Württemberg open data: LoD2 buildings, nDOM1 tree crowns, DGM1 terrain
-   *   "gugik" GUGiK (Poland) open data: LoD2 + LoD1 2024 buildings with their BDOT10k function, tree crowns
-   *          from NMPT − NMT, NMT terrain (gugik.ts; the powiats in `teryt`)
+   *   "gugik" GUGiK (Poland) open data: LoD2 + LoD1 2024 buildings with their BDOT10k function, the buildings
+   *          they lack from BDOT10k and OSM outlines (roofs fitted to the NMPT: fitroof.ts), tree crowns from
+   *          NMPT − NMT, NMT terrain (gugik.ts; the powiats in `teryt`)
    *   unset  OSM buildings and trees, Copernicus GLO-30 terrain
    */
   sources?: "tlv" | "lgl" | "gugik";
@@ -166,7 +167,7 @@ export const REGIONS: Record<string, Region> = {
     municipalities: ["Wieliczka"],
     credits: [
       "Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK)",
-      "Buildings: GUGiK 3D models, BDOT10k · Roofs: GUGiK orthophoto · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Trees: GUGiK NMPT",
+      "Buildings: GUGiK 3D models, BDOT10k, OSM · Roofs: GUGiK orthophoto · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Trees: GUGiK NMPT",
     ],
     osmExtract: "https://download.geofabrik.de/europe/poland/malopolskie-latest.osm.pbf",
     geoidM: 39.6, // EGM2008 at Rynek Górny (GeographicLib GeoidEval: 39.574 m)

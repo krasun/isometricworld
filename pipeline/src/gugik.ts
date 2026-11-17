@@ -20,7 +20,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
-import { type BuildingKind, type Lod2Building, parseLod2 } from "./lod2.ts";
+import { fitBuilding, type Heights } from "./fitroof.ts";
+import { type BuildingKind, type Lod2Building, type Lod2Source, meshOf, parseLod2 } from "./lod2.ts";
 import { boxTouchesOutline } from "./outline.ts";
 import { RAW } from "./paths.ts";
 import { fromTm, type Tm, toTm } from "./utm.ts";
@@ -117,19 +118,22 @@ function bdotKind(general: string, main: string): BuildingKind {
 
 /** A BDOT10k building: [kind, existence (eksploatowany, w budowie, nieczynny, zniszczony), storeys above ground
  *  (liczbaKondygnacji; 0 unknown), main function (przewazajacaFunkcjaBudynku), all its functions
- *  (funkcjaSzczegolowaBudynku, "|"-joined: a home with a shop)]. */
-type BdotBuilding = [BuildingKind, string, number, string, string];
-/** BDOT10k id -> BdotBuilding, cached per powiat (a cache from before the storeys is rebuilt). */
+ *  (funkcjaSzczegolowaBudynku, "|"-joined: a home with a shop), its outline (PUWG 1992 easting, northing pairs,
+ *  without the closing vertex; the posList is easting first, checked against the 3D models)]. */
+type BdotBuilding = [BuildingKind, string, number, string, string, number[]];
+/** BDOT10k id -> BdotBuilding, cached per powiat (a cache from before the outlines is rebuilt). */
 function bdotBuildings(t: string): Map<string, BdotBuilding> {
   const cache = join(DIR, `bdot10k-${t}.buildings.json`);
-  const old = existsSync(cache) && (Object.values(JSON.parse(readFileSync(cache, "utf8")))[0] as unknown[] | undefined)?.length !== 5;
+  const old = existsSync(cache) && (Object.values(JSON.parse(readFileSync(cache, "utf8")))[0] as unknown[] | undefined)?.length !== 6;
   if (!existsSync(cache) || old) {
     const zip = zipOf("bdot10k", t), out: Record<string, BdotBuilding> = {};
     for (const m of members(zip, /OT_BUBD_A\.xml$/)) {
       for (const [b] of unzipOne(zip, m).matchAll(/<ot:OT_BUBD_A [\s\S]*?<\/ot:OT_BUBD_A>/g)) {
         const tag = (k: string) => new RegExp(`<ot:${k}>([^<]*)<`).exec(b)?.[1] ?? "";
         const main = tag("przewazajacaFunkcjaBudynku"), all = [...b.matchAll(/<ot:funkcjaSzczegolowaBudynku>([^<]*)</g)].map((m) => m[1]);
-        out[tag("lokalnyId")] = [bdotKind(tag("funkcjaOgolnaBudynku"), main), tag("kategoriaIstnienia"), parseInt(tag("liczbaKondygnacji")) || 0, main, all.join("|")];
+        const ring = (/<gml:exterior>[\s\S]*?<gml:posList[^>]*>([^<]+)</.exec(b)?.[1] ?? "").trim().split(/\s+/).map(Number).slice(0, -2);
+        out[tag("lokalnyId")] = [bdotKind(tag("funkcjaOgolnaBudynku"), main), tag("kategoriaIstnienia"), parseInt(tag("liczbaKondygnacji")) || 0, main, all.join("|"),
+          ring.length >= 6 && ring.every(Number.isFinite) ? ring : []];
       }
     }
     writeFileSync(cache, JSON.stringify(out));
@@ -143,17 +147,23 @@ const bdotId = (b: Lod2Building) => b.id.replace(/^ID-\d+-/, "");
 /** Median LoD1 − LoD2 ground height of matching buildings when there are too few (central Wieliczka sheet). */
 const KRON86_DEFAULT = 0.26;
 
+/** An OSM building outline ([lat, lon] ring) and its tags: buildings the 3D models and BDOT10k lack. */
+export type OsmOutline = { id: string; ring: Array<[number, number]>; tags: Record<string, string> };
+
 /**
- * The buildings of an area: LoD2 meshes, shifted from Kronsztadt 86 onto EVRF2007, plus LoD1 2024 prisms of
- * buildings LoD2 does not have (built since); LoD2 buildings that are gone by 2024 are dropped. Each gets its
- * kind from BDOT10k. `geoid` turns EVRF2007 into ellipsoid heights.
+ * The buildings of an area: LoD2 meshes, shifted from Kronsztadt 86 onto EVRF2007, plus LoD1 2024 buildings
+ * LoD2 does not have (built since); LoD2 buildings that are gone by 2024 are dropped. Each gets its kind from
+ * BDOT10k. Buildings neither model has (built after the 2024 release, or never modelled: new estates, garages)
+ * come from their BDOT10k outline, else from OSM's (`osm`), where the surface model shows a roof on them; their
+ * roofs, and the LoD1 prisms' flat tops, are fitted to the surface model (fitroof.ts). `geoid` turns EVRF2007
+ * into ellipsoid heights.
  */
-export async function gugikBuildings(teryt: string[], bbox: number[], geoid: number): Promise<Lod2Building[]> {
-  const lod2: Lod2Building[] = [], lod1: Lod2Building[] = [], bdot = new Map<string, BdotBuilding>();
+export async function gugikBuildings(teryt: string[], bbox: number[], geoid: number, osm: OsmOutline[] = []): Promise<Lod2Building[]> {
+  const lod2: Lod2Building[] = [], lod1: Lod2Building[] = [], bdot = new Map<string, BdotBuilding>(), powiat = new Map<string, string>();
   for (const t of teryt) {
     for (const xml of sheets("lod2", t, bbox)) lod2.push(...parseLod2(xml, bbox, geoid, { toLatLon: fromPuwg }));
     for (const xml of sheets("lod1", t, bbox)) lod1.push(...parseLod2(xml, bbox, geoid, { toLatLon: fromPuwg, lod1: true }));
-    for (const [k, v] of bdotBuildings(t)) bdot.set(k, v);
+    for (const [k, v] of bdotBuildings(t)) { bdot.set(k, v); powiat.set(k, t); }
   }
   // Kronsztadt 86 -> EVRF2007: the median difference of the ground under the same building in both models
   const base1 = new Map(lod1.map((b) => [bdotId(b), b.base]));
@@ -190,6 +200,7 @@ export async function gugikBuildings(teryt: string[], bbox: number[], geoid: num
   }
   console.log(`  gugik: ${kept.length}/${lod2.length} LoD2 buildings (+${dz.toFixed(2)} m Kronsztadt 86 -> EVRF2007, from ${d.length}), `
     + `${fresh.length} LoD1 2024 only; ${known}/${out.length} with a BDOT10k function`);
+  out.push(...missingBuildings(out, fresh, bdot, powiat, osm, bbox, geoid));
   // each roof's colour from the orthophoto, where it has been downloaded (chunk by chunk: sorted by chunk)
   const ortho = new Ortho(), chunkOf = (b: Lod2Building) => b.xy[0]?.[0] ? orthoKey(b.xy[0][0][0], b.xy[0][0][1]) : "";
   let coloured = 0;
@@ -201,6 +212,113 @@ export async function gugikBuildings(teryt: string[], bbox: number[], geoid: num
   }
   if (ortho.chunks.size) console.log(`  orthophoto roof colours: ${coloured}/${out.length}`);
   return out;
+}
+
+// ---- buildings the 3D models lack ------------------------------------------------------------------------
+const PUWG_SOURCE: Lod2Source = { toLatLon: fromPuwg };
+/** How high a building can plausibly rise above its lowest ground (m): more is a tree over it (fitroof.ts). */
+const capOf = (kind: BuildingKind, storeys: number) =>
+  storeys ? storeys * 3.4 + 6 : kind === "small" ? 6 : kind === "other" ? 16 : 45;
+
+/** What an OSM building tag says about the building, in BDOT10k's terms (kind, main function: façades). */
+function osmKind(t: Record<string, string>): [BuildingKind, string] {
+  const b = t.building;
+  if (/^(garage|garages)$/.test(b)) return ["small", "garaż"];
+  if (/^(shed|hut|cabin|farm_auxiliary|barn|stable|cowshed|sty|outbuilding|allotment_house|service|kiosk|toilets)$/.test(b)) return ["small", "budynek gospodarczy"];
+  if (b === "greenhouse") return ["small", ""];
+  if (/^(church|chapel|cathedral|religious|shrine|monastery)$/.test(b)) return ["church", ""];
+  if (/^(retail|supermarket|commercial|office|hotel)$/.test(b)) return ["commercial", b === "supermarket" ? "hipermarket lub supermarket" : ""];
+  if (/^(industrial|warehouse|factory|manufacture|hangar)$/.test(b)) return ["industrial", b === "warehouse" ? "magazyn" : ""];
+  if (/^(school|kindergarten|university|college|hospital|public|civic|government|fire_station|train_station|townhall)$/.test(b)) return ["public", ""];
+  if (b === "apartments") return ["other", "budynek wielorodzinny"];
+  if (/^(house|detached|semidetached_house|terrace|residential|bungalow)$/.test(b)) return ["other", "budynek jednorodzinny"];
+  return ["other", ""];
+}
+/** OSM buildings that are not a closed building: roofs on posts, ruins, ones that are gone or underground. */
+const notABuilding = (t: Record<string, string>) =>
+  /^(no|roof|carport|ruins|collapsed|demolished|destroyed|bridge)$/.test(t.building) || t.location === "underground" || Number(t.layer) < 0;
+
+const boxOf = (r: P2[]) => [Math.min(...r.map((p) => p[0])), Math.min(...r.map((p) => p[1])), Math.max(...r.map((p) => p[0])), Math.max(...r.map((p) => p[1]))];
+/** Footprints (PUWG 1992) on a 64 m grid: how much of a new outline they already cover. */
+class Footprints {
+  private cells = new Map<number, Array<{ r: P2[]; b: number[] }>>();
+  private range(b: number[], f: (k: number) => void) {
+    for (let i = Math.floor(b[0] / 64); i <= Math.floor(b[2] / 64); i++) for (let j = Math.floor(b[1] / 64); j <= Math.floor(b[3] / 64); j++) f(i * 100003 + j);
+  }
+  add(r: P2[]) {
+    const item = { r, b: boxOf(r) };
+    this.range(item.b, (k) => { if (!this.cells.has(k)) this.cells.set(k, []); this.cells.get(k)!.push(item); });
+  }
+  /** share of the outline (sampled on a grid of ~200 points) inside the footprints */
+  covered(r: P2[]): number {
+    const b = boxOf(r), near = new Set<{ r: P2[]; b: number[] }>();
+    this.range(b, (k) => { for (const it of this.cells.get(k) ?? []) if (touches(it.b, b)) near.add(it); });
+    if (!near.size) return 0;
+    const step = Math.max(0.5, Math.sqrt(Math.abs(area(r)) / 200));
+    let n = 0, hit = 0;
+    for (let x = b[0] + step / 2; x < b[2]; x += step) for (let y = b[1] + step / 2; y < b[3]; y += step) {
+      if (!inside([x, y], r)) continue;
+      n++;
+      for (const it of near) if (inside([x, y], it.r)) { hit++; break; }
+    }
+    if (!n) { const c = centre(r); return [...near].some((it) => inside(c, it.r)) ? 1 : 0; }
+    return hit / n;
+  }
+}
+
+/**
+ * Buildings the 3D models lack, and the LoD1 2024 prisms' roofs (edited in place): see gugikBuildings. A new
+ * outline must not lie over 30 % inside a building already there (BDOT10k outlines go first, then OSM's).
+ */
+function missingBuildings(out: Lod2Building[], fresh: Lod2Building[], bdot: Map<string, BdotBuilding>, powiat: Map<string, string>,
+  osm: OsmOutline[], bbox: number[], geoid: number): Lod2Building[] {
+  const surface = gugikSurface(bbox), terrain = gugikTerrain(bbox);
+  const heights: Heights = { surface, terrain: terrain.at };
+  const shapes: Record<string, number> = {};
+  const build = (id: string, ring: P2[], cap: number) => {
+    const f = fitBuilding(ring, heights, cap);
+    if (!f) return null;
+    const c = centre(ring), m = meshOf(id, "", f.roofType, [], f.surfaces, fromPuwg(c[0], c[1]), geoid, PUWG_SOURCE);
+    if (m) shapes[f.shape] = (shapes[f.shape] ?? 0) + 1;
+    return m;
+  };
+  // the LoD1 prisms: the same outline with a fitted roof (kept as they are where the surface model sees none)
+  let refitted = 0;
+  for (const b of fresh) {
+    if (!b.xy.length) continue;
+    const ring = b.xy.reduce((x, y) => (Math.abs(area(y)) > Math.abs(area(x)) ? y : x));
+    const m = build(b.id, ring, capOf(b.kind ?? "other", b.storeys ?? 0));
+    if (!m) continue;
+    Object.assign(b, { roofType: m.roofType, height: m.height, base: m.base, roof: m.roof, wall: m.wall, footprint: m.footprint });
+    refitted++;
+  }
+  const index = new Footprints(), have = new Set(out.map(bdotId)), box = projected(bbox), added: Lod2Building[] = [];
+  for (const b of out) for (const r of b.xy) index.add(r);
+  const inBox = (r: P2[]) => { const c = centre(r); return c[0] >= box[0] && c[0] <= box[2] && c[1] >= box[1] && c[1] <= box[3]; };
+  let fromBdot = 0, fromOsm = 0, unseen = 0;
+  for (const [id, [kind, state, storeys, use, uses, flat]] of bdot) {
+    if (have.has(id) || state === "zniszczony" || flat.length < 6) continue;
+    const ring: P2[] = [];
+    for (let i = 0; i + 1 < flat.length; i += 2) ring.push([flat[i], flat[i + 1]]);
+    if (!inBox(ring) || index.covered(ring) > 0.3) continue;
+    const m = build(`ID-${powiat.get(id)}-${id}`, ring, capOf(kind, storeys));
+    if (!m) { unseen++; continue; }
+    Object.assign(m, { kind, ...(storeys ? { storeys } : {}), ...(use ? { use } : {}), ...(uses ? { uses: uses.split("|") } : {}) });
+    added.push(m); index.add(ring); fromBdot++;
+  }
+  for (const o of osm) {
+    if (notABuilding(o.tags)) continue;
+    const ring = o.ring.map(([la, lo]) => toPuwg(la, lo));
+    if (ring.length < 4 || !inBox(ring) || index.covered(ring) > 0.3) continue;
+    const [kind, use] = osmKind(o.tags), storeys = parseInt(o.tags["building:levels"]) || 0;
+    const m = build(o.id, ring, capOf(kind, storeys));
+    if (!m) { unseen++; continue; }
+    Object.assign(m, { kind, ...(storeys ? { storeys } : {}), ...(use ? { use, uses: [use] } : {}) });
+    added.push(m); index.add(ring); fromOsm++;
+  }
+  console.log(`  missing buildings: +${fromBdot} BDOT10k, +${fromOsm} OSM outlines (${unseen} without a roof in the surface model); `
+    + `${refitted}/${fresh.length} LoD1 roofs fitted; shapes ${Object.entries(shapes).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+  return added;
 }
 
 // ---- orthophoto: each roof's real colour --------------------------------------------------------------
@@ -478,11 +596,17 @@ function decode(model: Model, asc: string): Grid {
   return g;
 }
 
-/** The decoded sheets of a model touching a bbox (lat/lon). */
+/** The decoded sheets of a model touching a bbox (lat/lon); each sheet is decoded once per run. */
+const decoded = new Map<string, Grid>();
 function grids(model: Model, bbox: number[]): Grid[] {
   const dir = join(DIR, model), box = projected(bbox);
   if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((f) => f.endsWith(".asc")).map((f) => decode(model, join(dir, f)))
+  const sheet = (f: string) => {
+    const file = join(dir, f);
+    if (!decoded.has(file)) decoded.set(file, decode(model, file));
+    return decoded.get(file)!;
+  };
+  return readdirSync(dir).filter((f) => f.endsWith(".asc")).map(sheet)
     .filter((g) => touches([g.x0, g.y0, g.x0 + g.nx * g.cell, g.y0 + g.ny * g.cell], box));
 }
 
@@ -503,16 +627,26 @@ export function gugikTerrain(bbox: number[]) {
   return { at, atLatLon: (lat: number, lon: number) => at(...toPuwg(lat, lon)) };
 }
 
-/** Normalised surface (nDOM = NMPT − NMT) per 1 m cell with south-west corner (x, y) in PUWG 1992; NaN outside. */
-export function gugikNdom(bbox: number[]) {
-  const surface = grids("nmpt", bbox), terrain = gugikTerrain(bbox);
+/** NMPT surface (EVRF2007 height, the highest of its 0.5 m cells) per 1 m cell with south-west corner (x, y) in
+ *  PUWG 1992; NaN outside. */
+export function gugikSurface(bbox: number[]) {
+  const surface = grids("nmpt", bbox);
   return (x: number, y: number) => {
     for (const g of surface) {
       const i = Math.floor(x) - g.x0, j = Math.floor(y) - g.y0;
       if (i < 0 || j < 0 || i >= g.nx || j >= g.ny) continue;
       const top = g.data[j * g.nx + i];
-      if (Number.isFinite(top)) return top - terrain.at(Math.floor(x) + 0.5, Math.floor(y) + 0.5);
+      if (Number.isFinite(top)) return top;
     }
     return NaN;
+  };
+}
+
+/** Normalised surface (nDOM = NMPT − NMT) per 1 m cell with south-west corner (x, y) in PUWG 1992; NaN outside. */
+export function gugikNdom(bbox: number[]) {
+  const surface = gugikSurface(bbox), terrain = gugikTerrain(bbox);
+  return (x: number, y: number) => {
+    const top = surface(x, y);
+    return Number.isFinite(top) ? top - terrain.at(Math.floor(x) + 0.5, Math.floor(y) + 0.5) : NaN;
   };
 }

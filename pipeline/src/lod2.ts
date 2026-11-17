@@ -109,7 +109,6 @@ function* buildings(xml: string): Generator<string> {
 export function parseLod2(xml: string, bbox: number[], geoid: number, source: Lod2Source = LGL_LOD2): Lod2Building[] {
   const out: Lod2Building[] = [];
   const [S, W, N, E] = bbox;
-  const up = geoid + (source.dz ?? 0);
   for (const b of buildings(xml)) {
     const id = b.match(/gml:id="([^"]+)"/)![1];
     const fn = b.match(/<bldg:function>([^<]*)/)?.[1] ?? "";
@@ -117,7 +116,7 @@ export function parseLod2(xml: string, bbox: number[], geoid: number, source: Lo
     const roofType = b.match(/<bldg:roofType>([^<]*)/)?.[1] ?? "";
     const heights = [...b.matchAll(/<bldg:measuredHeight[^>]*>([^<]*)/g)].map((x) => Number(x[1]));
     // surfaces in projected metres first: the centre test is cheap there, and most of a 1 km file lies outside small areas
-    const surfaces: Array<{ kind: string; rings: number[][] }> = [];
+    const surfaces: Surface[] = [];
     let se = 0, sn = 0, cnt = 0;
     for (const s of b.matchAll(SURF)) {
       for (const p of s[0].matchAll(POLY)) {
@@ -142,48 +141,61 @@ export function parseLod2(xml: string, bbox: number[], geoid: number, source: Lo
     if (!cnt) for (const s of surfaces) for (let i = 0; i < s.rings[0].length; i += 3) { se += s.rings[0][i]; sn += s.rings[0][i + 1]; cnt++; }
     const center = source.toLatLon(se / cnt, sn / cnt);
     if (center[0] < S || center[0] > N || center[1] < W || center[1] > E) continue;
-
-    const toEnu = (e: number, n: number, h: number): V3 => {
-      const [lat, lon] = source.toLatLon(e, n);
-      return ecefToEnu(llhToEcef(lat, lon, h + up));
-    };
-    const roof: number[] = [], wall: number[] = [];
-    let base = Infinity, footprint: P2[] = [], bestArea = 0;
-    const polys = surfaces.map((s) => ({ kind: s.kind, rings: s.rings.map((r) => {
-      const pts: V3[] = [];
-      for (let i = 0; i + 2 < r.length; i += 3) pts.push(toEnu(r[i], r[i + 1], r[i + 2]));
-      if (pts.length > 1 && dist(pts[0], pts[pts.length - 1]) < 1e-3) pts.pop();
-      return pts;
-    }) }));
-    for (const p of polys) for (const v of p.rings[0]) if (p.kind !== "RoofSurface") base = Math.min(base, v[2]);
-    if (!Number.isFinite(base)) base = Math.min(...polys.flatMap((p) => p.rings[0].map((v) => v[2])));
-    for (const p of polys) {
-      if (p.kind === "GroundSurface") {
-        const ring: P2[] = p.rings[0].map((v) => [v[0], v[1]]);
-        const a = Math.abs(THREE.ShapeUtils.area(ring.map(([x, y]) => new THREE.Vector2(x, y))));
-        if (a > bestArea) { bestArea = a; footprint = THREE.ShapeUtils.isClockWise(ring.map(([x, y]) => new THREE.Vector2(x, y))) ? ring.reverse() : ring; }
-        continue;
-      }
-      const tris = triangulate(p.rings);
-      if (!tris) continue;
-      if (p.kind === "RoofSurface") { for (const v of tris.flat()) roof.push(...v); continue; }
-      // walls: facade coordinates = metres along the wall's horizontal direction, metres above the building's base
-      const n = tris.normal, hx = -n[1], hy = n[0], hl = Math.hypot(hx, hy) || 1;
-      const o = p.rings[0][0];
-      for (const v of tris.flat()) wall.push(v[0], v[1], v[2], ((v[0] - o[0]) * hx + (v[1] - o[1]) * hy) / hl + hashAlong(o), v[2] - base);
-    }
-    if (!roof.length && !wall.length) continue;
-    const ground = surfaces.filter((x) => x.kind === "GroundSurface");
-    const xy = (ground.length ? ground : surfaces.filter((x) => x.kind === "RoofSurface")).map((x) => {
-      const r: P2[] = [];
-      for (let i = 0; i + 2 < x.rings[0].length; i += 3) r.push([x.rings[0][i], x.rings[0][i + 1]]);
-      return r;
-    });
-    // measured height (eaves… ridge) if the document has one, else base to the highest point
-    const height = heights.length ? Math.max(0, ...heights) : Math.max(...polys.flatMap((p) => p.rings[0].map((v) => v[2]))) - base;
-    out.push({ id, fn, roofType, height, base, roof, wall, footprint, center, xy });
+    const mesh = meshOf(id, fn, roofType, heights, surfaces, center, geoid, source);
+    if (mesh) out.push(mesh);
   }
   return out;
+}
+
+/** A surface of a building: its kind and rings as flat x, y, z lists in the source's projected metres and heights. */
+export type Surface = { kind: string; rings: number[][] };
+
+/**
+ * One building from its surfaces (parseLod2, or built from a footprint: fitroof.ts): roof and wall triangles in
+ * ENU, its base, footprint and projected outlines; null without a roof or wall. `geoid` as for parseLod2.
+ */
+export function meshOf(id: string, fn: string, roofType: string, heights: number[], surfaces: Surface[], center: [number, number],
+  geoid: number, source: Lod2Source): Lod2Building | null {
+  const up = geoid + (source.dz ?? 0);
+  const toEnu = (e: number, n: number, h: number): V3 => {
+    const [lat, lon] = source.toLatLon(e, n);
+    return ecefToEnu(llhToEcef(lat, lon, h + up));
+  };
+  const roof: number[] = [], wall: number[] = [];
+  let base = Infinity, footprint: P2[] = [], bestArea = 0;
+  const polys = surfaces.map((s) => ({ kind: s.kind, rings: s.rings.map((r) => {
+    const pts: V3[] = [];
+    for (let i = 0; i + 2 < r.length; i += 3) pts.push(toEnu(r[i], r[i + 1], r[i + 2]));
+    if (pts.length > 1 && dist(pts[0], pts[pts.length - 1]) < 1e-3) pts.pop();
+    return pts;
+  }) }));
+  for (const p of polys) for (const v of p.rings[0]) if (p.kind !== "RoofSurface") base = Math.min(base, v[2]);
+  if (!Number.isFinite(base)) base = Math.min(...polys.flatMap((p) => p.rings[0].map((v) => v[2])));
+  for (const p of polys) {
+    if (p.kind === "GroundSurface") {
+      const ring: P2[] = p.rings[0].map((v) => [v[0], v[1]]);
+      const a = Math.abs(THREE.ShapeUtils.area(ring.map(([x, y]) => new THREE.Vector2(x, y))));
+      if (a > bestArea) { bestArea = a; footprint = THREE.ShapeUtils.isClockWise(ring.map(([x, y]) => new THREE.Vector2(x, y))) ? ring.reverse() : ring; }
+      continue;
+    }
+    const tris = triangulate(p.rings);
+    if (!tris) continue;
+    if (p.kind === "RoofSurface") { for (const v of tris.flat()) roof.push(...v); continue; }
+    // walls: facade coordinates = metres along the wall's horizontal direction, metres above the building's base
+    const n = tris.normal, hx = -n[1], hy = n[0], hl = Math.hypot(hx, hy) || 1;
+    const o = p.rings[0][0];
+    for (const v of tris.flat()) wall.push(v[0], v[1], v[2], ((v[0] - o[0]) * hx + (v[1] - o[1]) * hy) / hl + hashAlong(o), v[2] - base);
+  }
+  if (!roof.length && !wall.length) return null;
+  const ground = surfaces.filter((x) => x.kind === "GroundSurface");
+  const xy = (ground.length ? ground : surfaces.filter((x) => x.kind === "RoofSurface")).map((x) => {
+    const r: P2[] = [];
+    for (let i = 0; i + 2 < x.rings[0].length; i += 3) r.push([x.rings[0][i], x.rings[0][i + 1]]);
+    return r;
+  });
+  // measured height (eaves… ridge) if the document has one, else base to the highest point
+  const height = heights.length ? Math.max(0, ...heights) : Math.max(...polys.flatMap((p) => p.rings[0].map((v) => v[2]))) - base;
+  return { id, fn, roofType, height, base, roof, wall, footprint, center, xy };
 }
 
 const dist = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);

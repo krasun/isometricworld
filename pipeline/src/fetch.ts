@@ -9,6 +9,7 @@
  * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage; none where LoD2
  *                                        has the buildings), roof/facade looks + landmarks (styled regions)
  * data/raw/<area>/osm_parts.json         OSM building:parts (Tel Aviv-Yafo: towers on podiums)
+ * data/raw/<area>/osm-buildings.json     every OSM building (sources "gugik": the ones the 3D models and BDOT10k lack)
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
  * data/raw/<area>/rails.json             OSM rail routes (S-Bahn, regional, Stadtbahn…) and their tracks (trains)
  * data/raw/<area>/ground.json            OSM ground surface: roads/paths, landuse, parks, water,
@@ -136,6 +137,16 @@ if (sources === "tlv" && !existsSync(join(dir, "osm_parts.json"))) {
 out body geom;`);
   writeFileSync(join(dir, "osm_parts.json"), JSON.stringify(data));
   console.log(`  osm building parts: ${data.elements.length}`);
+}
+// GUGiK: every building, for those the 3D models and BDOT10k lack (gugik.ts); kept apart from osm.json, which
+// holds what the look takes from OSM
+if (sources === "gugik" && !existsSync(join(dir, "osm-buildings.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(way["building"]${b}; relation["building"]${b};);
+out body geom;`, area.bbox, FILTERS.buildings);
+  writeFileSync(join(dir, "osm-buildings.json"), JSON.stringify(data));
+  console.log(`  osm buildings: ${data.elements.length} elements`);
 }
 if (!existsSync(join(dir, "roads.json"))) {
   const [s, w, n, e] = area.bbox;
