@@ -24,6 +24,7 @@ import { rasterSampler, toUtm } from "./lgl.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
 import { ROAD, isOneway, roadWidth } from "./roadspec.ts";
+import { styleOf } from "./styles.ts";
 
 type P2 = [number, number];
 const MARGIN = 0.02;
@@ -33,7 +34,9 @@ const R_EARTH = 6371000;
  * k: kind (drawn by page/renderer.ts), r: polygon rings (even-odd) or l: polyline,
  * w: line width (m), o: one-way, n: lanes, y: layer (bridges above)
  */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number] }
+/** s: the street's pavements (bit 1 left, 2 right of its direction; unset both), u: the surface (surfaceOf), both
+ *  only with the preset's `streetDetail` */
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; s?: number; u?: string }
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
@@ -42,6 +45,8 @@ const region = REGIONS[area.region];
 const DGM = region.sources === "lgl" || region.sources === "gugik";
 /** Styled look (places.ts `look`): meadows, vineyards, allotments and orchards drawn as their own kinds. */
 const STYLED = region.look === "styled";
+/** Preset `streetDetail`: pavements where OSM maps them, separately mapped ones drawn as such, OSM surfaces. */
+const DETAIL = STYLED && styleOf(region.style).streetDetail;
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
 const GEOID = region.geoidM;
 /** Terrain grid posting (m) and how far past the area it reaches (deg; the render footprint of an edge tile). */
@@ -133,6 +138,32 @@ function fillGrid(rings: P2[][], g: Grid, cb: (i: number) => void) {
 const PATH: Record<string, number> = { pedestrian: 5, footway: 2.2, path: 1.6, cycleway: 2, steps: 2.5, bridleway: 2, corridor: 2 };
 
 const GRASS = /^(grass|dirt|ground|earth|unpaved)$/;
+
+/** A street's pavements from OSM `sidewalk*` tags: bit 1 left, 2 right of its direction ("separate": drawn as its
+ *  own way, "no": none); undefined where OSM says nothing (then both). */
+function sidewalkSides(t: Record<string, string>): number | undefined {
+  const side = (v?: string) => (v === undefined ? undefined : v === "yes");
+  let left = side(t["sidewalk:left"] ?? t["sidewalk:both"]), right = side(t["sidewalk:right"] ?? t["sidewalk:both"]);
+  const s = t.sidewalk;
+  if (s === "both" || s === "yes") { left ??= true; right ??= true; }
+  else if (s === "left") { left ??= true; right ??= false; }
+  else if (s === "right") { left ??= false; right ??= true; }
+  else if (s) { left ??= false; right ??= false; } // no, none, separate
+  if (left === undefined && right === undefined) return undefined;
+  return ((left ?? true) ? 1 : 0) | ((right ?? true) ? 2 : 0);
+}
+
+/** An OSM surface as drawn (asphalt and unknown: undefined, the default). */
+function surfaceOf(s?: string): string | undefined {
+  if (!s) return undefined;
+  if (/^(paving_stones|paving_stones:.*|bricks|interlock|concrete:plates|concrete_slabs)$/.test(s)) return "paving";
+  if (/^(sett|cobblestone|unhewn_cobblestone)$/.test(s)) return "sett";
+  if (/^(gravel|fine_gravel|compacted|pebblestone)$/.test(s)) return "gravel";
+  if (/^(ground|dirt|earth|mud|sand|unpaved)$/.test(s)) return "dirt";
+  if (/^(grass|grass_paver)$/.test(s)) return "grass";
+  if (/^(concrete|concrete:lanes)$/.test(s)) return "concrete";
+  return undefined;
+}
 /**
  * Fields are not all one colour: a shade per field, from its crop where mapped (index into the ground page's
  * FIELD palette: 0 wheat/cereal, 1 maize, 2 grass/hay, 3 vegetables, 4 rapeseed), else from the OSM id (5+).
@@ -189,7 +220,7 @@ const features: Feature[] = [];
 const water: P2[][][] = [];
 const coast: P2[][] = [];
 /** road node id -> how many road ways use it (2+ = junction), widest road there */
-const nodeUse = new Map<number, { n: number; w: number; foot: boolean; y: number; k: string }>();
+const nodeUse = new Map<number, { n: number; w: number; foot: boolean; y: number; k: string; p?: boolean }>();
 const footNodes = new Set<number>();
 const nodePos = new Map<number, [P2, P2, number]>(); // position, a neighbour along the road, road width
 const geom = (g: Array<{ lat: number; lon: number }>) => g.map((q) => toEnu(q.lon, q.lat));
@@ -226,15 +257,21 @@ for (const el of osm.elements) {
       const oneway = isOneway(t);
       const lanes = Number(t.lanes) || 0;
       const w = road ? roadWidth(t) : Number(String(t.width).replace(",", ".")) || path;
-      const kind = road ? (road[1] ? "street" : t.highway.startsWith("motorway") || t.highway.startsWith("trunk") ? "highway" : t.highway === "track" ? "dirtroad" : "lane") : t.highway === "cycleway" ? "cycle" : t.highway === "pedestrian" ? "plaza" : "path";
+      const kind = road ? (road[1] ? "street" : t.highway.startsWith("motorway") || t.highway.startsWith("trunk") ? "highway" : t.highway === "track" ? "dirtroad" : "lane") : t.highway === "cycleway" ? "cycle" : t.highway === "pedestrian" ? "plaza"
+        : DETAIL && t.footway === "sidewalk" ? "sidewalk" : "path";
+      const sides = DETAIL && kind === "street" ? sidewalkSides(t) : undefined;
       if (road && el.nodes) for (const id of el.nodes) {
         const nd = nodeUse.get(id) ?? { n: 0, w: 0, foot: false, y: 0, k: kind };
         nd.n++; nd.y = Math.max(nd.y, layer);
         if (w > nd.w) { nd.w = w; nd.k = kind; }
+        if (DETAIL && kind === "street" && sides !== 0) nd.p = true; // pavements round this corner
         nodeUse.set(id, nd);
       } else if (path && el.nodes && t.highway !== "steps") for (const id of el.nodes) footNodes.add(id);
       if (road && el.nodes) el.geometry.forEach((q: any, k: number) => nodePos.set(el.nodes[k], [toEnu(q.lon, q.lat), k > 0 ? toEnu(el.geometry[k - 1].lon, el.geometry[k - 1].lat) : toEnu(el.geometry[k + 1].lon, el.geometry[k + 1].lat), w]));
       const f: Feature = { k: kind, l, w: r1(w) };
+      if (sides !== undefined) f.s = sides;
+      const surface = DETAIL ? surfaceOf(t.surface) : undefined;
+      if (surface) f.u = surface;
       if (oneway) f.o = 1;
       if (lanes) f.n = lanes;
       if (layer > 0) f.y = layer;
@@ -258,7 +295,8 @@ for (const el of osm.elements) {
   if (k === "water") water.push(r);
 }
 
-/** junction entry: [x, y, radius (half width + 3 m), layer, kind of the widest road] */
+/** junction entry: [x, y, radius (half width + 3 m), layer, kind of the widest road, (streetDetail) 1 if a street
+ *  with pavements meets there] */
 const JUNCTION_KIND = ["dirtroad", "lane", "street", "highway"];
 // Junctions (markings stop there) and zebra crossings (footpath meets a street mid-block).
 const junctions: number[][] = [], zebras: number[][] = [];
@@ -266,7 +304,7 @@ for (const [id, u] of nodeUse) {
   const pos = nodePos.get(id);
   if (!pos) continue;
   const [[x, y], [nx, ny], w] = pos;
-  if (u.n >= 2) junctions.push([r1(x), r1(y), r1(u.w / 2 + 3), u.y, JUNCTION_KIND.indexOf(u.k)]);
+  if (u.n >= 2) junctions.push([r1(x), r1(y), r1(u.w / 2 + 3), u.y, JUNCTION_KIND.indexOf(u.k), ...(DETAIL ? [u.p ? 1 : 0] : [])]);
   else if (footNodes.has(id) && w >= 5) {
     const L = Math.hypot(nx - x, ny - y) || 1;
     zebras.push([r1(x), r1(y), Math.round(((nx - x) / L) * 1000) / 1000, Math.round(((ny - y) / L) * 1000) / 1000, r1(w)]);

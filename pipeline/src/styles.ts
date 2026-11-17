@@ -35,6 +35,13 @@ export interface StylePreset {
    * (page/renderer.ts eaves). null: roofs end at the walls.
    */
   eaves: { overhang: number; verge: number; gutters: boolean } | null;
+  /** Broadleaf trees stand on a trunk (from the ground up into the crown); false: their crowns float (conifers and
+   *  palms always have one). */
+  trunks: boolean;
+  /** Streets as OSM maps them (ground.ts): pavements only where its `sidewalk*` tags put them (default both),
+   *  separately mapped sidewalks drawn as pavement, road and path surfaces (paving, setts, gravel, dirt, grass,
+   *  concrete). false: a pavement along both sides of every street, roads asphalt. */
+  streetDetail: boolean;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -47,7 +54,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -64,6 +71,8 @@ export const STYLES = {
     },
     monumental: ["church"],
     eaves: { overhang: 0.5, verge: 0.3, gutters: true },
+    trunks: true,
+    streetDetail: true,
   },
 } satisfies Record<string, StylePreset>;
 

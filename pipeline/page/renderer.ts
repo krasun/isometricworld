@@ -1184,7 +1184,10 @@ function buildObjects(data: TileObjects) {
       } else {
         m.makeScale(r * sxy, r * sxy, r * sz).setPosition(x, y, g + ch);
         crowns.setMatrixAt(i, m);
-        m.makeScale(0, 0, 0);
+        if (STYLED && STYLE.trunks) { // preset: a trunk up to the crown's middle, thicker under a wider crown
+          const tr = 0.12 + 0.045 * r;
+          m.makeScale(tr, tr, ch).setPosition(x, y, g);
+        } else m.makeScale(0, 0, 0);
         trunks.setMatrixAt(i, m);
       }
       crowns.setColorAt(i, c.setRGB(col[0], col[1], col[2]));

@@ -7,7 +7,8 @@
 
 type P2 = [number, number];
 /** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number] }
+/** s, u: pavement sides and surface (src/ground.ts, preset streetDetail) */
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; s?: number; u?: string }
 interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }
 
 const FILL: Record<string, string> = {
@@ -34,6 +35,9 @@ const SEA = "#2c80b2", SHALLOW = "#4ea6cb";
 const ASPHALT: Record<string, string> = { highway: "#6c7077", street: "#7b7e85", lane: "#8b8d91", dirtroad: "#c3ab82" };
 const PATHS: Record<string, string> = { path: "#ebe5d6", cycle: "#c98e6c", plaza: "#e6e0d4" };
 const SIDEWALK = "#e4ded2", KERB = "#c9c4b9";
+/** OSM surfaces (preset streetDetail): of roads, and of paths and pavements */
+const ROAD_SURFACE: Record<string, string> = { paving: "#a9a49b", sett: "#988e83", gravel: "#cdbd98", dirt: "#c3ab82", grass: "#a6c27a", concrete: "#a9a9a6" };
+const PATH_SURFACE: Record<string, string> = { paving: "#e3dccf", sett: "#d0c7b9", gravel: "#ddd0b4", dirt: "#d6c4a0", grass: "#b9d58c", concrete: "#dddcd7" };
 const SHADOW_DIR: P2 = [0.84, 0.54]; // away from the renderer's sun (-0.55, -0.35, 0.76)
 
 export function drawGround(
@@ -170,7 +174,10 @@ export function drawGround(
   void ground;
 
   // 4. paths and plazas, then pavements under streets
-  for (const f of [...of("path"), ...of("plaza"), ...of("cycle")]) stroke(f.l!, f.w!, PATHS[f.k]);
+  for (const f of [...of("path"), ...of("plaza"), ...of("cycle")]) stroke(f.l!, f.w!, (f.u && PATH_SURFACE[f.u]) || PATHS[f.k]);
+  // pavements OSM maps as their own ways: a kerbed strip
+  for (const f of of("sidewalk")) stroke(f.l!, f.w! + 0.3, KERB);
+  for (const f of of("sidewalk")) stroke(f.l!, f.w!, (f.u && PATH_SURFACE[f.u]) || SIDEWALK);
   for (const f of of("pier")) stroke(f.l!, f.w!, "#d8d2c4");
   // Roads have butt ends: a round cap on a bridge end or a wide road's end bulges over whatever it
   // meets. Joins between ways are filled by junction disks instead, drawn in the junction's layer.
@@ -194,12 +201,17 @@ export function drawGround(
       for (const f of rs) stroke(f.l!, f.w! + 2.4, "#e2ddd2");
     }
     const streets = rs.filter((f) => f.k === "street");
-    for (const f of streets) stroke(f.l!, f.w! + 6, KERB);
-    const streetJs = layer === 0 ? js.filter((j) => CLASS[j[4]] === "street") : []; // pavements round street corners
+    // pavements: both sides, or the sides OSM puts them on (s: bit 1 left, 2 right; 0 none)
+    const sides = (f: Feature, w: number, c: string) => {
+      if (f.s === undefined) stroke(f.l!, f.w! + 2 * w, c);
+      else for (const [bit, side] of [[1, 1], [2, -1]]) if (f.s & bit) stroke(offset(f.l!, side * (f.w! / 2 + w / 2)), w, c);
+    };
+    for (const f of streets) sides(f, 3, KERB);
+    const streetJs = layer === 0 ? js.filter((j) => CLASS[j[4]] === "street" && j[5] !== 0) : []; // pavements round street corners
     disks(streetJs, 3, KERB);
-    for (const f of streets) stroke(f.l!, f.w! + 5.4, SIDEWALK);
+    for (const f of streets) sides(f, 2.7, SIDEWALK);
     disks(streetJs, 2.7, SIDEWALK);
-    for (const f of rs) stroke(f.l!, f.w!, ASPHALT[f.k]);
+    for (const f of rs) stroke(f.l!, f.w!, (f.u && ROAD_SURFACE[f.u]) || ASPHALT[f.k]);
     disks(js, 0);
     // 5. markings, kept out of junctions (lines of crossing roads would scribble over each other)
     ctx.save();
@@ -208,7 +220,7 @@ export function drawGround(
     for (const [x, y, r] of junctions) { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, Math.PI * 2); }
     ctx.clip("evenodd");
     for (const f of rs) {
-      if (f.k !== "street" && f.k !== "highway") continue;
+      if ((f.k !== "street" && f.k !== "highway") || f.u) continue; // no lines on setts, gravel…
       const w = f.w!;
       if (f.k === "highway") { for (const s of [-1, 1]) stroke(offset(f.l!, s * (w / 2 - 0.5)), 0.15, "rgba(255,255,255,0.9)"); }
       const lanes = f.n ?? Math.max(1, Math.round(w / 3.3));
