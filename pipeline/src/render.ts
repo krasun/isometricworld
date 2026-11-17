@@ -29,6 +29,7 @@ const { values: args, positionals } = parseArgs({
     force: { type: "boolean", default: false },
     ss: { type: "string", default: "2" },
     markers: { type: "string", default: "" },
+    tex: { type: "boolean", default: false }, // AI roof tile sheet on clay roofs (style/textures, being tested)
   },
 });
 const areaName = positionals[0] ?? "rothschild";
@@ -63,13 +64,14 @@ async function openPage(browser: Awaited<ReturnType<typeof chromium.launch>>, di
   const groundDir = join(DERIVED, areaName, "ground");
   await page.route("http://iso.local/**", (route) => {
     const p = new URL(route.request().url()).pathname;
-    const file = p.startsWith("/ground/") ? join(groundDir, p.slice(8)) : join(dist, p === "/" ? "index.html" : p.slice(1));
-    const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".json") ? "application/json" : file.endsWith(".bin") ? "application/octet-stream" : "text/html";
+    const file = p.startsWith("/ground/") ? join(groundDir, p.slice(8))
+      : p.startsWith("/textures/") ? join(PIPELINE, "style", p.slice(1)) : join(dist, p === "/" ? "index.html" : p.slice(1));
+    const type = file.endsWith(".png") ? "image/png" : file.endsWith(".js") ? "text/javascript" : file.endsWith(".json") ? "application/json" : file.endsWith(".bin") ? "application/octet-stream" : "text/html";
     if (!existsSync(file)) return route.fulfill({ status: 404 });
     return route.fulfill({ body: readFileSync(file), contentType: type });
   });
   page.on("pageerror", (e) => console.error("  [page]", e.message));
-  await page.goto(`http://iso.local/?region=${area.region}&ss=${args.ss}&markers=${encodeURIComponent(args.markers!)}`);
+  await page.goto(`http://iso.local/?region=${area.region}&ss=${args.ss}&markers=${encodeURIComponent(args.markers!)}${args.tex ? "&tex=1" : ""}`);
   await page.waitForFunction(() => window.ready === true, null, { timeout: 30_000 });
   return page;
 }

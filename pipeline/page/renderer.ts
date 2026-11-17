@@ -330,6 +330,20 @@ const PALETTE: Array<[number[], number[]]> = [
   [[0.86, 0.87, 0.88], [0.80, 0.80, 0.80]],
 ];
 
+/** AI texture sheet (style/textures) on clay-tile roofs; opt-in (render --tex) while we decide on it. Facades
+ *  stay procedural: a tiling sheet gives every building the same window rhythm (its lessons are in the shader). */
+const TEX = STYLED && params.get("tex") === "1";
+async function sheet(file: string) {
+  const t = await new THREE.TextureLoader().loadAsync(`/textures/${file}`);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.NoColorSpace;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+const NO_TEX = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+NO_TEX.needsUpdate = true;
+const roofTex = TEX ? await sheet("roof-tile.png") : NO_TEX;
+
 const buildingMaterial = new THREE.ShaderMaterial({
   vertexShader: /* glsl */ `
     attribute vec3 color;
@@ -342,7 +356,12 @@ const buildingMaterial = new THREE.ShaderMaterial({
     }`,
   fragmentShader: /* glsl */ `
     uniform vec3 sun;
+    uniform sampler2D roofTex; uniform float useTex;
     varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos;
+    // the roof sheet's mean colour (dividing by it tints the sheet to each roof's colour); one repeat per
+    // ROOF_M metres, ~3× real tile size so the rows stay readable
+    const vec3 ROOF_MEAN = vec3(0.796, 0.325, 0.208);
+    const float ROOF_M = 8.0;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     const vec3 GLASS = vec3(0.30, 0.40, 0.50);
     void main() {
@@ -353,7 +372,13 @@ const buildingMaterial = new THREE.ShaderMaterial({
         // Stuttgart (LoD2): punched windows in plaster, sandstone, glass; roofs untextured
         light = 0.70 + 0.42 * max(dot(n, sun), 0.0) + 0.06 * n.z;
         if (vFacade.y < -100.0 && vFacade.x < 0.5) {
-          if (n.z < 0.97) { if (fract(vPos.z / 0.42) < 0.16) c *= 0.93; }   // tile courses
+          if (n.z < 0.97 && useTex > 0.5 && vColor.r > 1.6 * vColor.b) {
+            // clay tiles: rows along the eaves, the sheet's top up the slope
+            vec2 dn = normalize(n.xy), al = vec2(-dn.y, dn.x);
+            vec2 uv = vec2(dot(vPos.xy, al), -dot(vPos.xy, dn) / max(n.z, 0.3)) / ROOF_M;
+            c = texture2D(roofTex, uv).rgb * vColor / ROOF_MEAN;
+          }
+          else if (n.z < 0.97) { if (fract(vPos.z / 0.42) < 0.16) c *= 0.93; }   // tile courses
           else c *= 0.95 + 0.07 * hash(floor(vPos.xy * 2.0));               // gravel
         }
         if (vFacade.y > -100.0) {
@@ -373,11 +398,13 @@ const buildingMaterial = new THREE.ShaderMaterial({
             bool shop = k != 2 && r6 < 0.22;
             float GF = shop ? 4.2 : (k == 2 || r6 < 0.5 ? FH * 1.2 : FH);
             float BAY = k == 2 ? 3.1 + 1.2 * r2 : 2.2 + 1.7 * r2;
-            float hw = min(k == 2 ? 0.55 + 0.25 * r3 : 0.42 + 0.38 * r3, BAY * 0.5 - 0.35);
+            float hw = min(k == 2 ? 0.6 + 0.25 * r3 : 0.55 + 0.25 * r3, BAY * 0.5 - 0.35); // big windows read at map scale
             bool pairs = k != 2 && r4 > 0.72 && BAY > 2.8;
+            // older-looking buildings: tall windows in a stone surround under a head cap (as in the AI facade sheet)
+            bool orn = k == 2 || (k == 0 && r3 > 0.4);
             float fi = y < GF ? 0.0 : 1.0 + floor((y - GF) / FH);
             float fy = y < GF ? y : mod(y - GF, FH), fh = y < GF ? GF : FH;
-            float wh = fh * (k == 2 ? 0.58 + 0.1 * r4 : 0.44 + 0.16 * r4), s0 = min(fh * 0.3, fh - wh - 0.3);
+            float wh = fh * (k == 2 || orn ? 0.56 + 0.1 * r4 : 0.5 + 0.12 * r4), s0 = min(fh * 0.3, fh - wh - (orn ? 0.45 : 0.3));
             float bay = floor(x / BAY), cx = mod(x, BAY) - BAY * 0.5;
             if (pairs) { cx = abs(cx) - (hw * 0.5 + 0.12); }
             float rw = hash(vec2(bay, fi) + v * 31.0);
@@ -388,23 +415,27 @@ const buildingMaterial = new THREE.ShaderMaterial({
               else if (fy > GF - 0.75 && fy < GF - 0.35) c *= 0.82;
             } else if (abs(cx) < hw && fy > s0 && fy < s0 + wh) {
               float t = (fy - s0) / wh;
-              vec3 g = WIN * (0.9 + 0.3 * t);                                     // sky reflection toward the top
-              if (rw < 0.16) g = mix(vec3(0.56, 0.66, 0.76), WIN, t * 0.6);          // window catching the sky
-              else if (rw < 0.30) g = t > 0.45 ? vec3(0.84, 0.82, 0.76) : g;         // curtains
-              else if (rw < 0.40 && t > 1.0 - 0.35 - 0.4 * hash(vec2(rw, fi))) g = vec3(0.66, 0.66, 0.64); // roller blind
+              vec3 g = WIN * (0.94 + 0.12 * rw);                                   // flat slate glass, a touch of variation
+              if (rw < 0.06) g = mix(vec3(0.50, 0.60, 0.70), WIN, t * 0.7);          // the odd window catching the sky
+              else if (rw < 0.13 && t > 0.62) g = vec3(0.70, 0.69, 0.65);            // a lowered blind
               c = g;
               float e = min(hw - abs(cx), min(fy - s0, s0 + wh - fy));
-              if (e < 0.09) c = FRAME;                                             // frame
-              else if (r4 > 0.5 && k != 1 && (abs(cx) < 0.05 || abs(t - 0.7) * wh < 0.05)) c = FRAME; // mullion + transom
-            } else if (abs(cx) < hw + 0.1 && fy > s0 - 0.14 && fy <= s0) {
-              c = k == 2 ? c * 0.88 : FRAME * 0.97;                                // sill
-            } else if (k == 2 && abs(cx) < hw + 0.18 && fy >= s0 + wh && fy < s0 + wh + 0.3) {
-              c *= 0.86;                                                           // window head
+              if (e < 0.08) c = FRAME;                                             // frame
+              else if (k != 1 && hw > 0.35 && abs(cx) < 0.045) c = FRAME;          // mullion: two casements
+              else if (r4 > 0.5 && k != 1 && abs(t - 0.75) * wh < 0.04) c = FRAME; // transom
+            } else if (orn && abs(cx) < hw + 0.32 && fy >= s0 + wh + 0.12 && fy < s0 + wh + 0.36) {
+              c *= fy < s0 + wh + 0.17 ? 0.72 : 1.08;                              // head cap, shadow line under it
+            } else if (orn && abs(cx) < hw + 0.15 && fy > s0 - 0.02 && fy < s0 + wh + 0.12) {
+              c *= abs(cx) > hw + 0.11 ? 0.8 : 1.06;                               // stone surround, outlined
+            } else if (abs(cx) < hw + (orn ? 0.25 : 0.1) && fy > s0 - 0.16 && fy <= s0) {
+              c = orn ? c * 1.08 : FRAME * 0.97;                                   // sill
+            } else if (orn && abs(cx) < hw + 0.25 && fy > s0 - 0.3 && fy <= s0 - 0.16) {
+              c *= 0.84;                                                           // the sill's shadow
             } else if (k == 0 && r5 > 0.8 && abs(cx) >= hw && abs(cx) < hw * 1.85 && fy > s0 && fy < s0 + wh && BAY > hw * 4.0 + 0.4) {
               c = r1 < 0.4 ? vec3(0.33, 0.45, 0.36) : (r1 < 0.7 ? vec3(0.45, 0.50, 0.55) : vec3(0.50, 0.38, 0.28)); // shutters
               if (fract(fy / 0.22) < 0.25) c *= 0.85;
-            } else if ((r2 > 0.55 || k == 2) && fi > 0.5 && fy < 0.22) {
-              c *= 0.9;                                                            // string course
+            } else if (fi > 0.5 && fy < 0.45) {
+              c *= fy < 0.16 ? 0.58 + 0.12 * r2 : 1.07;                            // cornice between storeys: shadow line + lit band (≥1 px each)
             }
             if (plinth) c *= 0.8;
           } else if (k == 3) {       // towers: curtain wall, tint per building
@@ -452,7 +483,7 @@ const buildingMaterial = new THREE.ShaderMaterial({
       }
       gl_FragColor = vec4(c * light, 1.0);
     }`,
-  uniforms: { sun: { value: SUN } },
+  uniforms: { sun: { value: SUN }, roofTex: { value: roofTex }, useTex: { value: TEX ? 1 : 0 } },
 });
 
 /**
