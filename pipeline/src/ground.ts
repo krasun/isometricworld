@@ -57,6 +57,8 @@ const GREENERY = STYLED && styleOf(region.style).greenery && region.sources === 
 /** Preset `waterDetail`: watercourses as lines, treatment basins murky, dry (intermittent) reservoirs a grassy
  *  basin (page/ground.ts draws the water's depth). */
 const WATER_DETAIL = STYLED && styleOf(region.style).waterDetail;
+/** Preset `closedLines`: closed roads and paths (one-way roundabouts, loops) simplified as rings, not collapsed. */
+const CLOSED_LINES = STYLED && styleOf(region.style).closedLines;
 /** Preset `parkedCars`: the stall lines of the parking lots (parking.ts; the cars: scene.ts). */
 const PARKED = STYLED && styleOf(region.style).parkedCars;
 /** Preset `playgrounds`: rubber safety pads and sandpits of the playgrounds (playgrounds.ts). */
@@ -257,7 +259,9 @@ for (const el of osm.elements) {
     const g = geom(el.geometry);
     if (closed(g) && !(t.highway && t.area !== "yes") && !t.railway) rings = [g];
     else if (t.highway || t.railway || ["breakwater", "groyne", "pier"].includes(t.man_made) || /^(runway|taxiway)$/.test(t.aeroway ?? "")) {
-      const l = simplifyLine(g, 0.3);
+      // a closed way as a ring, overlapping its first segment so the loop has no butt-end notch where it closes
+      const ring = CLOSED_LINES && closed(g) ? simplifyRing(g.slice(0, -1), 0.3) : [];
+      const l = ring.length > 2 ? [...ring, ring[1]] : simplifyLine(g, 0.3);
       if (t.aeroway) { // runway / taxiway centre lines at their width (OSM width, else 30 m / 10 m)
         const w = Number(String(t.width).replace(",", ".")) || (t.aeroway === "runway" ? 30 : 10);
         features.push({ k: GRASS.test(t.surface ?? "") ? "grassway" : t.aeroway, l, w: r1(w) });

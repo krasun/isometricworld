@@ -74,6 +74,9 @@ export interface StylePreset {
   /** Bus shelters and stop signs, benches, waste baskets, flagpoles, advertising columns and billboards, wayside
    *  shrines and crosses, memorials, traffic signals (props.ts streetFurniture, osm-furniture.json). */
   streetFurniture: boolean;
+  /** Closed OSM ways drawn as lines (roundabouts mapped as one way, loop roads and paths) kept whole: the line
+   *  simplification collapsed them to nothing (its chord from the first to the last point has no length). */
+  closedLines: boolean;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -86,7 +89,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -117,6 +120,7 @@ export const STYLES = {
     streetLamps: true,
     roofsOnPosts: true,
     streetFurniture: true,
+    closedLines: true,
   },
 } satisfies Record<string, StylePreset>;
 

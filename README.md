@@ -205,6 +205,9 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   surface model's height (`props.ts`). `streetFurniture`: bus shelters open to the road (a blue stop sign where
   there is none), benches, waste baskets, flagpoles with a Polish or EU flag, advertising columns and
   billboards, wayside shrines and crosses, memorial stones, traffic signals on both sides of the road (`props.ts`).
+  `closedLines`: roads and paths mapped as one closed way (roundabouts, loops round a car park or a lawn) are
+  simplified as rings; the line simplification collapsed them to nothing (a fix kept out of older presets so
+  their published tiles stay as they are).
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).
