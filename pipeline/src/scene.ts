@@ -309,7 +309,7 @@ for (const el of osm.elements) {
   const lglLook = region.sources === "lgl" && (!!(t.building || t["building:part"]) || monument);
   if (!lglLook && (!t.building || t.building === "roof" || t.location === "underground")) continue;
   const coords = el.type === "way" ? el.geometry?.map((q: any) => [q.lon, q.lat])
-    : el.members?.find((m: any) => m.role === "outer" && m.geometry)?.geometry.map((q: any) => [q.lon, q.lat]);
+    : el.members?.find((m: any) => (m.role === "outer" || m.role === "outline") && m.geometry)?.geometry.map((q: any) => [q.lon, q.lat]); // outline: type=building relations
   if (!coords || coords.length < 4) continue;
   const ring = ringFromLonLat(coords);
   if (!ring) continue;
@@ -317,7 +317,7 @@ for (const el of osm.elements) {
     if (!lglLook) continue;
     const h = parseFloat(t.height);
     if (monument) { tallTowers.push({ ring, h, name: t.name }); continue; }
-    if (/^(tower|communications_tower)$/.test(t.man_made ?? "") && h >= 60) tallTowers.push({ ring, h, name: t.name });
+    if ((/^(tower|communications_tower)$/.test(t.man_made ?? "") && h >= 60) || (t.building && (t.name ?? "") in TOWERS)) tallTowers.push({ ring, h, name: t.name });
     if (t.name && t.name in TOPS) tops.push({ ring, name: t.name });
     if (t.name && t.name in ARCADES && t.building) arcades.push({ ring, name: t.name });
     if (t["building:part"] && h) parts.push({ ring, h, min: parseFloat(t.min_height) || 0, t });
@@ -456,8 +456,11 @@ for (const tw of tallTowers) {
   const model = tw.name ? TOWERS[tw.name] : undefined;
   if (model) {
     meshes.push(...model(centre(tw.ring), base).map(fromPiece));
-    const tc = centre(tw.ring); // nDOM reads a slender column as a tree crown
-    for (let i = trees.length - 1; i >= 0; i--) if (Math.hypot(trees[i][0] - tc[0], trees[i][1] - tc[1]) < 6) trees.splice(i, 1);
+    const tc = centre(tw.ring); // nDOM reads a slender column (or a drum's rim) as a tree crown
+    for (let i = trees.length - 1; i >= 0; i--) {
+      const p: P2 = [trees[i][0], trees[i][1]];
+      if (Math.hypot(p[0] - tc[0], p[1] - tc[1]) < 6 || near(p) || tw.ring.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 2.5)) trees.splice(i, 1);
+    }
     console.log(`  landmark ${tw.name}: ${stump.length} LoD2 part(s) -> model`);
     continue;
   }
@@ -497,6 +500,76 @@ for (const ac of arcades) {
   });
   for (let i = trees.length - 1; i >= 0; i--) if (near([trees[i][0], trees[i][1]])) trees.splice(i, 1);
 }
+// platform shelters (ground.ts platforms with shelter=yes): glass-roofed units on teal posts along the platform's
+// middle, like the SSB Stadtbahn stops (Pragsattel photos in ATTRIBUTION.md); hip roofs, so every slope is a wall
+{
+  const fp = join(DERIVED, name, "ground", "features.json");
+  const allPlats = existsSync(fp) ? (readJson(fp) as Array<{ k: string; r?: P2[][]; l?: P2[]; w?: number; sh?: 1 }>).filter((f) => f.k === "platform") : [];
+  const plats = allPlats.filter((f) => f.sh);
+  // nDOM reads shelters, lamps and signs on platforms as tree crowns: no crowns on platforms
+  const onPlat = (p: P2) => allPlats.some((f) => f.r ? inside(p, f.r[0]) : f.l!.slice(1).some((b, i) => {
+    const a = f.l![i], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
+    const u = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+    return Math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy) < f.w! / 2;
+  }));
+  const nt = trees.length;
+  if (allPlats.length) for (let i = trees.length - 1; i >= 0; i--) if (onPlat([trees[i][0], trees[i][1]])) trees.splice(i, 1);
+  if (allPlats.length) console.log(`  platforms: ${nt - trees.length} crown(s) on them dropped`);
+  const TEAL = [0.2, 0.58, 0.58], GLASS_ROOF = [0.52, 0.64, 0.72];
+  let units = 0, roofed = 0;
+  // LoD2 already has the big station roofs and canopies: no shelter where a building covers the spot (50 m grid)
+  const cover = new Map<string, P2[][]>();
+  for (const b of meshes) {
+    const xs = b.footprint.map((p) => p[0]), ys = b.footprint.map((p) => p[1]);
+    for (let gx = Math.floor(Math.min(...xs) / 50); gx <= Math.floor(Math.max(...xs) / 50); gx++)
+      for (let gy = Math.floor(Math.min(...ys) / 50); gy <= Math.floor(Math.max(...ys) / 50); gy++) {
+        const k = `${gx}_${gy}`; if (!cover.has(k)) cover.set(k, []); cover.get(k)!.push(b.footprint);
+      }
+  }
+  const covered = (p: P2) => (cover.get(`${Math.floor(p[0] / 50)}_${Math.floor(p[1] / 50)}`) ?? []).some((r) => inside(p, r));
+  for (const f of plats) {
+    // long axis: the ring's or line's principal direction; width across it
+    const pts = f.r ? f.r[0] : f.l!, c = centre(pts);
+    let sxx = 0, syy = 0, sxy = 0;
+    for (const [x, y] of pts) { sxx += (x - c[0]) ** 2; syy += (y - c[1]) ** 2; sxy += (x - c[0]) * (y - c[1]); }
+    const th = 0.5 * Math.atan2(2 * sxy, sxx - syy), ux = Math.cos(th), uy = Math.sin(th), nx = -uy, ny = ux;
+    const along = pts.map(([x, y]) => (x - c[0]) * ux + (y - c[1]) * uy), across = pts.map(([x, y]) => (x - c[0]) * nx + (y - c[1]) * ny);
+    const s0 = Math.min(...along), s1 = Math.max(...along), L = s1 - s0;
+    const W = f.r ? Math.max(...across) - Math.min(...across) : f.w ?? 3, o = f.r ? (Math.max(...across) + Math.min(...across)) / 2 : 0;
+    if (L < 12 || W < 2) continue;
+    const n = Math.max(1, Math.min(4, Math.floor((L * 0.6) / 9))), len = 6.5, half = Math.min(W * 0.42, 1.7);
+    for (let k = 0; k < n; k++) {
+      const sm = s0 + L / 2 + (k - (n - 1) / 2) * 9;
+      const at = (s: number, q: number): P2 => [c[0] + ux * s + nx * (o + q), c[1] + uy * s + ny * (o + q)];
+      const m = at(sm, 0), base = groundAt(m[0], m[1]);
+      if (covered(m)) { roofed++; continue; }
+      const look = { roof: GLASS_ROOF, wall: GLASS_ROOF, style: 4, bare: 3 as const };
+      const roof: Piece = { roof: [], wall: [], footprint: [at(sm - len / 2, -half), at(sm + len / 2, -half), at(sm + len / 2, half), at(sm - len / 2, half)], height: 3.6, base, look };
+      const frame: Piece = { roof: [], wall: [], footprint: roof.footprint, height: 2.8, base, look: { roof: TEAL, wall: TEAL, style: 4, bare: 3 } };
+      const E = 2.6, F = 2.95, R = 4.1; // eave band bottom/top, ridge
+      const v = (p: P2, z: number, sAl = 0): number[] => [p[0], p[1], base + z, sAl, z];
+      const eave = [at(sm - len / 2, -half), at(sm + len / 2, -half), at(sm + len / 2, half), at(sm - len / 2, half)];
+      // teal eave band all round (counter-clockwise from above if (u, n) is right-handed: it is)
+      for (let i = 0; i < 4; i++) { const A = eave[i], B = eave[(i + 1) % 4]; frame.wall.push(...v(A, E), ...v(B, E), ...v(B, F), ...v(A, E), ...v(B, F), ...v(A, F)); }
+      // hip roof: ridge along the unit, glass slopes
+      const r0 = at(sm - len / 2 + half, 0), r1 = at(sm + len / 2 - half, 0);
+      const tri = (a: number[], b: number[], cc: number[]) => roof.wall.push(...a, ...b, ...cc);
+      tri(v(eave[0], F), v(eave[1], F), v(r1, R)); tri(v(eave[0], F), v(r1, R), v(r0, R));   // side -n
+      tri(v(eave[2], F), v(eave[3], F), v(r0, R)); tri(v(eave[2], F), v(r0, R), v(r1, R));   // side +n
+      tri(v(eave[1], F), v(eave[2], F), v(r1, R)); tri(v(eave[3], F), v(eave[0], F), v(r0, R)); // hips
+      // two posts on the centre line
+      for (const ds of [-len / 4, len / 4]) {
+        const pc = at(sm + ds, 0), r = 0.13;
+        const sq = [[-r, -r], [r, -r], [r, r], [-r, r]].map(([a, b]) => [pc[0] + a, pc[1] + b] as P2);
+        for (let i = 0; i < 4; i++) { const A = sq[i], B = sq[(i + 1) % 4]; frame.wall.push(...v(A, 0), ...v(B, 0), ...v(B, E), ...v(A, 0), ...v(B, E), ...v(A, E)); }
+      }
+      meshes.push(fromPiece(roof), fromPiece(frame));
+      units++;
+    }
+  }
+  if (plats.length) console.log(`  platform shelters: ${units} on ${plats.length} sheltered platform(s), ${roofed} under LoD2 roofs skipped`);
+}
+
 // tunnel portals where roads and tracks go underground (portals.ts)
 if (region.sources === "lgl") {
   const ways = ["roads.json", "rails.json", "ground.json"].filter((f) => existsSync(join(raw, f)))

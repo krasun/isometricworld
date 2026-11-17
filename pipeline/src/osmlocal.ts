@@ -99,7 +99,7 @@ export const FILTERS = {
   trees: ((type, t) => type === "node" && t.natural === "tree") as OsmFilter,
   /** trees + buildings (and parts) tagged with roof/wall colour or material (LoD2 regions take only the looks from OSM) */
   treesAndLooks: ((type, t) => (type === "node" && t.natural === "tree") || (type !== "node" && !!(t.building || t["building:part"])
-    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (type === "way" && (t.name ?? "") in TOWERS) || t.amenity === "fountain") as OsmFilter,
+    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (t.name ?? "") in TOWERS || t.amenity === "fountain") as OsmFilter,
   /** rail route relations (S-Bahn, regional, long distance, Stadtbahn) and the tracks they run on, tunnels included */
   rails: ((type, t) => (type === "relation" && /^(train|light_rail|subway|tram)$/.test(t.route ?? ""))
     || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge)$/.test(t.railway ?? ""))) as OsmFilter,
@@ -109,6 +109,7 @@ export const FILTERS = {
     (type === "way" && !!t.highway && !/yes|building_passage/.test(t.tunnel ?? ""))
     || (type === "way" && !!t["area:highway"])
     || (type === "way" && /^(rail|light_rail|tram)$/.test(t.railway ?? "") && t.tunnel !== "yes")
+    || (type === "way" && t.railway === "platform")
     || !!t.landuse || LEISURE.test(t.leisure ?? "") || NATURAL.test(t.natural ?? "") || !!t.water
     || t.waterway === "riverbank" || /^(parking|school|university|college|hospital|grave_yard)$/.test(t.amenity ?? "")
     || /^(pier|breakwater|groyne|bridge)$/.test(t.man_made ?? "") || t.place === "square"

@@ -7,7 +7,7 @@
 
 type P2 = [number, number];
 /** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; ref?: string }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; ref?: string; sh?: 1 }
 interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }
 
 const FILL: Record<string, string> = {
@@ -407,6 +407,23 @@ export function drawGround(
       for (const s of [-0.72, 0.72]) stroke(offset(f.l!, s), 0.12, "#4b4d52");
     }
     ctx.setLineDash([]);
+    // 6b. platforms beside open-air track (ground.ts): light concrete, a white safety line 0.6 m in, dark edge
+    if (layer === 0) for (const f of of("platform")) {
+      const PLAT = "#dcd6ca", LINE = "#fbf9f3", EDGE = styled ? INK : "#7d7a74";
+      if (f.r) {
+        const path = () => { ctx.beginPath(); for (const q of f.r!) q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); };
+        path(); ctx.fillStyle = PLAT; ctx.fill();
+        ctx.save(); path(); ctx.clip(); ctx.lineJoin = "round";
+        path(); ctx.lineWidth = 1.5; ctx.strokeStyle = LINE; ctx.stroke();
+        path(); ctx.lineWidth = 1.1; ctx.strokeStyle = PLAT; ctx.stroke();
+        ctx.restore();
+        path(); ctx.lineWidth = 0.22; ctx.strokeStyle = EDGE; ctx.stroke();
+      } else {
+        const w = f.w!;
+        stroke(f.l!, w + 0.22, EDGE); stroke(f.l!, w, PLAT);
+        for (const sd of [-1, 1]) stroke(offset(f.l!, sd * (w / 2 - 0.65)), 0.2, LINE);
+      }
+    }
     ctx.lineCap = "butt";
   }
   ctx.setLineDash([]);

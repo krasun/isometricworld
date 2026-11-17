@@ -31,7 +31,7 @@ const R_EARTH = 6371000;
  * k: kind (drawn by page/renderer.ts), r: polygon rings (even-odd) or l: polyline,
  * w: line width (m), o: one-way, n: lanes, y: layer (bridges above)
  */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; ref?: string }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; ref?: string; sh?: 1 }
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
@@ -192,9 +192,16 @@ const geom = (g: Array<{ lat: number; lon: number }>) => g.map((q) => toEnu(q.lo
 const graph: GraphWay[] = [];
 const deckFeatures = new Map<number, Feature>();
 
+/** railway=platform ways, kept below only where an open-air track runs beside them (underground stations share the tag) */
+const platforms: Array<{ g: P2[]; w: number; sh: boolean }> = [];
 for (const el of osm.elements) {
   const t: Record<string, string> = el.tags ?? {};
   if (t.natural === "coastline" && el.geometry) { coast.push(geom(el.geometry)); continue; }
+  if (t.railway === "platform") {
+    if (el.type === "way" && el.geometry && t.tunnel !== "yes" && t.location !== "underground" && t.indoor !== "yes")
+      platforms.push({ g: geom(el.geometry), w: Number(String(t.width).replace(",", ".")) || 3, sh: t.shelter === "yes" || t.covered === "yes" });
+    continue;
+  }
   let rings: P2[][] | null = null;
   if (el.type === "way" && el.geometry) {
     const g = geom(el.geometry);
@@ -253,6 +260,23 @@ for (const el of osm.elements) {
   if (!r.length) continue;
   features.push(k === "farm" || k === "meadow" ? { k, r, v: fieldShade(t, el.id) } : { k, r });
   if (k === "water") water.push(r);
+}
+
+{
+  const segs = features.filter((f) => f.k === "rail" && !f.y).flatMap((f) => f.l!.slice(1).map((q, i) => [f.l![i], q] as const));
+  const near = (p: P2) => segs.some(([a, b]) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
+    const u = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+    return Math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy) < 6;
+  });
+  let kept = 0;
+  for (const p of platforms) {
+    if (!p.g.some(near)) continue;
+    const sh = p.sh ? { sh: 1 as const } : {};
+    if (closed(p.g)) { const r = simplifyRing(p.g.slice(0, -1), 0.2); if (r.length >= 3) { features.push({ k: "platform", r: [r], ...sh }); kept++; } }
+    else { features.push({ k: "platform", l: simplifyLine(p.g, 0.2), w: r1(p.w), ...sh }); kept++; }
+  }
+  console.log(`  platforms: ${kept} of ${platforms.length} beside open-air track`);
 }
 
 /** junction entry: [x, y, radius (half width + 3 m), layer, kind of the widest road] */

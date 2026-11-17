@@ -257,10 +257,67 @@ function schlossKrone(c: P2, top: number): Piece[] {
   return [k];
 }
 
+/**
+ * Hochbunker Pragsattel ("BW 116 Pragbunker", 1942; OSM building relation 5459734 and its parts): a windowless
+ * concrete drum, r 8 m, 30 m, with one ring of small openings below the top, an advertising crown 30–36 m
+ * (white light box, dark frames), the flak crew's splinter cell on the roof, an antenna mast to 50 m slightly
+ * off centre, and an LED screen 19–28 m on the north-west face (OSM part, 8 m wide). Commons photos in
+ * ATTRIBUTION.md for proportions and colours; no logos.
+ */
+function pragbunker(c: P2, base: number): Piece[] {
+  const N = 32, R = 8, H = 30, BUNKER = [0.8, 0.79, 0.76], DARK = [0.2, 0.21, 0.24], MAST = [0.42, 0.43, 0.46];
+  const body = piece(c, base, R, H, { roof: [0.62, 0.62, 0.6], wall: BUNKER, style: CLAD });
+  lathe(body, c, [[0, R + 0.25], [0.6, R + 0.25], [0.6, R], [H, R]], N);              // plinth, drum
+  disc(body, c, H, R, 0, N);
+  // ring of small openings at ~25 m: 14 dark recesses, 1.3 × 1.5 m, just proud of the wall
+  const holes = piece(c, base, R, H, { roof: DARK, wall: DARK, style: CLAD, bare: 3 });
+  for (let i = 0; i < 14; i++) {
+    const a = ((i + 0.5) / 14) * 2 * Math.PI, da = 0.65 / R, r = R + 0.04;
+    const at = (b: number, z: number, s: number): V5 => [c[0] + r * Math.cos(b), c[1] + r * Math.sin(b), base + z, s, z];
+    quad(holes, [at(a - da, 24.6, 0), at(a + da, 24.6, 1.3), at(a + da, 26.1, 1.3), at(a - da, 26.1, 0)]);
+  }
+  // advertising crown 30–36 m: light box between dark frames, open inside (a thin ring seen from above)
+  const RC = R + 0.15;
+  const frame = piece(c, base, RC, 36, { roof: DARK, wall: DARK, style: CLAD, bare: 3 });
+  lathe(frame, c, [[H, RC], [H + 0.5, RC]], N);
+  lathe(frame, c, [[35.4, RC], [36, RC]], N);
+  disc(frame, c, 36, RC, RC - 0.35, N);
+  const box = piece(c, base, RC, 36, { roof: WHITE, wall: [0.97, 0.97, 0.95], style: CLAD, bare: 3 });
+  lathe(box, c, [[H + 0.5, RC], [35.4, RC]], N);
+  // splinter cell (32 m) and lift head (31.5 m) on the roof
+  const cell = piece(c, base, 1.6, 32, { roof: [0.62, 0.62, 0.6], wall: BUNKER, style: CLAD, bare: 3 });
+  lathe(cell, c, [[H, 1.5], [32, 1.5]], 8); disc(cell, c, 32, 1.5, 0, 8);
+  lathe(cell, [c[0] + 2.2, c[1] + 1.2], [[H, 0.9], [31.5, 0.9]], 4); disc(cell, [c[0] + 2.2, c[1] + 1.2], 31.5, 0.9, 0, 4);
+  // antenna mast to 50 m with two dish rings and a red light
+  const mc: P2 = [c[0] - 1.6, c[1] + 1.3];
+  const mast = piece(mc, base, 0.5, 50, { roof: MAST, wall: MAST, style: CLAD, bare: 3 });
+  lathe(mast, mc, [[32, 0.32], [50, 0.14]], 8);
+  for (const z of [41, 46]) { lathe(mast, mc, [[z, 0.75], [z + 0.6, 0.75]], 8); disc(mast, mc, z + 0.6, 0.75, 0, 8); }
+  const lamp = piece(mc, base, 0.2, 50.4, { roof: RED, wall: RED, style: CLAD, bare: 3 });
+  lathe(lamp, mc, [[50, 0.2], [50.4, 0.2]], 6); disc(lamp, mc, 50.4, 0.2, 0, 6);
+  // LED screen on the north-west face (OSM part: 8 m wide, 19–28 m): a dark panel with a light rim
+  const a = (116 * Math.PI) / 180, ux = Math.cos(a), uy = Math.sin(a), tx = -uy, ty = ux;
+  const P = (s: number, o: number): P2 => [c[0] + ux * (R + o) + tx * s, c[1] + uy * (R + o) + ty * s];
+  const slab = (p: Piece, w: number, z0: number, z1: number, o0: number, o1: number) => {
+    const q = [P(-w, o0), P(w, o0), P(w, o1), P(-w, o1)]; // counter-clockwise from above (tangent, then outward)
+    for (let i = 0; i < 4; i++) {
+      const A = q[i], B = q[(i + 1) % 4], L = Math.hypot(B[0] - A[0], B[1] - A[1]);
+      quad(p, [[A[0], A[1], base + z0, 0, z0], [B[0], B[1], base + z0, L, z0], [B[0], B[1], base + z1, L, z1], [A[0], A[1], base + z1, 0, z1]]);
+    }
+    p.roof.push(...q[0], base + z1, ...q[1], base + z1, ...q[2], base + z1, ...q[0], base + z1, ...q[2], base + z1, ...q[3], base + z1);
+  };
+  const rim = piece(c, base, R, 28, { roof: SILVER, wall: SILVER, style: CLAD, bare: 3 });
+  slab(rim, 4, 19, 28, -0.6, 0.55);
+  const screen = piece(c, base, R, 28, { roof: DARK, wall: [0.16, 0.2, 0.3], style: CLAD, bare: 3 });
+  slab(screen, 3.7, 19.3, 27.7, 0.55, 0.6);
+  return [body, holes, frame, box, cell, mast, lamp, rim, screen];
+}
+
 /** towers and monuments replaced as a whole: model at the centre of the OSM outline, standing on `base` */
 export const TOWERS: Record<string, (c: P2, base: number) => Piece[]> = {
   "Fernsehturm Stuttgart": fernsehturm,
   "Jubiläumssäule": jubilaeumssaeule,
+  "BW 116 Pragbunker": pragbunker,
 };
 
 /** additions on top of a LoD2 building: model at its highest roof point inside the OSM outline (centre of that top face) */
