@@ -14,8 +14,9 @@ pipeline/page/dist/
 data/
 web/public/regions/
 
-# scratch scripts (screenshots etc.)
+# scratch scripts (screenshots etc.) and local notes for agents
 .tmp-*
+.claude/
 
 *.log
 .DS_Store
