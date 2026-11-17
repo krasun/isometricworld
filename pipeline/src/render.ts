@@ -4,6 +4,7 @@
  *
  *   npm run render -- tlv-core            # all tiles of an area
  *   npm run render -- tlv-core --only 0,5 # a single tile
+ *   npm run render -- tlv-core --box=31,12,39,15 # the area's tiles in a box x0,y0,x1,y1 (inclusive)
  *   npm run render -- tlv-core -j 4       # parallel browser pages
  *
  * Output: data/derived/<area>/render/<tx>_<ty>.png  (1024² colour)
@@ -26,6 +27,7 @@ const { values: args, positionals } = parseArgs({
   options: {
     j: { type: "string", default: "3" },
     only: { type: "string" },
+    box: { type: "string" },
     force: { type: "boolean", default: false },
     ss: { type: "string", default: "2" },
     markers: { type: "string", default: "" },
@@ -94,6 +96,10 @@ async function main() {
   let tiles = areaTiles(area.bbox);
   const all = tiles;
   if (args.only) tiles = [args.only.split(",").map(Number) as [number, number]];
+  if (args.box) {
+    const [bx0, by0, bx1, by1] = args.box.split(",").map(Number);
+    tiles = tiles.filter(([x, y]) => x >= bx0 && x <= bx1 && y >= by0 && y <= by1);
+  }
   const todo = tiles.filter(([x, y]) => args.force || !existsSync(join(outDir, "render", `${x}_${y}.png`)));
   console.log(`${areaName}: ${all.length} tiles, ${todo.length} to render`);
 

@@ -39,6 +39,12 @@ const SHADOW_DIR: P2 = [0.84, 0.54]; // away from the renderer's sun (-0.55, -0.
  *  streets and light paths stand out (measured from the AI paint over the same render) */
 const STYLED_FILL: Record<string, string> = { residential: "#a2bf62", campus: "#acc574", park: "#8fc350" };
 const STYLED_BASE = "#a8c06c";
+/** styled streets (learned from AI repaints of the render): darker asphalt and lighter pavements for contrast,
+ *  an ink line along every kerb, bold markings, and the raised pavement casting a small shadow onto the road */
+// one asphalt tone for all paved classes: service lanes merging into streets otherwise read as a patchwork
+const STYLED_ASPHALT: Record<string, string> = { highway: "#5f636a", street: "#5f636a", lane: "#5f636a" };
+const STYLED_SIDEWALK = "#ede7d9", INK = "#3f4045";
+const KERB_SHADOW = { d: 0.6, blur: 0.3, color: "rgba(20,22,30,0.4)" }; // m, m
 /** inside-corner radius (m) where ways meet, styled regions */
 const FILLET = { path: 1, street: 3, asphalt: 2 };
 /** water bodies smaller than this (m²) get a light shore path; rivers and big lakes keep their banks */
@@ -64,6 +70,9 @@ export function drawGround(
 ) {
   const SHADOW_DIR = shadowDir;
   const FILL_ = styled ? { ...FILL, ...STYLED_FILL } : FILL;
+  const ASPHALT_ = styled ? { ...ASPHALT, ...STYLED_ASPHALT } : ASPHALT;
+  const SIDEWALK_ = styled ? STYLED_SIDEWALK : SIDEWALK, KERB_ = styled ? INK : KERB;
+  const MARK = styled ? { line: 0.3, lane: 0.25, dash: [4, 4] } : { line: 0.15, lane: 0.12, dash: [3, 6] };
   const W = ctx.canvas.width, H = ctx.canvas.height;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = styled ? STYLED_BASE : BASE;
@@ -83,16 +92,26 @@ export function drawGround(
     line(l); dc.lineWidth = w; dc.strokeStyle = c; dc.setLineDash(dash ?? []); dc.stroke();
   };
   /** draw(grow) strokes shapes grown by `grow` m; styled: drawn grown by r and closed (inside corners rounded) */
-  let mask: HTMLCanvasElement | null = null;
-  const fillet = (r: number, draw: (grow: number) => void) => {
-    if (!styled) { draw(0); return; }
-    mask ??= document.createElement("canvas");
-    if (mask.width !== W || mask.height !== H) { mask.width = W; mask.height = H; }
-    const m = mask.getContext("2d")!;
-    m.setTransform(1, 0, 0, 1, 0, 0); m.clearRect(0, 0, W, H);
+  const canvases: Record<string, HTMLCanvasElement> = {};
+  const scratch = (name: string) => {
+    const c = (canvases[name] ??= document.createElement("canvas"));
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const g = c.getContext("2d")!;
+    g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = "source-over"; g.filter = "none"; g.clearRect(0, 0, W, H);
+    return g;
+  };
+  /** the filleted shape as a pixel canvas (overwritten by the next call) */
+  const shapeOf = (r: number, draw: (grow: number) => void) => {
+    const m = scratch("mask");
     m.setTransform(ctx.getTransform()); m.lineJoin = "round"; m.lineCap = ctx.lineCap;
     dc = m; draw(r); dc = ctx;
-    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = filletFilter(r / mpt); ctx.drawImage(mask, 0, 0); ctx.restore();
+    const out = scratch("shape"); out.filter = filletFilter(r / mpt); out.drawImage(canvases.mask, 0, 0); out.filter = "none";
+    return canvases.shape;
+  };
+  const fillet = (r: number, draw: (grow: number) => void) => {
+    if (!styled) { draw(0); return; }
+    const s = shapeOf(r, draw);
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(s, 0, 0); ctx.restore();
   };
   const of = (k: string) => features.filter((f) => f.k === k);
   const inView = (p: number[]) => p[0] > x0 - 50 && p[0] < x1 + 50 && p[1] > y0 - 50 && p[1] < y1 + 50;
@@ -222,13 +241,13 @@ export function drawGround(
   // Roads have butt ends: a round cap on a bridge end or a wide road's end bulges over whatever it
   // meets. Joins between ways are filled by junction disks instead, drawn in the junction's layer.
   ctx.lineCap = "butt";
-  const roads = features.filter((f) => ASPHALT[f.k]).sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || order(a) - order(b));
+  const roads = features.filter((f) => ASPHALT_[f.k]).sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || order(a) - order(b));
   const rails = of("rail");
   const layers = [...new Set([...roads, ...rails].map((f) => f.y ?? 0))].sort((a, b) => a - b);
   const disks = (js: number[][], grow: number, c?: string) => {
     for (const [x, y, r, , k] of js) {
       dc.beginPath(); dc.arc(x, y, r - 3 + grow, 0, Math.PI * 2);
-      dc.fillStyle = c ?? ASPHALT[CLASS[k] ?? "street"]; dc.fill();
+      dc.fillStyle = c ?? ASPHALT_[CLASS[k] ?? "street"]; dc.fill();
     }
   };
   for (const layer of layers) {
@@ -244,33 +263,69 @@ export function drawGround(
     const streetJs = layer === 0 ? js.filter((j) => CLASS[j[4]] === "street") : []; // pavements round street corners
     const r = layer === 0 ? FILLET.street : 0, ra = layer === 0 ? FILLET.asphalt : 0;
     const filleted = (r: number, draw: (g: number) => void) => (r ? fillet(r, draw) : draw(0));
-    filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + 6 + 2 * g, KERB); disks(streetJs, 3 + g, KERB); });
-    filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + 5.4 + 2 * g, SIDEWALK); disks(streetJs, 2.7 + g, SIDEWALK); });
-    if (ra) for (const k of CLASS) filleted(ra, (g) => {
-      for (const f of rs) if (f.k === k) stroke(f.l!, f.w! + 2 * g, ASPHALT[k]);
+    const kerb = styled ? 5.8 : 6; // styled: a thin ink line round the pavement
+    filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + kerb + 2 * g, KERB_); disks(streetJs, kerb / 2 + g, KERB_); });
+    filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + 5.4 + 2 * g, SIDEWALK_); disks(streetJs, 2.7 + g, SIDEWALK_); });
+    let shadow: HTMLCanvasElement | null = null;
+    if (styled && ra) {
+      // styled, ground level: all asphalt in ONE filleted pass (per-class passes leave slivers between classes),
+      // then everything derived from that exact shape
+      const shape = shapeOf(ra, (g) => {
+        for (const k of CLASS) { for (const f of rs) if (f.k === k) stroke(f.l!, f.w! + 2 * g, ASPHALT_[k]); disks(js.filter((j) => (CLASS[j[4]] ?? "street") === k), g); }
+      });
+      const asphalt = scratch("asphalt"); asphalt.drawImage(shape, 0, 0);
+      // ink kerb line: the asphalt shape grown by 1 px (8 shifted copies), inked, under the asphalt
+      const ink = scratch("ink");
+      for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) ink.drawImage(canvases.asphalt, dx, dy);
+      ink.globalCompositeOperation = "source-in"; ink.fillStyle = INK; ink.fillRect(0, 0, W, H);
+      // kerb shadow: what lies outside the road, shifted down-sun and blurred, kept on the road
+      const sh = scratch("shadow");
+      sh.fillStyle = KERB_SHADOW.color; sh.fillRect(0, 0, W, H);
+      sh.globalCompositeOperation = "destination-out"; sh.filter = `blur(${KERB_SHADOW.blur / mpt}px)`;
+      sh.drawImage(canvases.asphalt, (SHADOW_DIR[0] * KERB_SHADOW.d) / mpt, (-SHADOW_DIR[1] * KERB_SHADOW.d) / mpt);
+      sh.filter = "none"; sh.globalCompositeOperation = "destination-in"; sh.drawImage(canvases.asphalt, 0, 0);
+      shadow = canvases.shadow;
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(canvases.ink, 0, 0); ctx.drawImage(canvases.asphalt, 0, 0); ctx.restore();
+    } else if (ra) for (const k of CLASS) filleted(ra, (g) => {
+      for (const f of rs) if (f.k === k) stroke(f.l!, f.w! + 2 * g, ASPHALT_[k]);
       disks(js.filter((j) => (CLASS[j[4]] ?? "street") === k), g);
     });
-    else { for (const f of rs) stroke(f.l!, f.w!, ASPHALT[f.k]); disks(js, 0); }
+    else { for (const f of rs) stroke(f.l!, f.w!, ASPHALT_[f.k]); disks(js, 0); }
+    if (shadow) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(shadow, 0, 0); ctx.restore(); }
     // 5. markings, kept out of junctions (lines of crossing roads would scribble over each other)
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(x0 - 1e4, y1 - 1e5, 2e5, 2e5);
-    for (const [x, y, r] of junctions) { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, Math.PI * 2); }
-    ctx.clip("evenodd");
+    // styled: drawn on a scratch canvas with the junctions (+4 m) cut out; an even-odd clip would let marks
+    // through where junction circles overlap
+    let marks: CanvasRenderingContext2D | null = null;
+    if (styled) { marks = scratch("marks"); marks.setTransform(ctx.getTransform()); marks.lineCap = ctx.lineCap; dc = marks; }
+    else {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x0 - 1e4, y1 - 1e5, 2e5, 2e5);
+      for (const [x, y, r] of junctions) { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, Math.PI * 2); }
+      ctx.clip("evenodd");
+    }
     for (const f of rs) {
       if (f.k !== "street" && f.k !== "highway") continue;
+      // styled: no markings on short pieces (turn links and stubs inside big junctions scribble at bold widths)
+      if (styled && f.l!.reduce((a, p, i) => (i ? a + Math.hypot(p[0] - f.l![i - 1][0], p[1] - f.l![i - 1][1]) : 0), 0) < 25) continue;
       const w = f.w!;
-      if (f.k === "highway") { for (const s of [-1, 1]) stroke(offset(f.l!, s * (w / 2 - 0.5)), 0.15, "rgba(255,255,255,0.9)"); }
+      if (f.k === "highway") { for (const s of [-1, 1]) stroke(offset(f.l!, s * (w / 2 - 0.5)), MARK.line, "rgba(255,255,255,0.9)"); }
       const lanes = f.n ?? Math.max(1, Math.round(w / 3.3));
-      if (!f.o && w >= 7) stroke(f.l!, 0.15, "rgba(255,255,255,0.9)", lanes >= 4 ? undefined : [3, 5]);
+      if (!f.o && w >= 7) stroke(f.l!, MARK.line, "rgba(255,255,255,0.9)", lanes >= 4 ? undefined : styled ? MARK.dash : [3, 5]);
       const per = f.o ? lanes : Math.floor(lanes / 2);
       for (let k = 1; k < per; k++) {
         const d = -w / 2 + (k * w) / lanes;
-        if (f.o) stroke(offset(f.l!, d), 0.12, "rgba(255,255,255,0.85)", [3, 6]);
-        else for (const s of [-1, 1]) stroke(offset(f.l!, (s * k * w) / lanes), 0.12, "rgba(255,255,255,0.85)", [3, 6]);
+        if (f.o) stroke(offset(f.l!, d), MARK.lane, "rgba(255,255,255,0.85)", MARK.dash);
+        else for (const s of [-1, 1]) stroke(offset(f.l!, (s * k * w) / lanes), MARK.lane, "rgba(255,255,255,0.85)", MARK.dash);
       }
     }
-    ctx.restore();
+    if (marks) {
+      dc = ctx; marks.setLineDash([]);
+      marks.globalCompositeOperation = "destination-out"; marks.beginPath();
+      for (const [x, y, r] of junctions) { marks.moveTo(x + r + 4, y); marks.arc(x, y, r + 4, 0, Math.PI * 2); }
+      marks.fill("nonzero");
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(canvases.marks, 0, 0); ctx.restore();
+    } else ctx.restore();
     // 6. rail of this layer: ballast, sleepers, two rails (a road bridge above covers it)
     ctx.lineCap = "round";
     for (const f of rails.filter((f) => (f.y ?? 0) === layer)) {
@@ -285,7 +340,7 @@ export function drawGround(
   }
   ctx.setLineDash([]);
   // zebra crossings: bars parallel to the street, across its full width
-  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.fillStyle = styled ? "#f4f2ec" : "rgba(255,255,255,0.92)";
   for (const [x, y, dx, dy, w] of zebras) {
     const nx = -dy, ny = dx;
     for (let o = -w / 2 + 0.4; o <= w / 2 - 0.4; o += 1.0) {
