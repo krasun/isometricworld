@@ -7,7 +7,7 @@
 
 type P2 = [number, number];
 /** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number] }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; ref?: string }
 interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }
 
 const FILL: Record<string, string> = {
@@ -201,11 +201,82 @@ export function drawGround(
     ctx.restore();
   }
 
+  /** styled paved runway (ICAO-like, simplified): edge lines, threshold piano keys, designators, aiming points,
+   *  centre line, edge lights and green threshold lights. Runways are straight: first to last point. */
+  const runway = (f: Feature) => {
+    const w = f.w!, A = f.l![0], B = f.l!.at(-1)!, L = Math.hypot(B[0] - A[0], B[1] - A[1]);
+    if (L < 100) { stroke(f.l!, w, ASPHALT_.street); return; }
+    const ux = (B[0] - A[0]) / L, uy = (B[1] - A[1]) / L, nx = -uy, ny = ux;
+    const at = (s: number, o = 0): P2 => [A[0] + ux * s + nx * o, A[1] + uy * s + ny * o];
+    const WHITE = "rgba(255,255,255,0.92)";
+    const bar = (s0: number, s1: number, o: number, bw: number) => stroke([at(s0, o), at(s1, o)], bw, WHITE);
+    stroke([A, B], w, "#5c5f66");
+    for (const sd of [-1, 1]) bar(0, L, sd * (w / 2 - 0.9), 0.6);           // edge lines
+    // designators: OSM ref "10/28" (first number for A→B if it matches the heading), else magnetic heading
+    const bearing = ((Math.atan2(ux, uy) * 180) / Math.PI + 360) % 360, MAG = 4; // declination ~4° E (Stuttgart)
+    const num = (deg: number) => String(Math.round((((deg - MAG) % 360) + 360) % 360 / 10) || 36).padStart(2, "0");
+    const refs = (f.ref ?? "").split("/").map((r) => r.trim().replace(/[LRC]$/, "")).filter((r) => /^\d{1,2}$/.test(r));
+    const diff = (r: string, deg: number) => Math.abs(((Number(r) * 10 - deg + 540) % 360) - 180);
+    const ids = refs.length === 2
+      ? (diff(refs[0], bearing) <= diff(refs[1], bearing) ? [refs[0], refs[1]] : [refs[1], refs[0]])
+      : [num(bearing), num(bearing + 180)];
+    const T = ctx.getTransform();
+    for (const [e, dir] of [[0, 1], [L, -1]] as const) {
+      const s = (x: number) => e + dir * x;
+      const keys = Math.max(4, Math.floor((w - 4) / 3.6)), sp = (w - 4) / keys;
+      for (let k = 0; k < keys; k++) bar(s(6), s(36), -w / 2 + 2 + (k + 0.5) * sp, sp * 0.5); // piano keys
+      if (L >= 600) for (const sd of [-1, 1]) bar(s(150), s(195), sd * w * 0.28, Math.max(2, w * 0.18)); // aiming points
+      // designator, 9 m tall, read by a pilot landing from this end (glyph "up" = direction of travel)
+      const id = ids[e === 0 ? 0 : 1].padStart(2, "0"), [cx, cy] = at(s(46)), p = T.transformPoint({ x: cx, y: cy });
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, p.x, p.y); ctx.rotate(Math.atan2(dir * ux, dir * uy)); ctx.scale(0.75, 1);
+      ctx.fillStyle = WHITE; ctx.font = `bold ${9 / mpt}px sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(id, 0, 0); ctx.restore();
+    }
+    stroke([at(60), at(L - 60)], 0.9, WHITE, [20, 15]);                    // centre line
+    ctx.setLineDash([]);
+    const dot = ([x, y]: P2, r: number, c: string) => { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill(); };
+    for (let s = 0; s <= L + 0.1; s += Math.min(50, L / Math.ceil(L / 50))) for (const sd of [-1, 1]) {
+      dot(at(s, sd * (w / 2 + 0.8)), 0.55, "rgba(40,40,40,0.5)"); dot(at(s, sd * (w / 2 + 0.8)), 0.38, "#fff4c2"); // edge lights
+    }
+    for (const e of [-1.2, L + 1.2]) for (let o = -w / 2; o <= w / 2 + 0.01; o += w / Math.round(w / 3)) {
+      dot(at(e, o), 0.55, "rgba(20,60,30,0.5)"); dot(at(e, o), 0.4, "#45d36f");   // threshold lights
+    }
+  };
+
   // 2b. airfields: runway and taxiway centre lines at their width (paved: markings; grass: a mown strip)
   ctx.lineCap = "butt";
-  for (const f of of("grassway")) { stroke(f.l!, f.w!, "#b3d684"); stroke(f.l!, f.w! - 2, "#a8cf78"); }
+  for (const f of of("grassway")) {
+    if (!styled) { stroke(f.l!, f.w!, "#b3d684"); stroke(f.l!, f.w! - 2, "#a8cf78"); continue; }
+    // mown grass runway: the field's own green a touch lighter, lengthwise mowing stripes, white edge markers
+    // every 50 m and a threshold bar at each end (a flat pale band read as a glitch)
+    const w = f.w!, n = 6;
+    stroke(f.l!, w, "rgba(255,255,240,0.10)");
+    for (let i = 0; i < n; i += 2) stroke(offset(f.l!, -w / 2 + (i + 0.5) * (w / n)), w / n, "rgba(255,255,240,0.07)");
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    const l = f.l!;
+    let run = 0, next = 0;
+    for (let i = 1; i < l.length; i++) {
+      const [ax, ay] = l[i - 1], [bx, by] = l[i], len = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / len, uy = (by - ay) / len;
+      for (; next <= run + len; next += 50) {
+        const t = next - run, cx = ax + ux * t, cy = ay + uy * t;
+        for (const sd of [-1, 1]) { // a 3 × 1 m marker on each edge, along the runway
+          const ex = cx - uy * sd * (w / 2 - 0.5), ey = cy + ux * sd * (w / 2 - 0.5);
+          ctx.beginPath(); ctx.moveTo(ex - ux * 1.5 - uy * 0.5, ey - uy * 1.5 + ux * 0.5); ctx.lineTo(ex + ux * 1.5 - uy * 0.5, ey + uy * 1.5 + ux * 0.5);
+          ctx.lineTo(ex + ux * 1.5 + uy * 0.5, ey + uy * 1.5 - ux * 0.5); ctx.lineTo(ex - ux * 1.5 + uy * 0.5, ey - uy * 1.5 - ux * 0.5); ctx.fill();
+        }
+      }
+      run += len;
+    }
+    for (const [p, q] of [[l[0], l[1]], [l[l.length - 1], l[l.length - 2]]]) { // threshold: a bar across, 1.5 m in
+      const len = Math.hypot(q[0] - p[0], q[1] - p[1]), ux = (q[0] - p[0]) / len, uy = (q[1] - p[1]) / len;
+      const cx = p[0] + ux * 1.5, cy = p[1] + uy * 1.5;
+      stroke([[cx + uy * (w / 2 - 0.5), cy - ux * (w / 2 - 0.5)], [cx - uy * (w / 2 - 0.5), cy + ux * (w / 2 - 0.5)]], 1, "rgba(255,255,255,0.9)");
+    }
+  }
   for (const f of of("taxiway")) { stroke(f.l!, f.w!, FILL.tarmac); stroke(f.l!, 0.3, "#e8c547"); }
+  for (const f of of("runway")) if (styled) runway(f);
   for (const f of of("runway")) {
+    if (styled) continue;
     stroke(f.l!, f.w!, "#7f8288");
     for (const s of [-1, 1]) stroke(offset(f.l!, s * (f.w! / 2 - 1)), 0.5, "rgba(255,255,255,0.9)");
     stroke(f.l!, 0.9, "rgba(255,255,255,0.9)", [20, 15]);

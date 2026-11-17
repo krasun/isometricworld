@@ -31,7 +31,7 @@ const R_EARTH = 6371000;
  * k: kind (drawn by page/renderer.ts), r: polygon rings (even-odd) or l: polyline,
  * w: line width (m), o: one-way, n: lanes, y: layer (bridges above)
  */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number] }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; ref?: string }
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
@@ -200,10 +200,12 @@ for (const el of osm.elements) {
     const g = geom(el.geometry);
     if (closed(g) && !(t.highway && t.area !== "yes") && !t.railway) rings = [g];
     else if (t.highway || t.railway || ["breakwater", "groyne", "pier"].includes(t.man_made) || /^(runway|taxiway)$/.test(t.aeroway ?? "")) {
-      const l = simplifyLine(g, 0.3);
+      // a closed way (roundabout, loop road) has a zero chord: simplifyLine would drop every point
+      const ring = closed(g) ? simplifyRing(g.slice(0, -1), 0.3) : [];
+      const l = ring.length >= 4 ? ring : simplifyLine(g, 0.3);
       if (t.aeroway) { // runway / taxiway centre lines at their width (OSM width, else 30 m / 10 m)
         const w = Number(String(t.width).replace(",", ".")) || (t.aeroway === "runway" ? 30 : 10);
-        features.push({ k: GRASS.test(t.surface ?? "") ? "grassway" : t.aeroway, l, w: r1(w) });
+        features.push({ k: GRASS.test(t.surface ?? "") ? "grassway" : t.aeroway, l, w: r1(w), ...(t.ref ? { ref: t.ref } : {}) });
         continue;
       }
       const layer = Number(t.layer) || (t.bridge && t.bridge !== "no" ? 1 : 0);
