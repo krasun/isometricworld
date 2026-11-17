@@ -8,6 +8,8 @@ type Conf = "known" | "approximate" | "illustrative";
 export interface MineLabel { name: string; kind: string; conf: Conf; route: string | null; depth: number | null; height: number | null; src: string; note?: string; x: number; y: number; z: number }
 export interface MineLevel {
   id: string; name: string; depth: number; tourist: number | null; elevation: number; chambers: number; generated: number; note: string; layer: string; tiles: string; labels: MineLabel[];
+  /** an old plan (Hondius 1645), fitted on the shafts it shares with today */
+  historic?: boolean; fit?: { scale: number; turn: number; residuals: number[] };
 }
 export interface MineData { levels: MineLevel[]; sources: Record<string, { title: string; url: string; licence: string }>; min_zoom: number }
 type Item = { setOpacity(o: number): void; getOpacity(): number };
@@ -68,13 +70,13 @@ export class Mine {
     panel.setAttribute("aria-label", "Poziomy kopalni soli");
     panel.innerHTML = `<h3>Kopalnia</h3>`;
     const entries = [{ label: "Powierzchnia", depth: "0 m" }, ...data.levels.map((l) => ({
-      label: `${LEVEL_NAMES_PL[l.id] ?? l.id}${l.name ? ` · ${l.name}` : ""}`,
-      depth: `${Math.round(l.tourist ?? l.depth)} m`,
+      label: l.historic ? "I · plan z 1645 r." : `${LEVEL_NAMES_PL[l.id] ?? l.id}${l.name ? ` · ${l.name}` : ""}`,
+      depth: l.historic ? "" : `${Math.round(l.tourist ?? l.depth)} m`,
     }))];
     entries.forEach((e, i) => {
       const b = document.createElement("button");
       b.innerHTML = `<span>${e.label}</span><span class="d">${e.depth}</span>`;
-      b.title = i ? `Poziom ${data.levels[i - 1].id}: ${Math.round(data.levels[i - 1].depth)} m pod nadszybiem szybu św. Kingi` : "Miasto";
+      b.title = !i ? "Miasto" : data.levels[i - 1].historic ? "Poziom I na planie Hondiusa z 1645 r." : `Poziom ${data.levels[i - 1].id}: ${Math.round(data.levels[i - 1].depth)} m pod nadszybiem szybu św. Kingi`;
       b.addEventListener("click", () => this.go(i));
       panel.appendChild(b);
       this.buttons.push(b);
@@ -120,6 +122,15 @@ export class Mine {
     const l = this.data.levels[this.at - 1];
     const named = l.labels.filter((x) => x.kind !== "shaft").length;
     const src = Object.values(this.data.sources).map((s) => `<li><a href="${s.url}" target="_blank" rel="noopener">${s.title}</a> (${s.licence})</li>`).join("");
+    if (l.historic) {
+      const h = this.data.sources.hondius;
+      this.info.innerHTML = `
+        <b>Poziom I na planie z 1645 r.</b>, rytowanym przez Willema Hondiusa według pomiarów Marcina Germana z 1638 r. (<a href="${h?.url ?? "#"}" target="_blank" rel="noopener">Wikimedia Commons</a>, domena publiczna).
+        <br>Plan jest dopasowany do trzech szybów, które istnieją do dziś: Regis, Daniłowicza i Górsko. Rozbieżność wynosi ${l.fit ? `${Math.round(Math.min(...l.fit.residuals))}–${Math.round(Math.max(...l.fit.residuals))}` : "kilka"} m. Na oryginale północ jest na dole, dlatego napisy są do góry nogami. Szyby oznaczone ≈ już nie istnieją, ich położenie wynika z planu.
+        <small>Niezależny projekt, niezwiązany z Kopalnią Soli „Wieliczka” S.A.</small>`;
+      this.info.hidden = false;
+      return;
+    }
     this.info.innerHTML = `
       <b>Poziom ${LEVEL_NAMES_PL[l.id] ?? l.id}${l.name ? ` „${l.name}”` : ""}</b> · ${Math.round(l.depth)} m pod nadszybiem szybu św. Kingi${l.tourist ? ` (${l.tourist} m według kopalni)` : ""}
       <br>${l.chambers} komór według publikacji${named ? `, ${named} nazwanych na mapie` : ""}. ${l.note.replace(/^./, (c) => c.toUpperCase())}.
@@ -146,7 +157,7 @@ export class Mine {
       if (sx < x0 - 50 || sx > x1 + 50 || sy < y0 - 50 || sy > y1 + 50) continue;
       const shaft = lab.kind === "shaft", approx = lab.conf !== "known";
       const title = `${lab.name}${approx ? " ≈" : ""}`;
-      const sub = [lab.depth ? `${lab.depth} m` : null, shaft ? null : KIND_PL[lab.kind], lab.route ? ROUTE_PL[lab.route] : null].filter(Boolean).join(" · ");
+      const sub = [lab.depth ? `${lab.depth} m` : null, shaft ? null : KIND_PL[lab.kind], lab.route ? ROUTE_PL[lab.route] : null, lab.note && lab.src === "hondius" ? lab.note : null].filter(Boolean).join(" · ");
       ctx.font = `${shaft ? 700 : 600} ${(shaft ? 13 : 12) * dpr}px ui-sans-serif, system-ui, sans-serif`;
       const w = ctx.measureText(title).width + 10 * dpr, h = (sub ? 30 : 17) * dpr;
       const box = [sx - w / 2, sy - h - 8 * dpr, sx + w / 2, sy - 6 * dpr];

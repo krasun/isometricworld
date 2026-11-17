@@ -99,7 +99,7 @@ export const CHAMBERS: MineChamber[] = [
   // Tourist Route, level I (64 m): down the Daniłowicz stairs
   { name: "Komora Mikołaja Kopernika", level: "I", kind: "chamber", size: [22, 14], at: { shaft: D, e: 40, n: -25 }, route: "tourist", conf: "approximate", src: "plwiki" },
   { name: "Kaplica św. Antoniego", level: "I", kind: "chapel", size: [7.5, 6], height: 5.5, at: { shaft: D, e: 78, n: -5 }, route: "tourist", conf: "approximate", src: "plwiki" },
-  // Janowice and Sielec beside the Daniłowicz shaft, as Hondius's 1645 plan has them
+  // Janowice and Sielec where Hondius's 1645 plan puts them (georeferenced on three shafts: mine.ts, HONDIUS)
   { name: "Komora Janowice", level: "I", kind: "chamber", size: [30, 18], at: { shaft: D, e: 34, n: 22 }, route: "tourist", conf: "approximate", src: "hondius" },
   { name: "Komora Sielec", level: "I", kind: "chamber", size: [26, 15], at: { shaft: D, e: -39, n: 60, turn: 30 }, route: "tourist", conf: "approximate", src: "hondius" },
   { name: "Komora Kazimierza Wielkiego", level: "I", kind: "chamber", size: [24, 16], at: { shaft: D, e: 95, n: 45 }, route: "tourist", conf: "approximate", src: "plwiki" },
@@ -140,6 +140,21 @@ export const CHAMBERS: MineChamber[] = [
   // elsewhere
   { name: "Komora Kloski", level: "V", kind: "hall", size: [30, 18], depth: 197, at: { shaft: D, e: 120, n: -60 }, conf: "approximate", src: "dobyrn" },
 ];
+
+/**
+ * Hondius's 1645 plan of the first level (after Marcin German's 1638 survey; Commons, public domain), in image
+ * pixels of data/raw/mine/hondius/<file>: the three shafts it shares with today (control points for the fit in
+ * mine.ts: 2–4 m residuals, 0.156 m per pixel, turned 173°: north is down), the plan without its register,
+ * title and views, and what it names that is gone or renamed (placed through the fit).
+ */
+export const HONDIUS = {
+  file: "Wieliczka_Salt_Mines_2.jpg",
+  url: "https://commons.wikimedia.org/wiki/Special:FilePath/Wieliczka_Salt_Mines_2.jpg",
+  crop: [3150, 3560, 11600, 7700],
+  control: { "Szyb Górsko": [9697, 4632], "Szyb Daniłowicza": [10902, 5579], "Szyb Regis": [8482, 6471] } as Record<string, [number, number]>,
+  gone: { "Szyb Lubomierz": [3314, 3924], "Szyb Boner": [5577, 5156], "Szyb Buzenin": [4121, 5762], "Szyb Lays": [5573, 6391], "Szyb Seraf": [7911, 5304], "Szyb Wodny": [8788, 6647] } as Record<string, [number, number]>,
+  chambers: { "Komora Janowice": [10691, 5728], "Komora Sielec": [11189, 5914], "Komora Kazanów": [10530, 4860], "Komora Witów": [11067, 5361] } as Record<string, [number, number]>,
+};
 
 /** OSM name of the Groty Kryształowe reserve (its outline is known: GDOŚ via OSM), ~80 m below the town */
 export const GROTTO = { name: "Rezerwat Groty Kryształowe", level: "IIw" };

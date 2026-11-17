@@ -16,13 +16,17 @@
  *   ground/meta.json, ground/height.bin   the town's terrain (wieliczka-town), cropped: the level is draped on it
  *   ground/features.json                  page/mine.ts features (k: mvoid, mfloor, mgal, mroute, mlake, mshaft, …)
  *   mine.json                             labels, the level's facts and its extent (export.ts, web)
+ *
+ * And the first level as Hondius engraved it in 1645 (area wieliczka-mine-1645): his plan (Commons, public domain,
+ * data/raw/mine/hondius/) fitted on the three shafts it shares with today, drawn flat under the town (k: mimg).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AREAS } from "./areas.ts";
 import { ecefToEnu, enuToLlh, llhToEcef, useRegion } from "./camera.ts";
 import { contours, simplifyRing } from "./greenery.ts";
-import { CAP, CHAMBERS, COLLAR, GROTTO, LEVELS, SHAFTS, SOURCES, type Confidence, type MineChamber, type MineLevel } from "./minedata.ts";
+import sharp from "sharp";
+import { CAP, CHAMBERS, COLLAR, GROTTO, HONDIUS, LEVELS, SHAFTS, SOURCES, type Confidence, type MineChamber, type MineLevel } from "./minedata.ts";
 import { FILTERS, localOsm } from "./osmlocal.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
@@ -359,7 +363,51 @@ function build(level: MineLevel, li: number) {
   console.log(`  ${level.id.padEnd(4)} ${level.depth} m: ${rooms.length} chambers (${placed} illustrative of ${level.chambers}), ${(galLen / 1000).toFixed(1)} km of galleries, ${rings.length} outlines, ${shafts.length} shafts`);
 }
 
+/** Hondius's 1645 plan of the first level, fitted on its three surviving shafts (similarity, least squares). */
+async function build1645() {
+  const file = join(RAW, "wieliczka-mine", "hondius", HONDIUS.file);
+  const alt = join(RAW, "mine", "hondius", HONDIUS.file);
+  const src = existsSync(file) ? file : alt;
+  if (!existsSync(src)) { console.warn(`  1645: no ${HONDIUS.file} (download ${HONDIUS.url} into data/raw/mine/hondius/)`); return; }
+  // (u, -v): the image's rows run down; a similarity on the flipped frame keeps the plan unmirrored
+  const P = Object.entries(HONDIUS.control).filter(([n]) => shaftAt.has(n)).map(([n, [u, v]]) => ({ n, u, w: -v, xy: shaftAt.get(n)! }));
+  const k = P.length, mu = P.reduce((a, q) => a + q.u, 0) / k, mw = P.reduce((a, q) => a + q.w, 0) / k;
+  const mx = P.reduce((a, q) => a + q.xy[0], 0) / k, my = P.reduce((a, q) => a + q.xy[1], 0) / k;
+  let s2 = 0, sa = 0, sb = 0;
+  for (const q of P) { const du = q.u - mu, dw = q.w - mw, dx = q.xy[0] - mx, dy = q.xy[1] - my; s2 += du * du + dw * dw; sa += du * dx + dw * dy; sb += du * dy - dw * dx; }
+  const p = sa / s2, q = sb / s2, tx = mx - p * mu + q * mw, ty = my - q * mu - p * mw;
+  const toEnu = ([u, v]: [number, number]): P2 => [p * u + q * v + tx, q * u - p * v + ty];
+  const res = P.map((c) => Math.hypot(toEnu([c.u, -c.w])[0] - c.xy[0], toEnu([c.u, -c.w])[1] - c.xy[1]));
+  // the plan, halved (0.31 m per pixel: the render's ground is 0.15 m, the engraving's lines are ~5 px)
+  const [u0, v0, u1, v1] = HONDIUS.crop, F = 2;
+  const dir = join(DERIVED, "wieliczka-mine-1645"), gdir = join(dir, "ground");
+  mkdirSync(gdir, { recursive: true });
+  await sharp(src, { limitInputPixels: false }).extract({ left: u0, top: v0, width: u1 - u0, height: v1 - v0 })
+    .resize(Math.round((u1 - u0) / F)).jpeg({ quality: 86 }).toFile(join(gdir, "hondius-I.jpg"));
+  // canvas transform: downscaled image px (u', v') → ENU
+  const e = [F * p, F * q, F * q, -F * p, p * u0 + q * v0 + tx, q * u0 - p * v0 + ty].map((v) => Math.round(v * 1e6) / 1e6);
+  const corners = ([[u0, v0], [u1, v0], [u1, v1], [u0, v1]] as Array<[number, number]>).map(toEnu);
+  writeFileSync(join(gdir, "meta.json"), JSON.stringify(meta));
+  writeFileSync(join(gdir, "height.bin"), Buffer.from(height.buffer));
+  writeFileSync(join(gdir, "features.json"), JSON.stringify([{ k: "mimg", u: "hondius-I.jpg", e, r: [corners.map(([x, y]) => [r2(x), r2(y)])] }]));
+  const at = (pt: P2) => { const z = terrain(pt[0], pt[1]); return { x: r2(pt[0]), y: r2(pt[1]), z: r2(z) }; };
+  const labels = [
+    ...Object.keys(HONDIUS.control).filter((n) => shaftAt.has(n)).map((n) => ({ name: n, kind: "shaft", conf: "known", route: null, depth: null, height: null, src: "osm", ...at(shaftAt.get(n)!) })),
+    ...Object.entries(HONDIUS.gone).map(([n, uv]) => ({ name: n, kind: "shaft", conf: "approximate", route: null, depth: null, height: null, src: "hondius", note: "1645; dziś nie istnieje", ...at(toEnu(uv)) })),
+    ...Object.entries(HONDIUS.chambers).map(([n, uv]) => ({ name: n, kind: "chamber", conf: "approximate", route: null, depth: null, height: null, src: "hondius", ...at(toEnu(uv)) })),
+  ];
+  const lev = LEVELS[0];
+  writeFileSync(join(dir, "mine.json"), JSON.stringify({
+    id: "1645", name: "plan z 1645", depth: lev.depth + 0.1, tourist: lev.tourist, elevation: r2(COLLAR - lev.depth), chambers: 234, generated: 0, cap: 0, historic: true,
+    note: "poziom I na planie Willema Hondiusa z 1645 r. według pomiarów Marcina Germana z 1638 r., dopasowanym do szybów Regis, Daniłowicza i Górsko",
+    fit: { scale: r2(Math.hypot(p, q)), turn: r2((Math.atan2(q, p) * 180) / Math.PI), residuals: res.map(r2) },
+    extent: corners.map(([x, y]) => [r2(x), r2(y)]), labels,
+  }));
+  console.log(`  1645: Hondius plan fitted on ${k} shafts, ${Math.hypot(p, q).toFixed(3)} m/px, turned ${((Math.atan2(q, p) * 180) / Math.PI).toFixed(1)}°, residuals ${res.map((r) => r.toFixed(1)).join(", ")} m`);
+}
+
 const only = process.argv.slice(2).filter((a) => !a.startsWith("-"));
+if (!only.length || only.includes("1645")) await build1645();
 for (const [i, level] of LEVELS.entries()) {
   if (only.length && !only.includes(level.id)) continue;
   if (!AREAS[`wieliczka-mine-${level.id}`]) throw new Error(`areas.ts lacks wieliczka-mine-${level.id}`);

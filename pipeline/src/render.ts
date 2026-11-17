@@ -72,7 +72,8 @@ async function openPage(browser: Awaited<ReturnType<typeof chromium.launch>>, di
   await page.route("http://iso.local/**", (route) => {
     const p = new URL(route.request().url()).pathname;
     const file = p.startsWith("/ground/") ? join(groundDir, p.slice(8)) : join(dist, p === "/" ? "index.html" : p.slice(1));
-    const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".json") ? "application/json" : file.endsWith(".bin") ? "application/octet-stream" : "text/html";
+    const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".json") ? "application/json" : file.endsWith(".bin") ? "application/octet-stream"
+      : file.endsWith(".jpg") ? "image/jpeg" : file.endsWith(".png") ? "image/png" : "text/html";
     if (!existsSync(file)) return route.fulfill({ status: 404 });
     return route.fulfill({ body: readFileSync(file), contentType: type });
   });

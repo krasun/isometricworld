@@ -228,11 +228,12 @@ it. No plan of the mine is open: `minedata.ts` holds what open sources give (lev
 depths, the routes' chambers in order with their depths and sizes; MINE-RESEARCH.md, kept locally, has the survey).
 The shafts, the mine's outline and the Groty Kryształowe reserve come from OSM (known); the routes' chambers are
 placed schematically round their shafts (approximate, dashed edges, "≈" on the map); everything else is generated
-to each level's published chamber count (illustrative: paler, hatched, dotted edges).
+to each level's published chamber count (illustrative: paler, hatched, dotted edges). One more layer shows the first
+level on Hondius's 1645 plan (public domain), fitted on the three shafts it shares with today (2–4 m residuals).
 
 ```sh
 npm -w pipeline run mine                      # data/derived/wieliczka-mine-<level>/ (needs wieliczka-town's ground)
-for l in I IIw IIn III IV V VI VII VIII IX; do npm run render -- wieliczka-mine-$l -j 2; done
+for l in I IIw IIn III IV V VI VII VIII IX 1645; do npm run render -- wieliczka-mine-$l -j 2; done
 npm run export -- wieliczka-town              # the levels go out with the region whenever they are rendered
 ```
 

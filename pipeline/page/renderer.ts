@@ -10,7 +10,7 @@ import { styleOf } from "../src/styles.ts";
 import { drawGround, type Feature } from "./ground.ts";
 import { richBushes, richTrees } from "./trees.ts";
 import { carried, deckHeight } from "../src/bridges.ts";
-import { MINE_CAP, drawMineCap, drawMineFloor, flatMaterial, mineObjects, mineVisible, type MineFeature } from "./mine.ts";
+import { MINE_CAP, drawMineCap, drawMineFloor, flatMaterial, mineObjects, mineVisible, preloadMine, type MineFeature } from "./mine.ts";
 
 const params = new URLSearchParams(location.search);
 const REGION = params.get("region") ?? "israel-center";
@@ -54,6 +54,7 @@ const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 10);
 const meta: { x0: number; y0: number; nx: number; ny: number; step: number } = await (await fetch("/ground/meta.json")).json();
 const terrain = new Float32Array(await (await fetch("/ground/height.bin")).arrayBuffer());
 const features: Feature[] = await (await fetch("/ground/features.json")).json();
+if (MINE) await preloadMine(features as unknown as MineFeature[]);
 const fbox = features.map((f) => {
   let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
   if (f.j) return [-Infinity, -Infinity, Infinity, Infinity]; // point sets (junctions, zebras): always passed

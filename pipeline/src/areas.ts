@@ -77,6 +77,8 @@ export const AREAS: Record<string, Area> = {
    *  the A4 (50.000–50.018 N). */
   "wieliczka-town": { title: "Wieliczka", region: "wieliczka", bbox: [49.965, 19.994, 50.024, 20.098] },
   ...Object.fromEntries(MINE_LEVELS.map((id) => [`wieliczka-mine-${id}`, { title: `Kopalnia soli · poziom ${id}`, region: "wieliczka", bbox: MINE_BBOX, mine: id }])),
+  /** the first level on Hondius's 1645 plan (mine.ts build1645) */
+  "wieliczka-mine-1645": { title: "Kopalnia soli · poziom I w 1645 r.", region: "wieliczka", bbox: MINE_BBOX, mine: "1645" },
 };
 
 /** Look up an area and switch the camera to its region: call before any projection. */

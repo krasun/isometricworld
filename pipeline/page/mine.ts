@@ -12,7 +12,7 @@ import * as THREE from "three";
 import { CAP } from "../src/minedata.ts";
 
 type P2 = [number, number];
-export type MineFeature = { k: string; r?: P2[][]; l?: P2[]; j?: number[][]; w?: number; v?: number; u?: string; c?: number[] };
+export type MineFeature = { k: string; r?: P2[][]; l?: P2[]; j?: number[][]; w?: number; v?: number; u?: string; c?: number[]; e?: number[] };
 
 export const MINE_CAP = CAP;
 const FLOOR = "#a7a090", FLOOR_ILL = "#b7b2a6";
@@ -86,10 +86,27 @@ function offset(l: P2[], d: number): P2[] {
   });
 }
 
+const images = new Map<string, HTMLImageElement>();
+/** Load the level's images (an old plan: k mimg, u its file in the ground dir) before the first tile. */
+export async function preloadMine(feats: MineFeature[]) {
+  for (const f of feats) if (f.k === "mimg" && !images.has(f.u!)) {
+    const img = new Image();
+    img.src = `/ground/${f.u}`;
+    await img.decode();
+    images.set(f.u!, img);
+  }
+}
+
 /** The floor: what shows through the voids. */
 export function drawMineFloor(ctx: CanvasRenderingContext2D, feats: MineFeature[], rect: number[], mpt: number) {
   begin(ctx, rect, mpt);
   const of = (k: string) => feats.filter((f) => f.k === k);
+  const plans = of("mimg");
+  if (plans.length) { // an old plan, as engraved: drawn flat (its own transform: image px → ENU)
+    ctx.fillStyle = "#6b5a43"; ctx.fillRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
+    for (const f of plans) { const img = images.get(f.u!); if (!img) continue; ctx.save(); ctx.transform(...(f.e as [number, number, number, number, number, number])); ctx.drawImage(img, 0, 0); ctx.restore(); }
+    return;
+  }
   ctx.fillStyle = FLOOR; ctx.fillRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
   // galleries and chambers (illustrative ones paler and hatched)
   for (const g of of("mgal")) { line(ctx, g.l!); ctx.strokeStyle = g.v === 1 ? FLOOR_ILL : FLOOR; ctx.lineWidth = g.w! + 1; ctx.stroke(); }
@@ -150,6 +167,7 @@ export function drawMineFloor(ctx: CanvasRenderingContext2D, feats: MineFeature[
 /** The cap: rock cut CAP above the floor, the voids cut out (transparent), their edges drawn by confidence. */
 export function drawMineCap(ctx: CanvasRenderingContext2D, feats: MineFeature[], rect: number[], mpt: number) {
   begin(ctx, rect, mpt);
+  if (feats.some((f) => f.k === "mimg")) return; // an old plan has no rock over it: all transparent
   ctx.fillStyle = ROCK; ctx.fillRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
   ctx.save(); ctx.globalCompositeOperation = "multiply"; texture(ctx, rect, mpt, 0.2); ctx.restore();
   // strata: faint wavy bands along the deposit (roughly east–west), every 7 m
