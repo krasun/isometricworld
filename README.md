@@ -221,6 +221,21 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
 - Areas: the city (`stuttgart-*`) and the towns around it (`metro-*`) are split into overlapping areas. Where
   they overlap, export takes each tile from the area it lies deepest inside.
 
+**Wieliczka's salt mine** (`mine.ts`, `minedata.ts`, `page/mine.ts`; web `mine.ts`): a lift panel on the map goes
+down the mine's levels I–IX, each its own transparent tile layer (`tiles/mine-<level>/`) over the dimmed town, drawn
+as a cutaway (the rock cut 3 m above the floor) and draped on the terrain so every chamber lies under the spot above
+it. No plan of the mine is open: `minedata.ts` holds what open sources give (level depths and chamber counts, shaft
+depths, the routes' chambers in order with their depths and sizes; MINE-RESEARCH.md, kept locally, has the survey).
+The shafts, the mine's outline and the Groty Kryształowe reserve come from OSM (known); the routes' chambers are
+placed schematically round their shafts (approximate, dashed edges, "≈" on the map); everything else is generated
+to each level's published chamber count (illustrative: paler, hatched, dotted edges).
+
+```sh
+npm -w pipeline run mine                      # data/derived/wieliczka-mine-<level>/ (needs wieliczka-town's ground)
+for l in I IIw IIn III IV V VI VII VIII IX; do npm run render -- wieliczka-mine-$l -j 2; done
+npm run export -- wieliczka-town              # the levels go out with the region whenever they are rendered
+```
+
 **Add an area:** add its bbox (and region) to `pipeline/src/areas.ts`, then run fetch, ground, scene, render, paint and export.
 Areas of one region share its camera and grid, so they line up.
 

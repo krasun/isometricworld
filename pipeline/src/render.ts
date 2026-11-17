@@ -9,7 +9,8 @@
  *
  * Output: data/derived/<area>/render/<tx>_<ty>.png  (1024² colour)
  *         data/derived/<area>/height/<tx>_<ty>.png  (256², ellipsoid height cm+10000 in R<<8|G)
- *         data/derived/<area>/fg/<tx>_<ty>.png      (1024², grey: the foreground mask; regions with life.foreground)
+ *         data/derived/<area>/fg/<tx>_<ty>.png      (1024², grey: the foreground mask; regions with life.foreground;
+ *                                                    a mine level's: its extent, faded at the edge, export.ts exportMine)
  *         data/derived/<area>/manifest.json
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -19,7 +20,7 @@ import * as esbuild from "esbuild";
 import { chromium, type Page } from "playwright-core";
 import sharp from "sharp";
 import { areaTiles, openArea } from "./areas.ts";
-import { CAMERA, camera, llhToPixel } from "./camera.ts";
+import { CAMERA, camera, enuToPixel, llhToPixel } from "./camera.ts";
 import { CHROME, CHROME_ARGS, DERIVED, PIPELINE, writeAtomic } from "./paths.ts";
 import { REGIONS } from "./places.ts";
 import { styleOf } from "./styles.ts";
@@ -76,7 +77,7 @@ async function openPage(browser: Awaited<ReturnType<typeof chromium.launch>>, di
     return route.fulfill({ body: readFileSync(file), contentType: type });
   });
   page.on("pageerror", (e) => console.error("  [page]", e.message));
-  await page.goto(`http://iso.local/?region=${area.region}&ss=${args.ss}&markers=${encodeURIComponent(args.markers!)}`);
+  await page.goto(`http://iso.local/?region=${area.region}&ss=${args.ss}&markers=${encodeURIComponent(args.markers!)}${area.mine ? `&mine=${area.mine}` : ""}`);
   await page.waitForFunction(() => window.ready === true, null, { timeout: 30_000 });
   return page;
 }
@@ -114,10 +115,53 @@ async function renderOne(page: Page, tx: number, ty: number, outDir: string) {
   console.log(`  ${tx}_${ty}: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
 
+/** A mine level's tiles: those within 600 art px of its extent (mine.json, ENU), drawn at the terrain's heights. */
+function nearMine(file: string) {
+  if (!existsSync(file)) throw new Error(`run: npm -w pipeline run mine`);
+  const ext: Array<[number, number]> = JSON.parse(readFileSync(file, "utf8")).extent;
+  const poly = ext.map(([x, y]) => enuToPixel([x, y, 260]));
+  const dist = ([px, py]: number[]) => {
+    let d = Infinity, c = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [ax, ay] = poly[j], [bx, by] = poly[i], dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2));
+      d = Math.min(d, Math.hypot(px - ax - t * dx, py - ay - t * dy));
+      if ((ay > py) !== (by > py) && px < ((bx - ax) * (py - ay)) / (by - ay) + ax) c = !c;
+    }
+    return c ? 0 : d;
+  };
+  return ([tx, ty]: [number, number]) => dist([(tx + 0.5) * T, (ty + 0.5) * T]) < T * 0.75 + 600;
+}
+
+/** A mine level's alpha per tile: its extent (mine.json) drawn on the terrain it is draped over, blurred ~15 m. */
+async function mineMasks(outDir: string, tiles: Array<[number, number]>) {
+  const ext: Array<[number, number]> = JSON.parse(readFileSync(join(outDir, "mine.json"), "utf8")).extent;
+  const meta = JSON.parse(readFileSync(join(outDir, "ground", "meta.json"), "utf8"));
+  const hb = readFileSync(join(outDir, "ground", "height.bin")), h = new Float32Array(hb.buffer, hb.byteOffset, hb.length / 4);
+  const ground = (x: number, y: number) => {
+    const i = Math.min(meta.nx - 1, Math.max(0, Math.round((x - meta.x0) / meta.step))), j = Math.min(meta.ny - 1, Math.max(0, Math.round((y - meta.y0) / meta.step)));
+    return h[j * meta.nx + i];
+  };
+  const dense: Array<[number, number]> = [];
+  for (let i = 0; i < ext.length; i++) {
+    const a = ext[i], b = ext[(i + 1) % ext.length], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 10));
+    for (let k = 0; k < n; k++) dense.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
+  }
+  const px = dense.map(([x, y]) => enuToPixel([x, y, ground(x, y)]));
+  const P = 200, S = T + 2 * P;
+  for (const [tx, ty] of tiles) {
+    const d = px.map(([x, y]) => `${(x - tx * T + P).toFixed(1)},${(y - ty * T + P).toFixed(1)}`).join(" ");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}"><rect width="${S}" height="${S}" fill="black"/><polygon points="${d}" fill="white"/></svg>`;
+    const blurred = await sharp(Buffer.from(svg)).greyscale().blur(30).raw().toBuffer({ resolveWithObject: true });
+    await writeAtomic(sharp(blurred.data, { raw: { width: S, height: S, channels: blurred.info.channels } }).extract({ left: P, top: P, width: T, height: T }).extractChannel(0).png(), join(outDir, "fg", `${tx}_${ty}.png`));
+  }
+}
+
 async function main() {
   const outDir = join(DERIVED, areaName);
-  for (const d of ["render", "height", ...(REGIONS[area.region].life?.foreground ? ["fg"] : [])]) mkdirSync(join(outDir, d), { recursive: true });
+  for (const d of ["render", "height", ...(REGIONS[area.region].life?.foreground || area.mine ? ["fg"] : [])]) mkdirSync(join(outDir, d), { recursive: true });
   let tiles = areaTiles(area.bbox);
+  if (area.mine) tiles = tiles.filter(nearMine(join(outDir, "mine.json")));
   const all = tiles;
   if (args.only) tiles = args.only.split(";").map((t) => t.split(",").map(Number) as [number, number]);
   if (args.parts) {
@@ -154,6 +198,7 @@ async function main() {
     await browser.close();
   }
 
+  if (area.mine) await mineMasks(outDir, tiles);
   writeFileSync(manifestPath, JSON.stringify({
     area: areaName, title: area.title, bbox: area.bbox, camera: camera(),
     tiles: all.map(([x, y]) => ({ x, y })), attributions: ATTRIBUTIONS,

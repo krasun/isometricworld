@@ -8,7 +8,13 @@ export interface Area {
   region: string;
   /** south, west, north, east (WGS84) */
   bbox: [number, number, number, number];
+  /** a level of a salt mine (mine.ts, minedata.ts): drawn as a cutaway under the town, exported as its own layer */
+  mine?: string;
 }
+
+/** The Wieliczka salt mine's levels (mine.ts): the mine's outline (OSM) with a margin, one area per level. */
+const MINE_BBOX: [number, number, number, number] = [49.9735, 20.0255, 49.988, 20.0905];
+const MINE_LEVELS = ["I", "IIw", "IIn", "III", "IV", "V", "VI", "VII", "VIII", "IX"];
 
 export const AREAS: Record<string, Area> = {
   /** Jaffa → Yarkon Park → Ramat Gan, including the sea off the coast. */
@@ -70,6 +76,7 @@ export const AREAS: Record<string, Area> = {
    *  the faded map edge (up to ~640 m wide) falls on the villages and Kraków, not on the town; north to past
    *  the A4 (50.000–50.018 N). */
   "wieliczka-town": { title: "Wieliczka", region: "wieliczka", bbox: [49.965, 19.994, 50.024, 20.098] },
+  ...Object.fromEntries(MINE_LEVELS.map((id) => [`wieliczka-mine-${id}`, { title: `Kopalnia soli · poziom ${id}`, region: "wieliczka", bbox: MINE_BBOX, mine: id }])),
 };
 
 /** Look up an area and switch the camera to its region: call before any projection. */

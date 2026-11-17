@@ -10,6 +10,8 @@
  *   tiles/map/{z}/{x}/{y}.avif         painted tiles where available, 3D render elsewhere
  *   tiles/photo/{z}/{x}/{y}.avif       3D render only (toggle)
  *   tiles/fg/{z}/{x}/{y}.avif          what stands higher than a car, transparent elsewhere (life.foreground)
+ *   tiles/mine-<level>/{z}/{x}/{y}.avif a salt mine's level (areas.ts `mine`, mine.ts), transparent outside the mine;
+ *                                      data/mine.<hash>.json lists the levels, their facts, labels and tile indexes
  *   data/world.json                    camera, bounds, tile origin, ENU→pixel map, attributions, and
  *                                      the names of the files below (the only mutable file)
  *   data/tiles-<layer>.<hash>.json     every tile of a layer per zoom with its content hash (URL ?v=)
@@ -384,8 +386,8 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
  * the stamps of the render tiles they cover. Every level is built from the render tiles directly.
  */
 const FG_MIN_Z = 5;
-async function exportForeground(renders: Map<Key, string>) {
-  const layer = "fg", root = join(OUT, "tiles", layer), st = (state.layers[layer] ??= { sources: {}, hashes: {} }), produced = new Set<string>();
+async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = FG_MIN_Z) {
+  const root = join(OUT, "tiles", layer), st = (state.layers[layer] ??= { sources: {}, hashes: {} }), produced = new Set<string>();
   index[layer] = {};
   const maskOf = (file: string) => file.replace(/\/render\/([^/]+)$/, "/fg/$1");
   const srcs = [...renders].filter(([, f]) => existsSync(maskOf(f)));
@@ -448,26 +450,48 @@ async function exportForeground(renders: Map<Key, string>) {
     jobs.push(() => put(NATIVE_Z - 1, tx, ty, stamp, async () => raw(await source(k), A).resize(TS, TS, { kernel: "lanczos3" }).raw().toBuffer()));
   }
   // further out: n × n render tiles shrunk into one
-  for (let z = NATIVE_Z - 2; z >= FG_MIN_Z; z--) {
+  for (let z = NATIVE_Z - 2; z >= minZ; z--) {
     const n = 2 ** (NATIVE_Z - 1 - z), parents = new Map<Key, Key[]>();
     for (const [k] of srcs) { const [tx, ty] = parse(k), p = key(Math.floor(tx / n), Math.floor(ty / n)); (parents.get(p) ?? parents.set(p, []).get(p)!).push(k); }
     for (const [p, kids] of parents) {
       const [px, py] = parse(p), stamp = hash(kids.map((k) => `${k}:${stampOf.get(k)}`).sort().join(","));
       jobs.push(() => put(z, px, py, stamp, async () => {
-        const S = A * n, big = Buffer.alloc(S * S * 4);
+        // far out (a mine's levels go to z3): each render tile shrunk first, the n × n canvas would be too big
+        const C = n > 4 ? TS / n : A, S = C * n, big = Buffer.alloc(S * S * 4);
         for (const k of kids) {
-          const [tx, ty] = parse(k), b = await source(k), ox = (tx - px * n) * A, oy = (ty - py * n) * A;
-          for (let y = 0; y < A; y++) b.copy(big, ((oy + y) * S + ox) * 4, y * A * 4, (y + 1) * A * 4);
+          const [tx, ty] = parse(k), ox = (tx - px * n) * C, oy = (ty - py * n) * C;
+          const b = C === A ? await source(k) : await raw(await source(k), A).resize(C, C, { kernel: "lanczos3" }).raw().toBuffer();
+          for (let y = 0; y < C; y++) b.copy(big, ((oy + y) * S + ox) * 4, y * C * 4, (y + 1) * C * 4);
         }
-        return raw(big, S).resize(TS, TS, { kernel: "lanczos3" }).raw().toBuffer();
+        return S === TS ? big : raw(big, S).resize(TS, TS, { kernel: "lanczos3" }).raw().toBuffer();
       }));
     }
   }
   await pool(jobs);
   for (const id of Object.keys(st.sources)) if (!produced.has(id)) { delete st.sources[id]; delete st.hashes[id]; }
   const count = Object.values(index[layer]).reduce((a, m) => a + Object.keys(m).length, 0);
-  console.log(`  fg z${FG_MIN_Z}–${NATIVE_Z}: ${count} tiles with something tall, ${encoded} encoded`);
+  console.log(`  ${layer} z${minZ}–${NATIVE_Z}: ${count} tiles${layer === "fg" ? " with something tall" : ""}, ${encoded} encoded`);
   checkpoint(true);
+}
+
+/**
+ * A salt mine's levels (areas.ts `mine`, src/mine.ts): each its own layer like the foreground (the render, its alpha
+ * the mask render.ts drew from the level's extent), and data/mine.json with the levels' facts and labels (web mine.ts).
+ */
+const MINE_MIN_Z = 3;
+async function exportMine(levels: string[]) {
+  const out: Array<{ depth: number }> = [];
+  for (const a of levels) {
+    const dir = join(DERIVED, a), info = readJson(join(dir, "mine.json")), layer = `mine-${AREAS[a].mine}`;
+    const renders = new Map<Key, string>();
+    for (const f of readdirSync(join(dir, "render")).filter((f) => f.endsWith(".png"))) renders.set(key(...parse(f.replace(".png", ""))), join(dir, "render", f));
+    await exportForeground(renders, layer, MINE_MIN_Z);
+    writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
+    const { extent: _e, ...facts } = info;
+    out.push({ ...facts, tiles: dataFile(`tiles-${layer}`), layer });
+  }
+  const { SOURCES } = await import("./minedata.ts");
+  writeData("mine", JSON.stringify({ levels: out.sort((a, b) => a.depth - b.depth), sources: SOURCES, min_zoom: MINE_MIN_Z }));
 }
 
 /** Content hash of a source PNG, cached in the state by path, size and mtime (a re-render with the same pixels changes nothing). */
@@ -1023,8 +1047,11 @@ let OUT = ""; // data/web/regions/<region>
 
 async function main() {
   const names = process.argv.slice(2).filter((a) => !a.startsWith("--"));
-  const areas = names.length ? names : ["tlv-core"];
-  const regions = new Set(areas.map((a) => openArea(a).region));
+  const asked = names.length ? names : ["tlv-core"];
+  const regions = new Set(asked.map((a) => openArea(a).region));
+  // a mine's levels are layers of their own, never part of the map; exported whenever they are rendered
+  const areas = asked.filter((a) => !AREAS[a]?.mine);
+  const mineLevels = Object.keys(AREAS).filter((a) => AREAS[a].mine && AREAS[a].region === [...regions][0] && existsSync(join(DERIVED, a, "render")) && existsSync(join(DERIVED, a, "mine.json")));
   if (regions.size !== 1) throw new Error(`export one region at a time (got ${[...regions].join(", ")})`);
   OUT = join(WEB_CACHE, "regions", activeRegion());
   const from = [pendingFile(), publishedFile()].find(existsSync);
@@ -1073,6 +1100,7 @@ async function main() {
     await exportLayer("map", new Map([...photo, ...art])); // painted wins
     await exportLayer("photo", photo);
     if (REGIONS[activeRegion()].life?.foreground) await exportForeground(photo);
+    if (mineLevels.length) await exportMine(mineLevels);
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
   }
   await exportBorders(heights);
@@ -1091,7 +1119,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains") },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), ...(mineLevels.length ? { mine: dataFile("mine") } : {}) },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {

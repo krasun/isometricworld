@@ -7,6 +7,7 @@ import type { Planes, Parrots, Airport } from "./sky.ts";
 import { TiltShift } from "./tiltshift.ts";
 import type { Pigeons } from "./pigeons.ts";
 import { Foreground, type FgIndex } from "./foreground.ts";
+import type { Mine, MineData } from "./mine.ts";
 import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
@@ -25,7 +26,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; borders?: string; roads?: string; trains?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; borders?: string; roads?: string; trains?: string; mine?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -68,7 +69,7 @@ function tileSource(layer: string, have: Index) {
     minLevel: world.min_zoom, maxLevel: NZ,
     getTileUrl: (level: number, x: number, y: number) => {
       const [tx, ty] = global(level, x, y);
-      return `${BASE}/tiles/${layer}/${level}/${tx}/${ty}.${EXT}?v=${have[level][`${tx}_${ty}`]}`; // immutable URL per content
+      return `${BASE}/tiles/${layer}/${level}/${tx}/${ty}.${EXT}?v=${have[level]?.[`${tx}_${ty}`]}`; // immutable URL per content
     },
     tileExists: (level: number, x: number, y: number) => {
       const [tx, ty] = global(level, x, y);
@@ -130,6 +131,19 @@ let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots |
 let foreground: Foreground | null = null;
 if (modern && files["tiles-fg"]) json<FgIndex>(files["tiles-fg"]).then((index) => {
   foreground = new Foreground(index, (z, x, y, v) => `${BASE}/tiles/fg/${z}/${x}/${y}.${EXT}?v=${v}`, TS, NZ, world.min_zoom);
+});
+// a salt mine's levels under the town (Wieliczka; mine.ts): a lift panel, each level its own layer
+let mine: Mine | null = null;
+if (modern && files.mine) Promise.all([import("./mine.ts"), json<MineData>(files.mine)]).then(([{ Mine: MineView }, data]) => {
+  mine = new MineView(data, {
+    enu2px: world.enu2px,
+    addLayer: (layer, indexFile) => json<Index>(indexFile).then((have) => new Promise((resolve) => viewer.addTiledImage({
+      tileSource: tileSource(layer, have) as unknown as OpenSeadragon.TileSourceOptions, opacity: 0,
+      success: (e) => resolve((e as unknown as { item: OpenSeadragon.TiledImage }).item),
+    }))),
+    dimSurface: (o) => { if (base()) base().setOpacity(o); else viewer.addOnceHandler("open", () => base().setOpacity(o)); },
+  });
+  Object.assign(window as object, { __mine: mine });
 });
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
@@ -222,27 +236,29 @@ function frame(t: number) {
   // zoomed out too far to see them (their draw() thresholds), cars and cats pause instead of
   // simulating thousands of invisible movers every frame
   const px = k / dpr;
-  if (trains && showTraffic && px >= 0.08) { // under the cars: road bridges cross the tracks, rarely the reverse
+  const above = showTraffic && !mine?.underground; // below ground, the town's life stays up there
+  if (trains && above && px >= 0.08) { // under the cars: road bridges cross the tracks, rarely the reverse
     trains.step(dt);
     trains.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
-  if (traffic && showTraffic && px >= 0.14) {
+  if (traffic && above && px >= 0.14) {
     traffic.step(dt);
     traffic.draw(ctx, toScreen, px, [0, 0, w, hgt]);
     foreground?.draw(ctx, k, tx, ty, traffic.boxes);
   }
-  if (cats && showTraffic && px >= 0.6) {
+  if (cats && above && px >= 0.6) {
     cats.step(dt);
     cats.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
-  if (pigeons && showTraffic) { // they keep pecking (and taking off) out of sight too: cheap
+  if (pigeons && above) { // they keep pecking (and taking off) out of sight too: cheap
     pigeons.step(dt);
     pigeons.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
-  if (showTraffic) { // sky above everything: parakeets, then the airliner
+  if (above) { // sky above everything: parakeets, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (planes) { planes.step(dt); planes.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
   }
+  mine?.draw(ctx, toScreen, px, dpr, [0, 0, w, hgt]);
   if (showBorders || k / dpr < 0.05) drawBorders(dpr); // borders appear automatically far out
   tilt?.update();
   lastT = t;

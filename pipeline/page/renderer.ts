@@ -10,12 +10,15 @@ import { styleOf } from "../src/styles.ts";
 import { drawGround, type Feature } from "./ground.ts";
 import { richBushes, richTrees } from "./trees.ts";
 import { carried, deckHeight } from "../src/bridges.ts";
+import { MINE_CAP, drawMineCap, drawMineFloor, flatMaterial, mineObjects, mineVisible, type MineFeature } from "./mine.ts";
 
 const params = new URLSearchParams(location.search);
 const REGION = params.get("region") ?? "israel-center";
 useRegion(REGION); // before any projection below
 /** Styled regions (places.ts `look`) get the finished procedural look (no paint step): LoD2 roofs, hillshade, outlines. */
 const STYLED = REGIONS[REGION].look === "styled";
+/** A salt-mine level (areas.ts `mine`, src/mine.ts): drawn as a cutaway (page/mine.ts) instead of the town. */
+const MINE = params.get("mine");
 /** The styled look's preset (styles.ts). */
 const STYLE = styleOf(REGIONS[REGION].style);
 /** Sun shadows cast by buildings and trees (preset `castShadow`; styled look only, tested in the post pass). */
@@ -95,8 +98,16 @@ const hillshadeMaterial = new THREE.ShaderMaterial({
     }`,
   uniforms: { map: { value: groundTexture }, sun: { value: SUN } },
 });
-const groundMesh = new THREE.Mesh(new THREE.BufferGeometry(), STYLED ? hillshadeMaterial : new THREE.MeshBasicMaterial({ map: groundTexture }));
+const groundMesh = new THREE.Mesh(new THREE.BufferGeometry(), MINE ? flatMaterial(groundTexture, false) : STYLED ? hillshadeMaterial : new THREE.MeshBasicMaterial({ map: groundTexture }));
 scene.add(groundMesh);
+// a mine level: the rock's cut surface over the floor (holes where the voids are), and the walls between
+const capTexture = new THREE.CanvasTexture(document.createElement("canvas"));
+capTexture.colorSpace = THREE.NoColorSpace;
+capTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+const capMesh = new THREE.Mesh(new THREE.BufferGeometry(), flatMaterial(capTexture, true));
+capMesh.visible = !!MINE;
+scene.add(capMesh);
+let mineMesh: THREE.Mesh | null = null;
 let terrainLo = Infinity, terrainHi = -Infinity;
 for (const h of terrain) if (Number.isFinite(h)) { terrainLo = Math.min(terrainLo, h); terrainHi = Math.max(terrainHi, h); }
 
@@ -140,6 +151,7 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   cv.width = w;
   cv.height = h;
   const visible = features.filter((_, i) => fbox[i][0] < x1 && fbox[i][2] > x0 && fbox[i][1] < y1 && fbox[i][3] > y0);
+  if (MINE) return buildMine([x0, y0, x1, y1], w, h);
   // bridges (styled regions): off the ground, onto their own deck above the gap (bridges.ts)
   const bridges = STYLED ? visible.filter((f) => f.b && f.l && f.l.length >= 2) : [];
   // LoD2 footprints cast the same contact shadows as extruded buildings
@@ -166,6 +178,40 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   if (STYLED) geo.computeVertexNormals();
   groundMesh.geometry.dispose();
   groundMesh.geometry = geo;
+}
+
+/** terrain mesh over [x0, y0, x1, y1]: a 5 m grid draped on the terrain (+ dz), UVs into the rect */
+function drape([x0, y0, x1, y1]: number[], dz: number) {
+  const step = Math.min(5, meta.step), nx = Math.ceil((x1 - x0) / step) + 1, ny = Math.ceil((y1 - y0) / step) + 1;
+  const pos = new Float32Array(nx * ny * 3), uv = new Float32Array(nx * ny * 2), idx: number[] = [];
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const x = Math.min(x1, x0 + i * step), y = Math.min(y1, y0 + j * step), k = j * nx + i;
+    pos.set([x, y, ground(x, y) + dz], k * 3);
+    uv.set([(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)], k * 2);
+    if (i && j) idx.push(k - nx - 1, k - nx, k, k - nx - 1, k, k - 1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  return geo;
+}
+
+/** A mine level's tile: floor and cap textures, both meshes, the walls (page/mine.ts). */
+function buildMine(rect: number[], w: number, h: number) {
+  const mine = mineVisible(features as unknown as MineFeature[], rect);
+  drawMineFloor(groundTexture.image.getContext("2d")!, mine, rect, GROUND_MPT);
+  groundTexture.needsUpdate = true;
+  const cv = capTexture.image as HTMLCanvasElement;
+  if (w !== cv.width || h !== cv.height) capTexture.dispose();
+  cv.width = w; cv.height = h;
+  drawMineCap(cv.getContext("2d")!, mine, rect, GROUND_MPT);
+  capTexture.needsUpdate = true;
+  groundMesh.geometry.dispose(); groundMesh.geometry = drape(rect, 0);
+  capMesh.geometry.dispose(); capMesh.geometry = drape(rect, MINE_CAP);
+  if (mineMesh) { scene.remove(mineMesh); mineMesh.geometry.dispose(); }
+  mineMesh = mineObjects(mine, rect, ground, SUN);
+  scene.add(mineMesh);
 }
 
 // ---- bridge decks ------------------------------------------------------------------------------
@@ -1451,12 +1497,14 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
   if (SHADOWS) {
     placeSun(tx, ty);
     groundMesh.visible = false; // the ground receives, it does not cast (hillshade lights the slopes)
+    capMesh.visible = false; // a mine's walls cast for its cut rock (the cap's holes would not survive the override)
     scene.overrideMaterial = casterMaterial;
     renderer.setRenderTarget(shadowTarget);
     renderer.clear(true, true, true);
     renderer.render(scene, sunCamera);
     scene.overrideMaterial = null;
     groundMesh.visible = true;
+    capMesh.visible = !!MINE;
     postMaterial.uniforms.tShadow.value = shadowTarget.depthTexture;
     postMaterial.uniforms.shadows.value = true;
   }
@@ -1474,7 +1522,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
   }
   const color = renderer.domElement.toDataURL("image/png");
   let fg: string | undefined;
-  if (FOREGROUND) {
+  if (FOREGROUND && !MINE) {
     renderer.setRenderTarget(null);
     renderer.setClearColor(0x000000, 1);
     renderer.clear(true, true, true);

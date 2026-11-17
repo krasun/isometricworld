@@ -29,7 +29,7 @@ function simplifyLine(r: P2[], tol: number): P2[] {
   if (fd <= tol) return [a, b];
   return [...simplifyLine(r.slice(0, far + 1), tol).slice(0, -1), ...simplifyLine(r.slice(far), tol)];
 }
-function simplifyRing(r: P2[], tol: number): P2[] {
+export function simplifyRing(r: P2[], tol: number): P2[] {
   let far = 0, fd = -1;
   for (let i = 1; i < r.length; i++) { const d = Math.hypot(r[i][0] - r[0][0], r[i][1] - r[0][1]); if (d > fd) { fd = d; far = i; } }
   if (far === 0) return [];
@@ -66,7 +66,7 @@ function blur(v: Float32Array, W: number, H: number, R = 2) {
  * as 0, so every outline closes and neighbouring windows overlap. Rings in grid units (cell centres at
  * integers), the inside on their left.
  */
-function contours(v: Float32Array, W: number, Hg: number, i0: number, j0: number, i1: number, j1: number, iso: number): P2[][] {
+export function contours(v: Float32Array, W: number, Hg: number, i0: number, j0: number, i1: number, j1: number, iso: number): P2[][] {
   const at = (i: number, j: number) => (i < i0 - 1 || j < j0 - 1 || i > i1 || j > j1 ? 0
     : v[Math.min(Hg - 1, Math.max(0, j)) * W + Math.min(W - 1, Math.max(0, i))]);
   const next = new Map<number, number>(), point = new Map<number, P2>();
