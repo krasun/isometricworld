@@ -42,6 +42,9 @@ export interface StylePreset {
    *  separately mapped sidewalks drawn as pavement, road and path surfaces (paving, setts, gravel, dirt, grass,
    *  concrete). false: a pavement along both sides of every street, roads asphalt. */
   streetDetail: boolean;
+  /** Lawns and gardens where the orthophoto is green (ground.ts, greenery.ts; sources with an orthophoto: gugik),
+   *  over the plain residential, commercial and campus land; false: that land is one flat colour. */
+  greenery: boolean;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -54,7 +57,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -73,6 +76,7 @@ export const STYLES = {
     eaves: { overhang: 0.5, verge: 0.3, gutters: true },
     trunks: true,
     streetDetail: true,
+    greenery: true,
   },
 } satisfies Record<string, StylePreset>;
 

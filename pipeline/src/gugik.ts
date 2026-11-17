@@ -348,6 +348,18 @@ export async function fetchOrtho(bbox: number[], near: (box: number[]) => boolea
   console.log(`  orthophoto: ${count} chunk(s) of ${ORTO_KM} m`);
 }
 
+/** The downloaded orthophoto chunks touching a bbox (lat/lon): south-west corner (PUWG 1992 m), side (m), pixel
+ *  size (m) and file. */
+export function orthoChunks(bbox: number[]): Array<{ e: number; n: number; size: number; px: number; file: string }> {
+  const [e0, n0, e1, n1] = projected(bbox), out: Array<{ e: number; n: number; size: number; px: number; file: string }> = [];
+  for (let E = Math.floor(e0 / ORTO_KM) * ORTO_KM; E < e1; E += ORTO_KM)
+    for (let N = Math.floor(n0 / ORTO_KM) * ORTO_KM; N < n1; N += ORTO_KM) {
+      const file = orthoFile(`${E}_${N}`);
+      if (existsSync(file)) out.push({ e: E, n: N, size: ORTO_KM, px: ORTO_M, file });
+    }
+  return out;
+}
+
 /** Orthophoto pixels, chunks decoded on demand (a few kept at a time). */
 class Ortho {
   chunks = new Map<string, Buffer | null>();

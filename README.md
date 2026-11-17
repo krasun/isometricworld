@@ -176,7 +176,9 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   eaves (≈ 0.5 m) and gables (≈ 0.3 m), with a gutter under the eaves and downpipes at their ends and corners.
   `trunks`: broadleaf crowns stand on a trunk. `streetDetail`: pavements only where OSM's `sidewalk*` tags put
   them, separately mapped sidewalks drawn as kerbed pavement, and road and path surfaces (paving, setts,
-  gravel, dirt, grass, concrete) from OSM `surface` (`ground.ts`, `page/ground.ts`).
+  gravel, dirt, grass, concrete) from OSM `surface` (`ground.ts`, `page/ground.ts`). `greenery`: lawns and
+  gardens where the orthophoto is green, traced as smooth outlines over plain residential land (`greenery.ts`),
+  and a grass texture fixed to the map on lawns, parks, meadows and the like.
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).

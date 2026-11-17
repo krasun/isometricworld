@@ -145,7 +145,7 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   const shadows = { b: [...(data?.b ?? []), ...(data?.m ?? []).filter((m) => !m[9] || m[9] < 2).map((m) => [m[4], m[5], m[0], null] as [P2[], number, number, null])], t: data?.t ?? [] };
   const ctx = cv.getContext("2d")!;
   // regions with cast shadows (post pass) skip the short contact shadows, which would point the same way
-  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, SHADOWS ? { b: [], t: [] } : shadows, ground, STYLED ? SHADOW : undefined);
+  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, SHADOWS ? { b: [], t: [] } : shadows, ground, STYLED ? SHADOW : undefined, STYLED && STYLE.greenery);
   buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h);
   if (STYLED) deckShadows(ctx, data);
   groundTexture.needsUpdate = true;

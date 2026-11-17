@@ -17,7 +17,7 @@ const FILL: Record<string, string> = {
   park: "#9dcb6c", wood: "#73a851", scrub: "#adbb7b", sand: "#eedbab", pitch: "#6db35a", track: "#c97a5c",
   playground: "#dccba1", parking: "#bebcb7", paving: "#e6e0d4", water: "#3f95c2", pool: "#5ccbe6",
   vineyard: "#bfc27a", allotments: "#a9c676", orchard: "#b4cc7e", meadow: "#b6cf7e",
-  flowerbed: "#86b45a", gravel: "#ddd0b4",
+  flowerbed: "#86b45a", gravel: "#ddd0b4", lawn: "#a5c972",
   fairway: "#8fca62", green: "#76c158", bunker: "#f0e2b4", airgrass: "#a8cf78", tarmac: "#8e9196",
 };
 /** field shades (ground.ts fieldShade): wheat, maize, grass, vegetables, rapeseed, then unmapped fields by id */
@@ -28,7 +28,7 @@ const FIELD = ["#d8c983", "#a9c26a", "#b8cf7f", "#bcc48c", "#e0d66c",
 const NESTED = new Set(["park", "flowerbed", "paving", "gravel"]);
 const BLOOM = ["#e0525e", "#f2c94c", "#f4f1ea", "#c86bb0"];
 /** paint order of area kinds: broad landuse first, details on top */
-const AREA_ORDER = ["residential", "commercial", "industrial", "campus", "farm", "meadow", "orchard", "vineyard", "allotments",
+const AREA_ORDER = ["residential", "commercial", "industrial", "campus", "lawn", "farm", "meadow", "orchard", "vineyard", "allotments",
   "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "water", "pool"];
 const BASE = "#d9d3c4";
 const SEA = "#2c80b2", SHALLOW = "#4ea6cb";
@@ -40,9 +40,38 @@ const ROAD_SURFACE: Record<string, string> = { paving: "#a9a49b", sett: "#988e83
 const PATH_SURFACE: Record<string, string> = { paving: "#e3dccf", sett: "#d0c7b9", gravel: "#ddd0b4", dirt: "#d6c4a0", grass: "#b9d58c", concrete: "#dddcd7" };
 const SHADOW_DIR: P2 = [0.84, 0.54]; // away from the renderer's sun (-0.55, -0.35, 0.76)
 
+/** Grass kinds that get the grass texture (preset `greenery`). */
+const GRASSY = new Set(["lawn", "park", "meadow", "scrub", "orchard", "cemetery", "allotments", "airgrass"]);
+let grassTile: HTMLCanvasElement | null = null;
+/**
+ * The grass texture, 384 px square (≈ 58 m at the ground's 0.15 m): soft lighter and darker patches about 10 m
+ * and 3.5 m across (value noise that wraps round, so the tile repeats without a seam) and a fine grain of tufts.
+ */
+function grassTexture(): HTMLCanvasElement {
+  if (grassTile) return grassTile;
+  const N = 384, c = document.createElement("canvas");
+  c.width = c.height = N;
+  const g = c.getContext("2d")!, img = g.createImageData(N, N);
+  const hash = (i: number, j: number, s: number) => { const h = Math.sin(i * 127.1 + j * 311.7 + s * 74.7) * 43758.5453; return h - Math.floor(h); };
+  const ease = (t: number) => t * t * (3 - 2 * t);
+  const noise = (x: number, y: number, cells: number, seed: number) => {
+    const fx = (x / N) * cells, fy = (y / N) * cells, i = Math.floor(fx), j = Math.floor(fy), u = ease(fx - i), v = ease(fy - j);
+    const h = (a: number, b: number) => hash(a % cells, b % cells, seed);
+    return (h(i, j) * (1 - u) + h(i + 1, j) * u) * (1 - v) + (h(i, j + 1) * (1 - u) + h(i + 1, j + 1) * u) * v;
+  };
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const n = 0.6 * noise(x, y, 6, 1) + 0.4 * noise(x, y, 16, 2) - 0.5, tuft = hash(x, y, 3), q = (y * N + x) * 4;
+    const light = n > 0, a = Math.min(0.3, Math.abs(n) * 0.32 + (tuft > 0.9 ? 0.07 : 0));
+    img.data[q] = light ? 250 : 45; img.data[q + 1] = light ? 246 : 92; img.data[q + 2] = light ? 205 : 30;
+    img.data[q + 3] = Math.round(a * 255);
+  }
+  g.putImageData(img, 0, 0);
+  return (grassTile = c);
+}
+
 export function drawGround(
   ctx: CanvasRenderingContext2D, features: Feature[], [x0, y0, x1, y1]: number[], mpt: number,
-  objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR,
+  objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR, grass = false,
 ) {
   const SHADOW_DIR = shadowDir;
   const W = ctx.canvas.width, H = ctx.canvas.height;
@@ -93,6 +122,15 @@ export function drawGround(
       ctx.restore();
     }
     if (k === "bunker") { ctx.lineWidth = 0.4; ctx.strokeStyle = "#cdbb88"; ctx.stroke(); }
+    if (grass && GRASSY.has(k)) { // grass texture, fixed to the map (no seams between tiles), over this tile only
+      ctx.save(); ctx.clip("evenodd");
+      const pattern = ctx.createPattern(grassTexture(), "repeat")!;
+      pattern.setTransform(new DOMMatrix().scale(mpt));
+      const [bx0, by0, bx1, by1] = bounds(f.r!), ax = Math.max(bx0, x0), ay = Math.max(by0, y0);
+      ctx.fillStyle = pattern;
+      ctx.fillRect(ax, ay, Math.min(bx1, x1) - ax, Math.min(by1, y1) - ay);
+      ctx.restore();
+    }
     if (k === "flowerbed") { // blossoms: a deterministic speckle every ~1 m
       ctx.save(); ctx.clip("evenodd");
       const [bx0, by0, bx1, by1] = bounds(f.r!);

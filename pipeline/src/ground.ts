@@ -19,7 +19,8 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { openArea } from "./areas.ts";
 import { ecefToEnu, enuToLlh, llhToEcef } from "./camera.ts";
-import { gugikTerrain } from "./gugik.ts";
+import { fromPuwg, gugikTerrain, orthoChunks, toPuwg } from "./gugik.ts";
+import { lawns } from "./greenery.ts";
 import { rasterSampler, toUtm } from "./lgl.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
@@ -47,6 +48,8 @@ const DGM = region.sources === "lgl" || region.sources === "gugik";
 const STYLED = region.look === "styled";
 /** Preset `streetDetail`: pavements where OSM maps them, separately mapped ones drawn as such, OSM surfaces. */
 const DETAIL = STYLED && styleOf(region.style).streetDetail;
+/** Preset `greenery`: lawns where the orthophoto is green (greenery.ts; GUGiK's orthophoto). */
+const GREENERY = STYLED && styleOf(region.style).greenery && region.sources === "gugik";
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
 const GEOID = region.geoidM;
 /** Terrain grid posting (m) and how far past the area it reaches (deg; the render footprint of an edge tile). */
@@ -427,6 +430,14 @@ const sample = (x: number, y: number) => {
 const ends = bridgeEnds(graph, sample);
 for (const [id, e] of ends) { const f = deckFeatures.get(id); if (f) f.e = e; }
 writeFileSync(join(out, "bridge-ends.json"), JSON.stringify(Object.fromEntries(ends)));
+// lawns and gardens where the orthophoto is green, a feature per 128 m block (the area and ~700 m round it)
+if (GREENERY) {
+  const m = 0.006, box = [S - m, W - m, N + m, E + m], c = [[box[0], box[1]], [box[0], box[3]], [box[2], box[1]], [box[2], box[3]]].map(([la, lo]) => toPuwg(la, lo));
+  const pbox = [Math.min(...c.map((q) => q[0])), Math.min(...c.map((q) => q[1])), Math.max(...c.map((q) => q[0])), Math.max(...c.map((q) => q[1]))];
+  const blocks = await lawns(orthoChunks(box), pbox, (e, n) => { const [la, lo] = fromPuwg(e, n), [x, y] = toEnu(lo, la); return [r1(x), r1(y)]; });
+  for (const r of blocks) features.push({ k: "lawn", r });
+  console.log(`  lawns: ${blocks.length} blocks, ${blocks.reduce((a, b) => a + b.length, 0)} outlines from the orthophoto`);
+}
 writeFileSync(join(out, "features.json"), JSON.stringify(features));
 let lo = Infinity, hi = -Infinity;
 for (const v of h) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
