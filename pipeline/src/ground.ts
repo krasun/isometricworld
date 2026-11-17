@@ -3,7 +3,9 @@
  *   terrain  Copernicus GLO-30 (a surface model: buildings are removed with a morphological
  *            opening + blur, which is plenty for flat Gush Dan), sea/lakes flattened from OSM;
  *            regions with sources "lgl": LGL DGM1 (1 m bare earth, sampled on a 3 m grid, no
- *            filtering; Copernicus only where DGM1 has no data), rivers left at their surveyed level
+ *            filtering; Copernicus only where DGM1 has no data), rivers left at their surveyed level;
+ *            sources "gugik": GUGiK NMT the same way, but still water gets one level and river areas a smoothed
+ *            surface (NMT is interpolated across water, wavy enough for the hillshade to draw a "bottom")
  *   surface  OSM roads at real widths, pavements, landuse, parks, beach, water, rail; regions with
  *            look "styled" keep meadows, vineyards, allotments and orchards as their own kinds
  *
@@ -52,7 +54,8 @@ const STYLED = region.look === "styled";
 const DETAIL = STYLED && styleOf(region.style).streetDetail;
 /** Preset `greenery`: lawns where the orthophoto is green (greenery.ts; GUGiK's orthophoto). */
 const GREENERY = STYLED && styleOf(region.style).greenery && region.sources === "gugik";
-/** Preset `waterDetail`: watercourses as lines, treatment basins murky (page/ground.ts draws the water's depth). */
+/** Preset `waterDetail`: watercourses as lines, treatment basins murky, dry (intermittent) reservoirs a grassy
+ *  basin (page/ground.ts draws the water's depth). */
 const WATER_DETAIL = STYLED && styleOf(region.style).waterDetail;
 /** Preset `parkedCars`: the stall lines of the parking lots (parking.ts; the cars: scene.ts). */
 const PARKED = STYLED && styleOf(region.style).parkedCars;
@@ -194,7 +197,10 @@ function fieldShade(t: Record<string, string>, id: number): number {
 function areaKind(t: Record<string, string>): string | null {
   const lu = t.landuse, le = t.leisure, na = t.natural, am = t.amenity;
   if (WATER_DETAIL && t.water === "wastewater") return "wastewater";
-  if (na === "water" || t.water || t.waterway === "riverbank" || lu === "basin" || lu === "reservoir") return "water";
+  const wet = na === "water" || t.water || t.waterway === "riverbank" || lu === "basin" || lu === "reservoir";
+  // dry detention and retention reservoirs (intermittent=yes): a grassy basin the stream runs through, full only in a flood
+  if (WATER_DETAIL && wet && (t.intermittent === "yes" || (t.seasonal !== undefined && t.seasonal !== "no"))) return "drybasin";
+  if (wet) return "water";
   if (le === "swimming_pool") return "pool";
   // golf courses: bunkers, greens and tees, fairways (over the course's lawn)
   if (t.golf === "bunker") return "bunker";
@@ -231,7 +237,8 @@ function areaKind(t: Record<string, string>): string | null {
 
 const osm = readJson(join(RAW, name, "ground.json"));
 const features: Feature[] = [];
-const water: P2[][][] = [];
+/** lakes, ponds, basins and river areas (river: flowing water, its surface falls along it) */
+const water: Array<{ r: P2[][]; river: boolean }> = [];
 const coast: P2[][] = [];
 /** road node id -> how many road ways use it (2+ = junction), widest road there */
 const nodeUse = new Map<number, { n: number; w: number; foot: boolean; y: number; k: string; p?: boolean }>();
@@ -306,7 +313,7 @@ for (const el of osm.elements) {
   const r = rings.map((q) => simplifyRing(q, 0.3)).filter((q) => q.length >= 4);
   if (!r.length) continue;
   features.push(k === "farm" || k === "meadow" ? { k, r, v: fieldShade(t, el.id) } : { k, r });
-  if (k === "water" || k === "wastewater") water.push(r);
+  if (k === "water" || k === "wastewater") water.push({ r, river: /^(river|canal|stream|rapids)$/.test(t.water ?? "") || t.waterway === "riverbank" });
 }
 
 /** junction entry: [x, y, radius (half width + 3 m), layer, kind of the widest road, (streetDetail) 1 if a street
@@ -415,7 +422,7 @@ if (fineShare < 1) {
 // water: sea at 0 m; lakes/rivers at their lowest surrounding ground; land kept above the sea
 const isWater = new Uint8Array(n);
 if (sea.length) fillGrid(sea, grid, (i) => { isWater[i] = 1; h[i] = -0.4; });
-for (const w of DGM ? [] : water) { // DGM1 already holds each river's surveyed level (and the Neckar's weirs)
+for (const { r: w } of DGM ? [] : water) { // DGM1 already holds each river's surveyed level (and the Neckar's weirs)
   const idx: number[] = [];
   fillGrid(w, grid, (i) => idx.push(i));
   if (!idx.length) continue;
@@ -423,6 +430,36 @@ for (const w of DGM ? [] : water) { // DGM1 already holds each river's surveyed 
   for (const i of idx) { if (!isWater[i]) h[i] = level; isWater[i] = 2; }
 }
 for (let i = 0; i < n; i++) if (!isWater[i]) h[i] = Math.max(h[i], 0.8);
+// GUGiK NMT has no water surface: it is interpolated across a lake from its shores, wavy by half a metre and more,
+// which the hillshade draws as a sculpted bottom. Still water gets one level, its lowest tenth (below the shores);
+// a river area the mean of its own nodes within ~15 m, twice (no waves, its fall kept).
+if (region.sources === "gugik") {
+  const inside = new Uint8Array(n);
+  for (const w of water) {
+    const idx: number[] = [];
+    fillGrid(w.r, grid, (i) => idx.push(i));
+    if (!idx.length) continue;
+    if (!w.river) {
+      const v = idx.map((i) => h[i]).sort((a, b) => a - b), level = v[Math.floor((v.length - 1) * 0.1)];
+      for (const i of idx) h[i] = level;
+      continue;
+    }
+    for (const i of idx) inside[i] = 1;
+    for (let pass = 0; pass < 2; pass++) {
+      const next = idx.map((i) => {
+        const ix = i % grid.nx, iy = (i - ix) / grid.nx;
+        let s = 0, c = 0;
+        for (let dy = -5; dy <= 5; dy++) for (let dx = -5; dx <= 5; dx++) {
+          const x = ix + dx, y = iy + dy, j = y * grid.nx + x;
+          if (x >= 0 && y >= 0 && x < grid.nx && y < grid.ny && inside[j]) { s += h[j]; c++; }
+        }
+        return s / c;
+      });
+      idx.forEach((i, k) => (h[i] = next[k]));
+    }
+    for (const i of idx) inside[i] = 0;
+  }
+}
 
 // orthometric -> ellipsoid -> ENU up (Earth curvature drops the ellipsoid below the tangent plane)
 for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {

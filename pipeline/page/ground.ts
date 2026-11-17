@@ -17,7 +17,7 @@ const FILL: Record<string, string> = {
   park: "#9dcb6c", wood: "#73a851", scrub: "#adbb7b", sand: "#eedbab", pitch: "#6db35a", track: "#c97a5c",
   playground: "#dccba1", parking: "#bebcb7", paving: "#e6e0d4", water: "#3f95c2", pool: "#5ccbe6",
   vineyard: "#bfc27a", allotments: "#a9c676", orchard: "#b4cc7e", meadow: "#b6cf7e",
-  flowerbed: "#86b45a", gravel: "#ddd0b4", lawn: "#a5c972", sandpit: "#efdfb0", wastewater: "#7d9286",
+  flowerbed: "#86b45a", gravel: "#ddd0b4", lawn: "#a5c972", sandpit: "#efdfb0", wastewater: "#7d9286", drybasin: "#93b968",
   fairway: "#8fca62", green: "#76c158", bunker: "#f0e2b4", airgrass: "#a8cf78", tarmac: "#8e9196",
 };
 /** field shades (ground.ts fieldShade): wheat, maize, grass, vegetables, rapeseed, then unmapped fields by id */
@@ -29,7 +29,7 @@ const NESTED = new Set(["park", "flowerbed", "paving", "gravel"]);
 const BLOOM = ["#e0525e", "#f2c94c", "#f4f1ea", "#c86bb0"];
 /** paint order of area kinds: broad landuse first, details on top */
 const AREA_ORDER = ["residential", "commercial", "industrial", "campus", "lawn", "farm", "meadow", "orchard", "vineyard", "allotments",
-  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "sandpit", "playpad", "water", "wastewater", "pool"];
+  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "sandpit", "playpad", "drybasin", "water", "wastewater", "pool"];
 /** rubber safety surface under playground equipment: red-brown, green, blue (v) */
 const PADS = ["#b8604c", "#5f9c4c", "#557fb5"];
 const BASE = "#d9d3c4";
@@ -71,7 +71,7 @@ function waterTexture(): HTMLCanvasElement {
 }
 
 /** Grass kinds that get the grass texture (preset `greenery`). */
-const GRASSY = new Set(["lawn", "park", "meadow", "scrub", "orchard", "cemetery", "allotments", "airgrass"]);
+const GRASSY = new Set(["lawn", "park", "meadow", "scrub", "orchard", "cemetery", "allotments", "airgrass", "drybasin"]);
 let grassTile: HTMLCanvasElement | null = null;
 /**
  * The grass texture, 384 px square (≈ 58 m at the ground's 0.15 m): soft lighter and darker patches about 10 m

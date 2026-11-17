@@ -194,7 +194,8 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   equipment OSM maps on playgrounds as small bright models, on public playgrounds without any a set by their
   size (sandpit, swing, tower with a slide, seesaw, spring riders, roundabout), rubber safety pads under it and
   sandpits on the ground (`playgrounds.ts`). `waterDetail`: water with lighter shallows along the shore, a muddy
-  bank, ripples and sun glints fixed to the map, murky treatment basins, and the rivers, streams, ditches and
+  bank, ripples and sun glints fixed to the map, murky treatment basins, dry detention and retention reservoirs
+  (`intermittent=yes`) as the grassy basin they are most of the time, and the rivers, streams, ditches and
   drains OSM maps as lines (`fetch.ts` osm-water.json, culverts left out). `parkedCars`: cars on the parking
   lots and bays OSM maps, about two thirds occupied: on its stalls where mapped, else laid out by the lot's shape
   (a kerbside lane, a row, or rows between aisles), with stall lines on lots (`parking.ts`). `barriers`: OSM

@@ -60,7 +60,8 @@ export interface StylePreset {
    *  any a set by their size; rubber safety pads under it and sandpits on the ground. */
   playgrounds: boolean;
   /** Water drawn with depth (lighter shallows at the shore, a dark bank), ripples and glints, murky treatment
-   *  basins, and the streams, rivers, ditches and drains OSM maps as lines (fetch.ts osm-water.json). */
+   *  basins, dry (intermittent) reservoirs as a grassy basin, and the streams, rivers, ditches and drains OSM maps
+   *  as lines (fetch.ts osm-water.json). */
   waterDetail: boolean;
   /** Parked cars on the parking lots and bays OSM maps (fetch.ts osm-parking.json, parking.ts), with stall lines. */
   parkedCars: boolean;
