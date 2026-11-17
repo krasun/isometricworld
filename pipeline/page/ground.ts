@@ -11,7 +11,7 @@ export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n
 interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }
 
 const FILL: Record<string, string> = {
-  residential: "#dcd5c6", commercial: "#dfdbd2", industrial: "#cfcbc2", campus: "#e1dacb",
+  residential: "#dcd5c6", commercial: "#dfdbd2", industrial: "#cfcbc2", railyard: "#cfcbc2", campus: "#e1dacb",
   farm: "#c9cd8c", dirt: "#d2b98f", cemetery: "#b2c798",
   park: "#9dcb6c", wood: "#73a851", scrub: "#adbb7b", sand: "#eedbab", pitch: "#6db35a", track: "#c97a5c",
   playground: "#dccba1", parking: "#bebcb7", paving: "#e6e0d4", water: "#3f95c2", pool: "#5ccbe6",
@@ -27,7 +27,7 @@ const FIELD = ["#d8c983", "#a9c26a", "#b8cf7f", "#bcc48c", "#e0d66c",
 const NESTED = new Set(["park", "flowerbed", "paving", "gravel"]);
 const BLOOM = ["#e0525e", "#f2c94c", "#f4f1ea", "#c86bb0"];
 /** paint order of area kinds: broad landuse first, details on top */
-const AREA_ORDER = ["residential", "commercial", "industrial", "campus", "farm", "meadow", "orchard", "vineyard", "allotments",
+const AREA_ORDER = ["residential", "commercial", "industrial", "railyard", "campus", "farm", "meadow", "orchard", "vineyard", "allotments",
   "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "water", "pool"];
 const BASE = "#d9d3c4";
 const SEA = "#2c80b2", SHALLOW = "#4ea6cb";
@@ -119,6 +119,7 @@ export function drawGround(
   const zebras = (of("zebras")[0]?.j ?? []).filter(inView);
 
   // 1. areas
+  let yardGravel: CanvasPattern | undefined;
   const ringArea = (r: P2[]) => Math.abs(r.reduce((a, [x, y], i) => { const [u, v] = r[(i + 1) % r.length]; return a + x * v - u * y; }, 0)) / 2;
   const areas: Feature[] = [];
   for (const k of AREA_ORDER) {
@@ -127,7 +128,9 @@ export function drawGround(
   }
   for (const f of areas) {
     const k = f.k;
-    path(f.r!); ctx.fillStyle = (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL_[k] : FILL_[k]; ctx.fill("evenodd");
+    path(f.r!); ctx.fillStyle = (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL_[k] : FILL_[k];
+    if (k === "railyard" && styled) ctx.fillStyle = yardGravel ??= gravelPattern(mpt, "#c2bcb0", "#aaa499", "#d4cfc4"); // lighter than the beds
+    ctx.fill("evenodd");
     if (k === "farm" && f.v !== undefined) { // tramlines / furrows: faint parallel lines, own angle per field
       ctx.save(); ctx.clip("evenodd");
       const [bx0, by0, bx1, by1] = bounds(f.r!), cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, R = Math.hypot(bx1 - bx0, by1 - by0) / 2;
@@ -399,7 +402,23 @@ export function drawGround(
     } else ctx.restore();
     // 6. rail of this layer: ballast, sleepers, two rails (a road bridge above covers it)
     ctx.lineCap = "round";
-    for (const f of rails.filter((f) => (f.y ?? 0) === layer)) {
+    const rl = rails.filter((f) => (f.y ?? 0) === layer);
+    if (styled) {
+      // styled (learned from AI repaints): each pass over all tracks of the layer, so parallel tracks share one
+      // gravel bed with a dark edge only outside, and crossings stay clean; few, bold sleepers; rails as a dark
+      // line under a white top, which reads zoomed in and out
+      if (layer > 0) for (const f of rl) { stroke(f.l!, 6, "#55565c"); stroke(f.l!, 5.4, "#cfcac0"); }
+      for (const f of rl) stroke(f.l!, 5.3, "#706c65");
+      const gravel = gravelPattern(mpt);
+      for (const f of rl) { line(f.l!); dc.lineWidth = 4.7; dc.strokeStyle = gravel; dc.setLineDash([]); dc.stroke(); }
+      ctx.lineCap = "butt";
+      for (const f of rl) stroke(f.l!, 3.1, "#57504a", [0.45, 0.75]);
+      ctx.setLineDash([]);
+      // rails at 0.25 m/px: a ~2 px bright top on a dark body showing ~1 px each side (like the ink round houses)
+      for (const f of rl) for (const s of [-0.85, 0.85]) stroke(offset(f.l!, s), 0.95, "#26272b");
+      for (const f of rl) for (const s of [-0.85, 0.85]) stroke(offset(f.l!, s), 0.45, "#ffffff");
+      ctx.lineCap = "round";
+    } else for (const f of rl) {
       if (layer > 0) { stroke(f.l!, 5, "#55565c"); stroke(f.l!, 4.4, "#cfcac0"); } // deck edge and parapets, like road bridges
       stroke(f.l!, 3.4, "#a9a49a");
       stroke(f.l!, 2.6, "#7d6a58", [0.25, 0.4]);
@@ -447,6 +466,22 @@ export function drawGround(
 
 const CLASS = ["dirtroad", "lane", "street", "highway"];
 const order = (f: Feature) => CLASS.indexOf(f.k) * 100 + (f.w ?? 0);
+
+/** styled track bed: grey gravel, a deterministic light/dark speckle of 2 canvas px, anchored to the ENU
+ *  origin so it continues across tiles */
+function gravelPattern(mpt: number, base = "#a29d94", dark = "#87827a", light = "#bdb8ae"): CanvasPattern {
+  const N = 64, c = document.createElement("canvas");
+  c.width = c.height = N;
+  const g = c.getContext("2d")!;
+  g.fillStyle = base; g.fillRect(0, 0, N, N);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const h = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
+    if (h < 0.16) { g.fillStyle = dark; g.fillRect(x, y, 1, 1); } else if (h > 0.86) { g.fillStyle = light; g.fillRect(x, y, 1, 1); }
+  }
+  const p = g.createPattern(c, "repeat")!;
+  p.setTransform(new DOMMatrix([2 * mpt, 0, 0, 2 * mpt, 0, 0]));
+  return p;
+}
 
 /** Parallel polyline at signed distance d (left > 0). */
 function offset(l: P2[], d: number): P2[] {

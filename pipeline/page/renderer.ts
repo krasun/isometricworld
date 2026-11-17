@@ -445,6 +445,10 @@ const buildingMaterial = new THREE.ShaderMaterial({
             if (fract(y / FH) < 0.1 + 0.15 * r4 || fract(x / M) < 0.06) c = vec3(0.84, 0.86, 0.88);
           } else if (k == 4) {       // sheds, garages, halls: horizontal or vertical cladding
             if (r1 < 0.5 ? fract(y / 0.9) < 0.08 : fract(x / 0.6) < 0.12) c *= 0.93;
+          } else if (k == 6) {       // masonry (tunnel portals, retaining walls): ashlar courses, staggered joints
+            float row = floor(y / 0.55), bl = 0.9 + 0.6 * hash(vec2(row, 3.1)), sx = x / bl + 0.5 * mod(row, 2.0);
+            c *= 0.9 + 0.16 * hash(vec2(floor(sx), row));
+            if (fract(y / 0.55) < 0.14 || fract(sx) < 0.08) c *= 0.72;
           } else {                   // offices: ribbon windows or a grid of square windows, shop fronts
             float FH = 3.4 + 0.5 * r1, M = 1.3 + 0.8 * r2, fy = fract(y / FH);
             vec3 g = mix(WIN, r5 < 0.5 ? vec3(0.36, 0.48, 0.58) : vec3(0.40, 0.50, 0.46), 0.5) * (0.9 + 0.2 * hash(vec2(floor(x / M), floor(y / FH)) + v));

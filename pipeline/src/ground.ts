@@ -173,6 +173,7 @@ function areaKind(t: Record<string, string>): string | null {
     return /^(fine_gravel|gravel|compacted|pebblestone)$/.test(t.surface ?? "") ? "gravel" : "paving";
   if (["school", "university", "college", "hospital"].includes(am)) return "campus";
   if (t.aeroway === "aerodrome") return "park"; // a small airfield's grass (EDTQ Pattonville is also tagged landuse=military)
+  if (LGL && lu === "railway") return "railyard"; // styled: light gravel under the darker track beds
   if (["industrial", "railway", "port", "military", "depot", "garages"].includes(lu)) return "industrial";
   if (["commercial", "retail"].includes(lu)) return "commercial";
   if (lu === "residential") return "residential";

@@ -19,6 +19,7 @@ import { CAMERA, ecefToEnu, enuToPixel, llhToEcef } from "./camera.ts";
 import { isBridge } from "./bridges.ts";
 import { crowns } from "./canopy.ts";
 import { ARCADES, arcade, LOOKS, type Piece, TOPS, TOWERS } from "./landmarks.ts";
+import { frame } from "./frame.ts";
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
 import { deckHeight } from "./bridges.ts";
@@ -596,6 +597,65 @@ if (region.sources === "lgl") {
   const groups = groupEnds(tunnelEnds(ways, (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }));
   for (const g of groups) meshes.push(...portal(g, groundAt, (x, y) => deckAt([x, y], 6) ?? groundAt(x, y)).map(fromPiece));
   console.log(`  tunnel portals: ${groups.length}`);
+  // catenary masts (electrified=contact_line, open air, on the ground): every 50 m, 2.6 m beside the track on the
+  // side without a neighbouring track, an arm over the wire; parallel tracks share them (none within 15 m)
+  {
+    const lines = ways.filter((e: any) => {
+      const t = e.tags ?? {};
+      return /^(rail|light_rail)$/.test(t.railway ?? "") && t.electrified === "contact_line" && !(t.tunnel && t.tunnel !== "no")
+        && !isBridge(t) && !(Number(t.layer) > 0) && t.covered !== "yes" && e.geometry?.length >= 2;
+    }).map((e: any) => e.geometry.map((q: any) => { const p = toEnu(q.lon, q.lat); return [p[0], p[1]] as P2; }) as P2[]);
+    // all open-air track segments on a 20 m grid, to find neighbours
+    const segs = new Map<string, Array<[P2, P2]>>();
+    for (const e of ways) {
+      const t = e.tags ?? {};
+      if (!t.railway || /platform|abandoned|razed|construction|proposed/.test(t.railway) || (t.tunnel && t.tunnel !== "no") || !(e.geometry?.length >= 2)) continue;
+      const l = e.geometry.map((q: any) => { const p = toEnu(q.lon, q.lat); return [p[0], p[1]] as P2; }) as P2[];
+      for (let i = 1; i < l.length; i++) {
+        const k = (x: number, y: number) => `${Math.floor(x / 20)}_${Math.floor(y / 20)}`, ks = new Set<string>();
+        const n = Math.ceil(Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]) / 10);
+        for (let j = 0; j <= n; j++) ks.add(k(l[i - 1][0] + ((l[i][0] - l[i - 1][0]) * j) / n, l[i - 1][1] + ((l[i][1] - l[i - 1][1]) * j) / n));
+        for (const kk of ks) { if (!segs.has(kk)) segs.set(kk, []); segs.get(kk)!.push([l[i - 1], l[i]]); }
+      }
+    }
+    const trackNear = (p: P2, r: number) => {
+      for (let gx = Math.floor((p[0] - r) / 20); gx <= Math.floor((p[0] + r) / 20); gx++)
+        for (let gy = Math.floor((p[1] - r) / 20); gy <= Math.floor((p[1] + r) / 20); gy++)
+          for (const [a, b] of segs.get(`${gx}_${gy}`) ?? []) {
+            const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
+            const u = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+            if (Math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy) < r) return true;
+          }
+      return false;
+    };
+    const roofs = meshes.filter((m) => m.footprint.length >= 3 && (m as any).id !== "landmark").map((m) => m.footprint);
+    const underRoof = (p: P2) => roofs.some((r) => Math.abs(r[0][0] - p[0]) < 400 && Math.abs(r[0][1] - p[1]) < 400 && inside(p, r));
+    const MAST = [0.62, 0.64, 0.67], masts: P2[] = [];
+    for (const l of lines) {
+      let next = 25;
+      for (let i = 1, s = 0; i < l.length; i++) {
+        const a = l[i - 1], b = l[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (L < 1e-6) continue;
+        const u: P2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L], v: P2 = [-u[1], u[0]];
+        for (; next <= s + L; next += 50) {
+          const p: P2 = [a[0] + u[0] * (next - s), a[1] + u[1] * (next - s)];
+          if (masts.some((m) => Math.hypot(m[0] - p[0], m[1] - p[1]) < 15) || underRoof(p)) continue;
+          const side = [1, -1].find((sd) => !trackNear([p[0] + v[0] * 2.6 * sd, p[1] + v[1] * 2.6 * sd], 2.2));
+          if (!side) continue;
+          const m: P2 = [p[0] + v[0] * 2.6 * side, p[1] + v[1] * 2.6 * side];
+          const { piece, block } = frame(p, u, groundAt(m[0], m[1]));
+          const pc = piece(-0.3, 0.3, Math.min(0, 2.6 * side) - 0.6, Math.max(0, 2.6 * side) + 0.6, 7.2, MAST);
+          block(pc, -0.17, 0.17, 2.6 * side - 0.17, 2.6 * side + 0.17, 0, 7.2);                       // mast
+          block(pc, -0.07, 0.07, Math.min(2.6 * side, -0.5 * side), Math.max(2.6 * side, -0.5 * side), 6.2, 6.4); // arm
+          block(pc, -0.05, 0.05, -0.05, 0.05, 5.6, 6.2);                                                 // dropper
+          meshes.push(fromPiece(pc));
+          masts.push(m);
+        }
+        s += L;
+      }
+    }
+    console.log(`  catenary masts: ${masts.length} on ${lines.length} electrified way(s)`);
+  }
   // named bridges (bridgemodels.ts) on their OSM outline
   for (const e of ways) {
     const model = BRIDGES[e.tags?.wikidata ?? ""];

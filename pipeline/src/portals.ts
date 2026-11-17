@@ -12,9 +12,11 @@ import { roadWidth } from "./roadspec.ts";
 type P2 = [number, number];
 type Way = { type: string; nodes?: number[]; geometry?: Array<{ lat: number; lon: number }>; tags?: Record<string, string> };
 /** one tunnel end: where it is, the direction into the tunnel, the opening's width and clear height */
-type End = { p: P2; d: P2; w: number; h: number; name: string };
+type End = { p: P2; d: P2; w: number; h: number; name: string; rail?: boolean };
 
 const CONCRETE = [0.8, 0.79, 0.76], WHITE = [0.93, 0.93, 0.91], VOID = [0.07, 0.07, 0.08];
+/** railway portals: masonry face (renderer style 6), darker arch ring and coping */
+const STONE = [0.8, 0.75, 0.66], RING_STONE = [0.66, 0.61, 0.53], MASONRY = 6, TURF = [0.6, 0.75, 0.38];
 const tunnel = (t: Record<string, string>) => t.tunnel === "yes";
 const ROADS = /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential)(_link)?$/;
 
@@ -43,7 +45,7 @@ export function tunnelEnds(ways: Way[], toEnu: (lon: number, lat: number) => P2)
       if (L < 1) continue;
       const w = rail ? (t.railway === "rail" ? 4.8 : 4.2) : roadWidth(t) + 1.5;
       const h = rail ? (t.railway === "rail" ? 6.5 : 5) : 5;
-      ends.push({ p, d: [dx / L, dy / L], w, h, name: t["tunnel:name"] ?? t.name ?? "" });
+      ends.push({ p, d: [dx / L, dy / L], w, h, name: t["tunnel:name"] ?? t.name ?? "", rail });
     }
   }
   return ends;
@@ -86,14 +88,23 @@ export function portal(group: End[], ground: (x: number, y: number) => number, f
   const at0 = (a: number, b: number): P2 => [o[0] + d[0] * a + v[0] * b, o[1] + d[1] * a + v[1] * b];
   // the approach is the floor: lowest ground (or deck) 2–4 m in front of the openings
   const base = Math.min(...open.flatMap(([b0, b1]) => [b0, (b0 + b1) / 2, b1].flatMap((b) => [2, 4].map((a) => floor(...at0(-a, b))))));
+  // DGM1 bridges the ground over the mouth: a headwall at the tunnel end itself stands half buried. It moves out
+  // to the toe of the slope, the first spot where the ground across the openings (over the wall's 1 m depth)
+  // stays within 0.5 m of the floor, at most 10 m out
+  const across = open.flatMap(([b0, b1]) => [b0, (b0 + b1) / 2, b1]);
+  let out = 0;
+  while (out < 10 && Math.max(...[-0.2, 0.5, 1.2].flatMap((a) => across.map((b) => ground(...at0(a - out, b))))) > base + 0.5) out += 0.5;
+  if (out >= 10) out = 0;    // no toe within reach (the approach keeps climbing): stay at the tunnel end
+  if (out > 0) { const o0 = at0(-out, 0); o[0] = o0[0]; o[1] = o0[1]; } // at0 follows o
   // the wall reaches the terrain behind it (the tunnel lid), at least 1.2 m above the openings; no rise
   // behind (an underpass under an embankment or a bridge) gets no portal
-  const behind = open.flatMap(([b0, b1]) => [b0, (b0 + b1) / 2, b1].flatMap((b) => [6, 8, 10].map((a) => ground(...at0(a, b))))).sort((x, y) => x - y);
+  const behind = across.flatMap((b) => [6, 8, 10].map((a) => ground(...at0(a + out, b)))).sort((x, y) => x - y);
   const rise = behind[Math.floor(behind.length / 2)] - base;
   if (rise < 3) return [];
   const top = Math.min(H + 8, Math.max(H + 1.2, rise + 0.4));
   const B0 = open[0][0] - 1.6, B1 = open.at(-1)![1] + 1.6;
   const { at, piece, block } = frame(o, d, base);
+  if (group.some((e) => e.rail)) return railPortal(open, H, top, B0, B1, out, at, piece, block, ground, base);
   // Rosensteintunnel (B10, 2022): white concrete portals and trough walls
   const concrete = piece(-14, 5, B0, B1, top, name.startsWith("Rosensteintunnel") ? WHITE : CONCRETE);
   const dark = piece(-14, 5, B0, B1, H, VOID);
@@ -109,9 +120,44 @@ export function portal(group: End[], ground: (x: number, y: number) => number, f
   // coping along the top edge, 0.3 m proud
   block(concrete, -0.3, 1, B0 - 0.3, B1 + 0.3, top, top + 0.4);
   // lid behind the headwall: hides the terrain step where the road texture climbs onto it
-  block(concrete, 1, 5, B0, B1, top - 0.6, top);
+  block(concrete, 1, 5 + out, B0, B1, top - 0.6, top);
   wings(concrete, block, at, ground, base, B0, B1, top, 0.6);
   return [concrete, dark];
+}
+
+/**
+ * A railway portal (most of Stuttgart's are 19th-century masonry): an ashlar face, a segmental arch per opening
+ * in a darker voussoir ring with a keystone, a cornice and coping along the top, masonry wing walls.
+ */
+function railPortal(open: number[][], H: number, top: number, B0: number, B1: number, out: number,
+  at: (a: number, b: number) => P2, piece: ReturnType<typeof frame>["piece"], block: ReturnType<typeof frame>["block"],
+  ground: (x: number, y: number) => number, base: number): Piece[] {
+  const stone = piece(-14, 5, B0, B1, top, STONE, MASONRY), ring = piece(-14, 5, B0, B1, top, RING_STONE, MASONRY);
+  const dark = piece(-14, 5, B0, B1, H, VOID);
+  const RING = 0.8, N = 12;
+  let b = B0;
+  for (const [b0, b1] of open) {
+    const R = (b1 - b0) / 2, m = (b0 + b1) / 2, RISE = Math.min(R * 0.8, H * 0.45), SPRING = H - RISE;
+    const zo = (bb: number) => SPRING + RISE * Math.sqrt(Math.max(0, 1 - ((bb - m) / R) ** 2));
+    block(stone, 0, 1, b, b0 - RING, 0, top);                                         // pier
+    for (const [j0, j1] of [[b0 - RING, b0], [b1, b1 + RING]]) block(ring, -0.12, 1, j0, j1, 0, SPRING + 0.3); // jambs
+    for (let i = 0; i < N; i++) {
+      const s0 = b0 + (2 * R * i) / N, s1 = b0 + (2 * R * (i + 1)) / N;
+      block(dark, 0.15, 3, s0, s1, 0, (_, bb) => zo(bb));                              // tunnel mouth, 3 m deep
+      block(ring, -0.12, 1, s0, s1, (_, bb) => zo(bb), (_, bb) => Math.min(top - 0.5, zo(bb) + RING));
+      block(stone, 0, 1, s0, s1, (_, bb) => Math.min(top - 0.5, zo(bb) + RING), top);
+    }
+    block(ring, -0.3, 1, m - 0.45, m + 0.45, H - 0.3, Math.min(top - 0.5, H + RING + 0.3)); // keystone
+    b = b1 + RING;
+  }
+  block(stone, 0, 1, b, B1, 0, top);
+  block(ring, -0.25, 1, B0 - 0.2, B1 + 0.2, top - 0.7, top - 0.4);                    // cornice
+  block(ring, -0.35, 1, B0 - 0.35, B1 + 0.35, top, top + 0.45);                       // coping
+  // lid: turf over the tunnel, so the portal reads as dug into the hill and not as a box
+  const turf = piece(1, 5 + out, B0, B1, top, TURF);
+  block(turf, 1, 5 + out, B0, B1, top - 0.6, top);
+  wings(stone, block, at, ground, base, B0, B1, top, 0.8);
+  return [stone, ring, dark, turf];
 }
 
 /** wing walls along the approach (a < 0), retaining the ground beside the trough: their top follows it */
