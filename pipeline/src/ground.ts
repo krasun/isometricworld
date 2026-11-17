@@ -14,13 +14,14 @@
  *         data/derived/<area>/ground/features.json drawable features in ENU (see Feature)
  */
 import { bridgeEnds, carried, isBridge, type GraphWay } from "./bridges.ts";
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
 import { openArea } from "./areas.ts";
 import { ecefToEnu, enuToLlh, llhToEcef } from "./camera.ts";
 import { fromPuwg, gugikTerrain, orthoChunks, toPuwg } from "./gugik.ts";
 import { lawns } from "./greenery.ts";
+import { playLayout } from "./playgrounds.ts";
 import { rasterSampler, toUtm } from "./lgl.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
@@ -50,6 +51,8 @@ const STYLED = region.look === "styled";
 const DETAIL = STYLED && styleOf(region.style).streetDetail;
 /** Preset `greenery`: lawns where the orthophoto is green (greenery.ts; GUGiK's orthophoto). */
 const GREENERY = STYLED && styleOf(region.style).greenery && region.sources === "gugik";
+/** Preset `playgrounds`: rubber safety pads and sandpits of the playgrounds (playgrounds.ts). */
+const PLAYGROUNDS = STYLED && styleOf(region.style).playgrounds;
 /** Preset `bridgeDetail`: bridge decks carried on to their abutments (below). */
 const BRIDGE_DETAIL = STYLED && styleOf(region.style).bridgeDetail;
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
@@ -452,6 +455,13 @@ if (BRIDGE_DETAIL) {
 const ends = bridgeEnds(graph, sample);
 for (const [id, e] of ends) { const f = deckFeatures.get(id); if (f) f.e = e; }
 writeFileSync(join(out, "bridge-ends.json"), JSON.stringify(Object.fromEntries(ends)));
+// playgrounds: sandpits and the rubber pads under the equipment (the equipment itself: scene.ts)
+if (PLAYGROUNDS && existsSync(join(RAW, name, "osm-play.json"))) {
+  const { sand, pads } = playLayout(readJson(join(RAW, name, "osm-play.json")), (lon, lat) => toEnu(lon, lat));
+  for (const r of sand) features.push({ k: "sandpit", r: [r.map(([x, y]) => [r1(x), r1(y)] as P2)] });
+  for (const p of pads) features.push({ k: "playpad", r: [p.r.map(([x, y]) => [r1(x), r1(y)] as P2)], v: p.v });
+  console.log(`  playgrounds: ${sand.length} sandpits, ${pads.length} safety pads`);
+}
 // lawns and gardens where the orthophoto is green, a feature per 128 m block (the area and ~700 m round it)
 if (GREENERY) {
   const m = 0.006, box = [S - m, W - m, N + m, E + m], c = [[box[0], box[1]], [box[0], box[3]], [box[2], box[1]], [box[2], box[3]]].map(([la, lo]) => toPuwg(la, lo));

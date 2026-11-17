@@ -10,6 +10,8 @@
  *                                        has the buildings), roof/facade looks + landmarks (styled regions)
  * data/raw/<area>/osm_parts.json         OSM building:parts (Tel Aviv-Yafo: towers on podiums)
  * data/raw/<area>/osm-buildings.json     every OSM building (sources "gugik": the ones the 3D models and BDOT10k lack)
+ * data/raw/<area>/osm-power.json         OSM high-voltage power lines and their towers (preset powerLines)
+ * data/raw/<area>/osm-play.json          OSM playgrounds and their equipment (preset playgrounds)
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
  * data/raw/<area>/rails.json             OSM rail routes (S-Bahn, regional, Stadtbahn…) and their tracks (trains)
  * data/raw/<area>/ground.json            OSM ground surface: roads/paths, landuse, parks, water,
@@ -30,6 +32,7 @@ import { download } from "./lgl.ts";
 import { fetchGugik } from "./gugik.ts";
 import { FILTERS, downloadExtract, localOsm, type OsmFilter } from "./osmlocal.ts";
 import { overpass } from "./overpass.ts";
+import { styleOf } from "./styles.ts";
 import { RAW } from "./paths.ts";
 import { REGIONS } from "./places.ts";
 
@@ -147,6 +150,25 @@ if (sources === "gugik" && !existsSync(join(dir, "osm-buildings.json"))) {
 out body geom;`, area.bbox, FILTERS.buildings);
   writeFileSync(join(dir, "osm-buildings.json"), JSON.stringify(data));
   console.log(`  osm buildings: ${data.elements.length} elements`);
+}
+// the look's power lines (preset powerLines): the lines with their tower nodes
+if (STYLED && styleOf(REGIONS[area.region].style).powerLines && !existsSync(join(dir, "osm-power.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(way["power"="line"]${b};)->.l;
+(.l; node(w.l)["power"~"^(tower|portal)$"];);
+out body geom;`, area.bbox, FILTERS.power);
+  writeFileSync(join(dir, "osm-power.json"), JSON.stringify(data));
+  console.log(`  osm power lines: ${data.elements.length} elements`);
+}
+// the look's playgrounds (preset playgrounds): the areas and the equipment on them
+if (STYLED && styleOf(REGIONS[area.region].style).playgrounds && !existsSync(join(dir, "osm-play.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(nwr["leisure"="playground"]${b}; nwr["playground"]${b};);
+out body geom;`, area.bbox, FILTERS.play);
+  writeFileSync(join(dir, "osm-play.json"), JSON.stringify(data));
+  console.log(`  osm playgrounds: ${data.elements.length} elements`);
 }
 if (!existsSync(join(dir, "roads.json"))) {
   const [s, w, n, e] = area.bbox;

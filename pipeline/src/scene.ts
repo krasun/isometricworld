@@ -23,6 +23,8 @@ import { CAMERA, ecefToEnu, enuToLlh, enuToPixel, llhToEcef } from "./camera.ts"
 import { isBridge } from "./bridges.ts";
 import { crowns } from "./canopy.ts";
 import { styleOf } from "./styles.ts";
+import { powerLines } from "./power.ts";
+import { playLayout, playPieces } from "./playgrounds.ts";
 import { ARCADES, arcade, LOOKS, PLACED, type Piece, type Rings, STRUCTURES, type Structure, TOPS, TOWERS } from "./landmarks.ts";
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
@@ -815,6 +817,24 @@ for (const pl of PLACED) {
   meshes.push(...pl.model(c, base, ground).map(fromPiece));
   dropCrowns((p) => Math.hypot(p[0] - c[0], p[1] - c[1]) < pl.clear);
   console.log(`  landmark ${pl.name}: ${note}`);
+}
+// preset powerLines: pylons and conductors of the OSM high-voltage lines (power.ts); crowns at the pylons were
+// the surface model reading their steel
+if (STYLED && styleOf(region.style).powerLines && existsSync(join(raw, "osm-power.json"))) {
+  const cs = [[bbox[0], bbox[1]], [bbox[0], bbox[3]], [bbox[2], bbox[1]], [bbox[2], bbox[3]]].map(([la, lo]) => toEnu(lo, la));
+  const ex = [Math.min(...cs.map((c) => c[0])) - 100, Math.min(...cs.map((c) => c[1])) - 100, Math.max(...cs.map((c) => c[0])) + 100, Math.max(...cs.map((c) => c[1])) + 100];
+  const { pieces, towers } = powerLines(readJson(join(raw, "osm-power.json")), (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }, groundAt,
+    (p) => p[0] >= ex[0] && p[0] <= ex[2] && p[1] >= ex[1] && p[1] <= ex[3]);
+  meshes.push(...pieces.map(fromPiece));
+  dropCrowns((p) => towers.some((t) => Math.hypot(p[0] - t[0], p[1] - t[1]) < 4));
+  console.log(`  power lines: ${towers.length} pylons, ${pieces.length - 2 * towers.length} spans`);
+}
+// preset playgrounds: the equipment (playgrounds.ts; its pads and sandpits are on the ground, ground.ts)
+if (STYLED && styleOf(region.style).playgrounds && existsSync(join(raw, "osm-play.json"))) {
+  const layout = playLayout(readJson(join(raw, "osm-play.json")), (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; });
+  const pieces = playPieces(layout, groundAt);
+  meshes.push(...pieces.map(fromPiece));
+  console.log(`  playgrounds: ${layout.items.length} pieces of equipment`);
 }
 for (const b of meshes as Mesh[]) {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;

@@ -17,7 +17,7 @@ const FILL: Record<string, string> = {
   park: "#9dcb6c", wood: "#73a851", scrub: "#adbb7b", sand: "#eedbab", pitch: "#6db35a", track: "#c97a5c",
   playground: "#dccba1", parking: "#bebcb7", paving: "#e6e0d4", water: "#3f95c2", pool: "#5ccbe6",
   vineyard: "#bfc27a", allotments: "#a9c676", orchard: "#b4cc7e", meadow: "#b6cf7e",
-  flowerbed: "#86b45a", gravel: "#ddd0b4", lawn: "#a5c972",
+  flowerbed: "#86b45a", gravel: "#ddd0b4", lawn: "#a5c972", sandpit: "#efdfb0",
   fairway: "#8fca62", green: "#76c158", bunker: "#f0e2b4", airgrass: "#a8cf78", tarmac: "#8e9196",
 };
 /** field shades (ground.ts fieldShade): wheat, maize, grass, vegetables, rapeseed, then unmapped fields by id */
@@ -29,7 +29,9 @@ const NESTED = new Set(["park", "flowerbed", "paving", "gravel"]);
 const BLOOM = ["#e0525e", "#f2c94c", "#f4f1ea", "#c86bb0"];
 /** paint order of area kinds: broad landuse first, details on top */
 const AREA_ORDER = ["residential", "commercial", "industrial", "campus", "lawn", "farm", "meadow", "orchard", "vineyard", "allotments",
-  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "water", "pool"];
+  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "sandpit", "playpad", "water", "pool"];
+/** rubber safety surface under playground equipment: red-brown, green, blue (v) */
+const PADS = ["#b8604c", "#5f9c4c", "#557fb5"];
 const BASE = "#d9d3c4";
 const SEA = "#2c80b2", SHALLOW = "#4ea6cb";
 const ASPHALT: Record<string, string> = { highway: "#6c7077", street: "#7b7e85", lane: "#8b8d91", dirtroad: "#c3ab82" };
@@ -106,7 +108,7 @@ export function drawGround(
   }
   for (const f of areas) {
     const k = f.k;
-    path(f.r!); ctx.fillStyle = (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL[k] : FILL[k]; ctx.fill("evenodd");
+    path(f.r!); ctx.fillStyle = k === "playpad" ? PADS[f.v ?? 0] : (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL[k] : FILL[k]; ctx.fill("evenodd");
     if (k === "farm" && f.v !== undefined) { // tramlines / furrows: faint parallel lines, own angle per field
       ctx.save(); ctx.clip("evenodd");
       const [bx0, by0, bx1, by1] = bounds(f.r!), cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, R = Math.hypot(bx1 - bx0, by1 - by0) / 2;

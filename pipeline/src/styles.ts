@@ -54,6 +54,11 @@ export interface StylePreset {
   /** Bridges built out (ground.ts, page/renderer.ts): decks carried on to where the embankment tops out (an OSM
    *  bridge often ends over the gap under it). */
   bridgeDetail: boolean;
+  /** High-voltage power lines from OSM (fetch.ts osm-power.json, power.ts): lattice pylons and sagging conductors. */
+  powerLines: boolean;
+  /** Playground equipment (fetch.ts osm-play.json, playgrounds.ts): what OSM maps, on public playgrounds without
+   *  any a set by their size; rubber safety pads under it and sandpits on the ground. */
+  playgrounds: boolean;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -66,7 +71,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -89,6 +94,8 @@ export const STYLES = {
     richTrees: true,
     bushes: true,
     bridgeDetail: true,
+    powerLines: true,
+    playgrounds: true,
   },
 } satisfies Record<string, StylePreset>;
 

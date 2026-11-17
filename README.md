@@ -188,6 +188,12 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   them; each abutment end is carried on to where the embankment tops out (`ground.ts`; `deckHeight` takes the
   extensions, so traffic drives on the drawn deck), decks are as wide as the road plus a cornice, with 3D
   parapets, and piers stand under high spans, off the roads and rails below (`renderer.ts` buildDecks).
+  `powerLines`: OSM high-voltage lines (`fetch.ts` osm-power.json) built as lattice pylons (or tapered poles) at
+  their towers, arms across the line by circuits, conductors and an earth wire sagging between them; heights
+  from OSM or the voltage, since the surface model does not see a lattice (`power.ts`). `playgrounds`: the
+  equipment OSM maps on playgrounds as small bright models, on public playgrounds without any a set by their
+  size (sandpit, swing, tower with a slide, seesaw, spring riders, roundabout), rubber safety pads under it and
+  sandpits on the ground (`playgrounds.ts`).
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).
