@@ -184,7 +184,13 @@ function lod2Style(b: Lod2Building): [number, number] {
  * would pass for a tower: count from the lowest wall point at a quarter of the corners instead. Walls that start
  * on a lower neighbour's roof raise the corners too, so this takes off at most a third of the height.
  */
+const standingOf = new WeakMap<Lod2Building, number>(); // asked for up to 5 times per building
 function standing(b: Lod2Building) {
+  let h = standingOf.get(b);
+  if (h === undefined) standingOf.set(b, (h = standingNow(b)));
+  return h;
+}
+function standingNow(b: Lod2Building) {
   const low = new Map<string, number>();
   for (let i = 0; i + 4 < b.wall.length; i += 5) {
     const k = `${Math.round(b.wall[i] * 2)},${Math.round(b.wall[i + 1] * 2)}`;
