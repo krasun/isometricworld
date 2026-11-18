@@ -50,7 +50,7 @@ export class Biplane3D {
     this.build();
     this.scene.add(this.plane);
     const ink = new THREE.MeshBasicMaterial({
-      color: 0x000000, transparent: true, opacity: 0.3, depthTest: false, depthWrite: false,
+      color: 0x22293e, transparent: true, opacity: 0.36, depthTest: false, depthWrite: false, // the map's shadows' cool grey-blue
       stencilWrite: true, stencilRef: 1, stencilFunc: THREE.NotEqualStencilFunc, stencilZPass: THREE.ReplaceStencilOp,
     });
     this.shadow = this.plane.clone();

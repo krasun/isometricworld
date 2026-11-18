@@ -4,10 +4,14 @@
  * held on the map steers it towards that point. The map follows it. F, Esc or the button again lands it (it is
  * simply gone). The plane is a 3D model (biplane.ts, three.js, loaded at the first take-off) seen like the map and
  * lit by its sun. It is an object of the map's world, like the houses: 2.5 times life size (~24 m across), flying
- * ALT metres up at a real speed, so it grows and shrinks with the map; its shadow falls on the ground where the
- * sunlight through it meets it, and puffs of smoke stay in the air behind it.
+ * ALT metres up at a real speed, so it grows and shrinks with the map; puffs of smoke stay in the air behind it.
+ * Its shadow lies where the sunlight through it meets the surface: drawn flat for level ground (biplane.ts), then,
+ * where the map's surface heights are there (heights.ts), every pixel near it takes the flat shadow from where its
+ * own surface would be at ground level along the sunlight, so the shadow climbs walls and lies on roofs and crowns,
+ * moved towards the plane by their height, as the map's own shadows are.
  */
 import type { Biplane3D } from "./biplane.ts";
+import type { Heights } from "./heights.ts";
 type Vec3 = [number, number, number];
 type ToScreen = (x: number, y: number) => [number, number];
 
@@ -25,6 +29,8 @@ export interface FlyHost {
   follow(x: number, y: number): void;
   /** taking off (true) or landing: the map stops or starts panning by drag, the mine goes back up */
   onChange(flying: boolean): void;
+  /** the map's surface heights (export.ts tiles/height), if exported: their index and a tile's address */
+  heights?: { index(): Promise<Record<string, string>>; url(tx: number, ty: number, v: string): string };
 }
 
 /** the model's size against life (it is ~9.4 m across) */
@@ -37,6 +43,12 @@ const BANK = 0.6, TURN = 1.25; // max bank (rad); turn rate = TURN · tan(bank) 
 const PUFF_EVERY = 0.07, PUFF_LIFE = 2.4;
 /** metres per art px (camera.ts CAMERA.mpp) */
 const MPP = 0.25;
+/** heights over the local ground the shadow is laid on (m): lower and higher ones are taken as these */
+const DROP_MIN = -12, DROP_MAX = 45;
+/** the draped shadow is worked out on a grid at most this many cells across, then drawn scaled up */
+const WORK = 320;
+/** its colour: the map's own shadows' cool grey-blue (biplane.ts draws the flat one alike) */
+const SHADE = [34, 41, 62];
 
 export class Fly {
   flying = false;
@@ -49,6 +61,14 @@ export class Fly {
   private cam: [number, number] | null = null;
   private model: Biplane3D | null = null;
   private loading: Promise<void> | null = null;
+  private heights: Heights | null = null;
+  private heightsLoading: Promise<void> | null = null;
+  /** the local ground the shadow is laid on (m, heights.ts), eased so it never jumps; the last frame's dt */
+  private zg: number | null = null;
+  private dt = 0;
+  /** the flat shadow read back (small), and the draped one before it is drawn scaled */
+  private maskCanvas = document.createElement("canvas");
+  private workCanvas = document.createElement("canvas");
   private inv: number[];
   private button: HTMLButtonElement;
   private hint: HTMLElement;
@@ -109,12 +129,14 @@ export class Fly {
   start() {
     if (this.flying) return;
     this.loading ??= import("./biplane.ts").then(({ Biplane3D }) => { this.model = new Biplane3D(); });
+    const hs = this.host.heights;
+    if (hs) this.heightsLoading ??= Promise.all([import("./heights.ts"), hs.index()]).then(([{ Heights: H }, index]) => { this.heights = new H(index, hs.url); });
     // in the air right in the middle of the screen, nose up the screen
     const M = this.host.enu2px, z = this.host.groundZ + ALT, [cx, cy] = this.host.center();
     [this.x, this.y] = this.toEnu(cx - M[0][2] * z, cy - M[1][2] * z);
     const up = this.toEnu(0, -1);
     this.psi = Math.atan2(up[1], up[0]);
-    this.v = SPEED.start; this.bank = 0; this.pitch = 0; this.age = 0; this.puffs = []; this.cam = null;
+    this.v = SPEED.start; this.bank = 0; this.pitch = 0; this.age = 0; this.puffs = []; this.cam = null; this.zg = null;
     this.flying = true;
     this.button.setAttribute("aria-pressed", "true");
     this.button.title = this.button.ariaLabel = "Land the biplane (F)";
@@ -138,7 +160,7 @@ export class Fly {
   step(dt: number) {
     if (!this.flying) return;
     dt = Math.min(dt, 0.1);
-    this.t += dt; this.age += dt;
+    this.t += dt; this.age += dt; this.dt = dt;
     if (this.hintTimer > 0 && (this.hintTimer -= dt) <= 0) this.hint.style.opacity = "0";
     const keys = this.keys, was = this.v;
     let u = (keys.has("arrowleft") || keys.has("a") ? 1 : 0) - (keys.has("arrowright") || keys.has("d") ? 1 : 0);
@@ -185,14 +207,16 @@ export class Fly {
     const ppm = (toScreen(1, 0)[0] - toScreen(0, 0)[0]) / MPP; // device px per metre (the map is only scaled and moved)
     const fade = Math.min(1, this.age / 0.4);
     const m = this.model;
-    // the shadow on the ground under the plane, along the sunlight
+    // the shadow under the plane, along the sunlight: flat, then laid over the surface where its heights are in
     if (m) {
       m.resize(ppm * SCALE);
       m.pose(this.psi, this.bank, this.pitch, this.t, ALT / SCALE);
       const [sx, sy, sz] = m.sun, a = this.air, W = m.canvas.width;
       const [gx, gy] = proj([a[0] - (sx / sz) * ALT, a[1] - (sy / sz) * ALT, a[2] - ALT]);
       m.renderShadow();
-      ctx.globalAlpha = fade; ctx.drawImage(m.canvas, gx - W / 2, gy - W / 2); ctx.globalAlpha = 1;
+      if (!this.heights || !this.drape(ctx, toScreen, m, gx, gy, W, fade)) {
+        ctx.globalAlpha = fade; ctx.drawImage(m.canvas, gx - W / 2, gy - W / 2); ctx.globalAlpha = 1;
+      }
     }
     // smoke, oldest first, drifting up a little
     for (const q of this.puffs) {
@@ -204,5 +228,66 @@ export class Fly {
     const [px, py] = proj(this.air), W = m.canvas.width;
     m.renderPlane();
     ctx.globalAlpha = fade; ctx.drawImage(m.canvas, px - W / 2, py - W / 2); ctx.globalAlpha = 1;
+  }
+
+  /**
+   * The flat shadow (in the model's canvas, centred on gx, gy for ground at the local ground's height) laid over the
+   * surface: a pixel showing a surface dz higher than that ground is in shadow where the flat shadow is at the pixel
+   * moved away from the sun by dz along the sunlight, as seen on screen. False when there is nothing to lay it on.
+   */
+  private drape(ctx: CanvasRenderingContext2D, toScreen: ToScreen, m: Biplane3D, gx: number, gy: number, W: number, fade: number) {
+    const H = this.heights!, M = this.host.enu2px, L = m.sun;
+    const o = toScreen(0, 0), k = toScreen(1, 0)[0] - o[0]; // art px = (screen − o) / k
+    const art = (x: number, y: number): [number, number] => [(x - o[0]) / k, (y - o[1]) / k];
+    // the screen shift per metre of height: the sunlight's direction projected, per metre it rises
+    const cx = ((M[0][0] * L[0] + M[0][1] * L[1] + M[0][2] * L[2]) / L[2]) * k, cy = ((M[1][0] * L[0] + M[1][1] * L[1] + M[1][2] * L[2]) / L[2]) * k;
+    // where the shadow can show: its flat square, moved along the sunlight by the lowest and the highest drop
+    const x0 = gx - W / 2, y0 = gy - W / 2;
+    const rx0 = x0 + Math.min(0, cx * DROP_MIN, cx * DROP_MAX), rx1 = x0 + W + Math.max(0, cx * DROP_MIN, cx * DROP_MAX);
+    const ry0 = y0 + Math.min(0, cy * DROP_MIN, cy * DROP_MAX), ry1 = y0 + W + Math.max(0, cy * DROP_MIN, cy * DROP_MAX);
+    const [ax0, ay0] = art(rx0, ry0), [ax1, ay1] = art(rx1, ry1);
+    H.want(ax0 - 64, ay0 - 64, ax1 + 64, ay1 + 64);
+    // the local ground: low (a fifth of the way up) among the surfaces under the flat shadow, sampled on a lattice
+    // fixed to the map, and eased over time, so it follows the land without jumping as things pass under
+    const [sx0, sy0] = art(x0, y0), [sx1, sy1] = art(x0 + W, y0 + W), gap = Math.max(8, (sx1 - sx0) / 10), zs: number[] = [];
+    for (let y = Math.ceil(sy0 / gap) * gap; y <= sy1; y += gap) for (let x = Math.ceil(sx0 / gap) * gap; x <= sx1; x += gap) {
+      const z = H.at(x, y);
+      if (!Number.isNaN(z)) zs.push(z);
+    }
+    if (!zs.length && this.zg === null) return false;
+    if (zs.length) {
+      zs.sort((a, b) => a - b);
+      const want = zs[Math.floor(zs.length * 0.2)];
+      this.zg = this.zg === null ? want : this.zg + (want - this.zg) * Math.min(1, this.dt * 2);
+    }
+    const zg = this.zg!;
+    // the flat shadow read back, small
+    const ms = Math.min(W, 256), mc = this.maskCanvas;
+    if (mc.width !== ms) { mc.width = mc.height = ms; }
+    const mg = mc.getContext("2d", { willReadFrequently: true })!;
+    mg.clearRect(0, 0, ms, ms); mg.drawImage(m.canvas, 0, 0, ms, ms);
+    const mask = mg.getImageData(0, 0, ms, ms).data, f = ms / W;
+    // the draped shadow on a grid, a cell per `step` screen px, its cells fixed to the map (no shimmer as it moves)
+    const step = Math.max(1, Math.ceil(Math.max(rx1 - rx0, ry1 - ry0) / WORK));
+    const gx0 = o[0] + Math.floor((rx0 - o[0]) / step) * step, gy0 = o[1] + Math.floor((ry0 - o[1]) / step) * step;
+    const ow = Math.ceil((rx1 - gx0) / step) + 1, oh = Math.ceil((ry1 - gy0) / step) + 1, wc = this.workCanvas;
+    if (wc.width !== ow || wc.height !== oh) { wc.width = ow; wc.height = oh; }
+    const wg = wc.getContext("2d")!, img = wg.createImageData(ow, oh), out = img.data;
+    const mAt = (u: number, v: number) => (u < 0 || v < 0 || u >= ms || v >= ms ? 0 : mask[(v * ms + u) * 4 + 3]);
+    let any = false;
+    for (let j = 0; j < oh; j++) for (let i = 0; i < ow; i++) {
+      const px = gx0 + (i + 0.5) * step, py = gy0 + (j + 0.5) * step, [x, y] = art(px, py), z = H.at(x, y);
+      const dz = Number.isNaN(z) ? 0 : Math.max(DROP_MIN, Math.min(DROP_MAX, z - zg));
+      // the flat shadow where this surface would lie at ground level, read between its pixels
+      const fu = (px - cx * dz - x0) * f - 0.5, fv = (py - cy * dz - y0) * f - 0.5, u = Math.floor(fu), v = Math.floor(fv), du = fu - u, dv = fv - v;
+      const alpha = (mAt(u, v) * (1 - du) + mAt(u + 1, v) * du) * (1 - dv) + (mAt(u, v + 1) * (1 - du) + mAt(u + 1, v + 1) * du) * dv;
+      if (alpha >= 1) { const q = (j * ow + i) * 4; out[q] = SHADE[0]; out[q + 1] = SHADE[1]; out[q + 2] = SHADE[2]; out[q + 3] = alpha; any = true; }
+    }
+    if (!any) return true;
+    wg.putImageData(img, 0, 0);
+    ctx.globalAlpha = fade; ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(wc, 0, 0, ow, oh, gx0, gy0, ow * step, oh * step);
+    ctx.globalAlpha = 1;
+    return true;
   }
 }

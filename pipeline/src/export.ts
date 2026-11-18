@@ -475,6 +475,34 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
 }
 
 /**
+ * The renderer's height pass for the web, in regions with a biplane (places.ts effects.fly): fly.ts lays the plane's
+ * shadow over roofs, walls and crowns with it. Per render tile its surface heights as rendered (256² px, 4 art px
+ * each; R·256 + G centimetres over the region's height base, alpha 0 where there is no surface), as lossless WebP
+ * under tiles/height/<tx>/<ty>.webp, and data/tiles-height: each tile's content hash.
+ */
+async function exportHeights(renders: Map<Key, string>) {
+  const layer = "height", st = (state.layers[layer] ??= { sources: {}, hashes: {} }), produced = new Set<string>();
+  let encoded = 0;
+  await pool([...renders].map(([k, f]) => async () => {
+    const file = f.replace(/\/render\/([^/]+)$/, "/height/$1");
+    if (!existsSync(file)) return;
+    const stamp = `h1:${sourceHash(file)}`;
+    produced.add(k);
+    if (st.sources[k] === stamp && st.hashes[k]) return;
+    const buf = await sharp(file).webp({ lossless: true, exact: true, effort: 6 }).toBuffer(), [tx, ty] = parse(k);
+    mkdirSync(join(OUT, "tiles", layer, `${tx}`), { recursive: true });
+    writeFileSync(join(OUT, "tiles", layer, `${tx}`, `${ty}.webp`), buf);
+    st.sources[k] = stamp; st.hashes[k] = hash(buf);
+    encoded++;
+    checkpoint();
+  }));
+  for (const id of Object.keys(st.sources)) if (!produced.has(id)) { delete st.sources[id]; delete st.hashes[id]; }
+  writeData("tiles-height", JSON.stringify(Object.fromEntries([...produced].sort().map((k) => [k, st.hashes[k]]))));
+  console.log(`  height: ${produced.size} tiles, ${encoded} encoded`);
+  checkpoint(true);
+}
+
+/**
  * A salt mine's levels (areas.ts `mine`, src/mine.ts): each its own layer like the foreground (the render, its alpha
  * the mask render.ts drew from the level's extent), and data/mine.json with the levels' facts and labels (web mine.ts).
  */
@@ -1101,6 +1129,7 @@ async function main() {
     await exportLayer("photo", photo);
     if (REGIONS[activeRegion()].life?.foreground) await exportForeground(photo);
     if (mineLevels.length) await exportMine(mineLevels);
+    if (REGIONS[activeRegion()].effects?.fly) await exportHeights(photo);
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
   }
   await exportBorders(heights);
@@ -1119,7 +1148,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), ...(mineLevels.length ? { mine: dataFile("mine") } : {}) },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), ...(mineLevels.length ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}) },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {

@@ -27,7 +27,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; borders?: string; roads?: string; trains?: string; mine?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; "tiles-height"?: string; borders?: string; roads?: string; trains?: string; mine?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -158,6 +158,8 @@ if (REGIONS[REGION]?.effects?.fly) import("./fly.ts").then(({ Fly: Biplane }) =>
     center: () => { const c = base().viewportToImageCoordinates(viewer.viewport.getCenter(true)); return [c.x + ox, c.y + oy]; },
     screenToGlobal: (sx, sy) => { const dpr = window.devicePixelRatio || 1; return [(sx * dpr - tx) / k, (sy * dpr - ty) / k]; },
     follow: (x, y) => viewer.viewport.panTo(globalToViewport(x, y), true),
+    // the surface heights its shadow is laid over (lossless WebP whatever the map's format)
+    heights: files["tiles-height"] ? { index: () => json<Record<string, string>>(files["tiles-height"]!), url: (x, y, v) => `${BASE}/tiles/height/${x}/${y}.webp?v=${v}` } : undefined,
     onChange: (flying) => {
       for (const g of [gestures.gestureSettingsMouse, gestures.gestureSettingsTouch]) { g.dragToPan = !flying; g.flickEnabled = !flying; }
       if (!flying) return;
