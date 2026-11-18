@@ -31,9 +31,10 @@ export interface Region {
   /**
    * Viewer effects (web/src/scripts): tiltShift, the map as a miniature, a sharp band across the middle and the
    * edges blurred (tiltshift.ts; a button and M switch it); fly, a biplane to fly over the map (fly.ts; a button
-   * and F take off and land).
+   * and F take off and land); clouds, their shadows drifting over the map (clouds.ts); search, a box finding streets
+   * and places by name (search.ts; export.ts writes the index).
    */
-  effects?: { tiltShift?: boolean; fly?: boolean };
+  effects?: { tiltShift?: boolean; fly?: boolean; clouds?: boolean; search?: boolean };
   /**
    * Life on the map (web/src/scripts). `vehicles: "detailed"`: cars drawn as body and cabin with windows and
    * lights (hatchbacks, saloons, SUVs, vans), buses with their window band, shadows cast like the render's
@@ -183,7 +184,7 @@ export const REGIONS: Record<string, Region> = {
     teryt: ["1219", "1261"], // powiat wielicki; Kraków (across the A4, in the ring around the town)
     look: "styled",
     style: "poland",
-    effects: { tiltShift: true, fly: true },
+    effects: { tiltShift: true, fly: true, clouds: true, search: true },
     life: {
       vehicles: "detailed",
       foreground: true,

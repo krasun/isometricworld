@@ -9,6 +9,8 @@ import type { Pigeons } from "./pigeons.ts";
 import { Foreground, type FgIndex } from "./foreground.ts";
 import type { Mine, MineData } from "./mine.ts";
 import type { Fly } from "./fly.ts";
+import type { Clouds } from "./clouds.ts";
+import type { SearchItem } from "./search.ts";
 import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
@@ -27,7 +29,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; "tiles-height"?: string; borders?: string; roads?: string; trains?: string; mine?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; "tiles-height"?: string; borders?: string; roads?: string; trains?: string; mine?: string; search?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -171,6 +173,21 @@ if (REGIONS[REGION]?.effects?.fly) import("./fly.ts").then(({ Fly: Biplane }) =>
   }, document.getElementById("map")!);
   Object.assign(window as object, { __fly: fly });
 });
+// going somewhere (the search): the plane lands, the mine comes up, the spot is marked a while
+let mark: { x: number; y: number; label: string; t: number } | null = null;
+function goTo(x: number, y: number, widthM?: number, label?: string) {
+  if (fly?.flying) fly.stop();
+  if (mine?.underground) mine.open(false);
+  viewer.viewport.panTo(globalToViewport(x, y));
+  if (widthM) viewer.viewport.zoomTo(base().getContentSize().x / (widthM / CAMERA.mpp));
+  if (label) mark = { x, y, label, t: performance.now() };
+}
+const effects = REGIONS[REGION]?.effects ?? {};
+// cloud shadows drifting over the map (effects.clouds; clouds.ts)
+let clouds: Clouds | null = null;
+if (effects.clouds) import("./clouds.ts").then(({ Clouds: C }) => { clouds = new C(world.enu2px); Object.assign(window as object, { __clouds: clouds }); });
+// finding streets and places (effects.search; search.ts)
+if (effects.search && files.search) Promise.all([import("./search.ts"), json<SearchItem[]>(files.search)]).then(([{ Search }, items]) => new Search(items, { go: goTo }));
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
@@ -280,6 +297,7 @@ function frame(t: number) {
     pigeons.step(dt);
     pigeons.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
+  if (clouds && !mine?.underground) { clouds.step(dt); clouds.draw(ctx, k, tx, ty, w, hgt, px); } // over the town, under the sky
   if (above) { // sky above everything: parakeets, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (planes) { planes.step(dt); planes.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
@@ -289,12 +307,32 @@ function frame(t: number) {
     else { fly.step(dt); fly.draw(ctx, toScreen); }
   }
   mine?.draw(ctx, toScreen, px, dpr, [0, 0, w, hgt]);
+  if (mark && !mine?.underground) drawMark(dpr, t);
   if (showBorders || k / dpr < 0.05) drawBorders(dpr); // borders appear automatically far out
   tilt?.update();
   lastT = t;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+/** the spot the search went to: a pin with its name, for a few seconds, then fading */
+function drawMark(dpr: number, t: number) {
+  const age = (t - mark!.t) / 1000;
+  if (age > 8) { mark = null; return; }
+  const [x, y] = toScreen(mark!.x, mark!.y), a = Math.min(1, (8 - age) / 1.5), bob = Math.max(0, 1 - age * 2) * 14 * dpr;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.beginPath(); ctx.ellipse(x, y, 7 * dpr, 3 * dpr, 0, 0, 2 * Math.PI); ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fill();
+  const py = y - bob;
+  ctx.beginPath(); ctx.moveTo(x, py); ctx.bezierCurveTo(x - 11 * dpr, py - 16 * dpr, x - 11 * dpr, py - 30 * dpr, x, py - 30 * dpr);
+  ctx.bezierCurveTo(x + 11 * dpr, py - 30 * dpr, x + 11 * dpr, py - 16 * dpr, x, py); ctx.fillStyle = "#d64b3c"; ctx.fill();
+  ctx.lineWidth = 1.5 * dpr; ctx.strokeStyle = "#fff"; ctx.stroke();
+  ctx.beginPath(); ctx.arc(x, py - 21 * dpr, 3.5 * dpr, 0, 2 * Math.PI); ctx.fillStyle = "#fff"; ctx.fill();
+  ctx.font = `600 ${13 * dpr}px ui-sans-serif, system-ui, sans-serif`; ctx.textAlign = "center";
+  ctx.lineWidth = 3.5 * dpr; ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.fillStyle = "#1f2a37";
+  ctx.strokeText(mark!.label, x, py - 37 * dpr); ctx.fillText(mark!.label, x, py - 37 * dpr);
+  ctx.restore();
+}
 
 // ---- controls ----------------------------------------------------------------------------------
 let photo: OpenSeadragon.TiledImage | null = null, photoRequested = false;
@@ -310,6 +348,7 @@ function togglePhoto() {
 }
 
 window.addEventListener("keydown", (e) => {
+  if ((e.target as HTMLElement)?.closest?.("input, textarea")) return; // typing in the search
   const key = e.key.toLowerCase();
   if (key === "b") showBorders = !showBorders;
   if (key === "t") showTraffic = !showTraffic;

@@ -121,6 +121,16 @@ export const FILTERS = {
   parking: ((type, t) => type !== "node" && (t.amenity === "parking" || t.amenity === "parking_space")) as OsmFilter,
   /** watercourses drawn as lines (preset waterDetail) */
   waterways: ((type, t) => type === "way" && /^(river|stream|canal|ditch|drain)$/.test(t.waterway ?? "")) as OsmFilter,
+  /** named places for the viewer's search (export.ts exportSearch): settlements and districts, sights and landmarks,
+   *  public buildings, parks, stations, shafts, ponds, woods, cemeteries */
+  search: ((_type, t) => !!t.name && (
+    /^(city|town|village|hamlet|suburb|neighbourhood|quarter|isolated_dwelling)$/.test(t.place ?? "")
+    || /^(place_of_worship|townhall|school|kindergarten|college|university|hospital|clinic|library|theatre|cinema|museum|arts_centre|community_centre|police|fire_station|post_office|marketplace|bus_station|swimming_pool|fountain)$/.test(t.amenity ?? "")
+    || (!!t.tourism && t.tourism !== "information") || (!!t.historic && !/^(wayside_cross|wayside_shrine|memorial|boundary_stone)$/.test(t.historic))
+    || /^(park|stadium|sports_centre|water_park|nature_reserve|garden)$/.test(t.leisure ?? "")
+    || /^(station|halt)$/.test(t.railway ?? "") || /^(mineshaft|tower|water_tower)$/.test(t.man_made ?? "")
+    || /^(peak|water|wood)$/.test(t.natural ?? "") || t.landuse === "cemetery"
+    || /^(church|chapel|cathedral|castle|palace)$/.test(t.building ?? ""))) as OsmFilter,
   /** the salt mine's shafts, its outline and the underground reserve (mine.ts) */
   mine: ((_type, t) => t.man_made === "mineshaft" || t.historic === "mine" || t.historic === "mine_shaft"
     || (t.leisure === "nature_reserve" && t.location === "underground")) as OsmFilter,

@@ -77,6 +77,13 @@ export interface StylePreset {
   /** Closed OSM ways drawn as lines (roundabouts mapped as one way, loop roads and paths) kept whole: the line
    *  simplification collapsed them to nothing (its chord from the first to the last point has no length). */
   closedLines: boolean;
+  /** Roofs in detail (page/renderer.ts): pitched clay roofs in courses of staggered tiles, each tile its own shade, grey
+   *  (sheet metal) ones with standing seams down the slope, brick chimneys on homes' pitched roofs; false: plain tile
+   *  courses, no chimneys. */
+  roofDetail: boolean;
+  /** The post pass's ink: outlines darken a pixel by up to `strength` where the depth creases by `from` m (none) to `to`
+   *  m (full) over 2 px; ambient occlusion darkens a fully occluded corner by `ao`. */
+  ink: { strength: number; from: number; to: number; ao: number };
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -89,7 +96,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: false },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: false, roofDetail: false, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -121,6 +128,9 @@ export const STYLES = {
     roofsOnPosts: true,
     streetFurniture: true,
     closedLines: true,
+    roofDetail: true,
+    // crisper: lines from smaller creases and darker, deeper corners
+    ink: { strength: 0.9, from: 0.2, to: 0.75, ao: 0.55 },
   },
 } satisfies Record<string, StylePreset>;
 

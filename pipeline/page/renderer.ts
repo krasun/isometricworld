@@ -496,6 +496,7 @@ const buildingMaterial = new THREE.ShaderMaterial({
     }`,
   fragmentShader: /* glsl */ `
     uniform vec3 sun;
+    uniform bool roofDetail; // preset roofDetail (styles.ts)
     varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos; varying vec4 vFrame; varying vec4 vGrid;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     bool bit(float v, float b) { return mod(floor(v / b + 0.001), 2.0) > 0.5; }
@@ -508,7 +509,23 @@ const buildingMaterial = new THREE.ShaderMaterial({
         // Stuttgart (LoD2): punched windows in plaster, sandstone, glass; roofs untextured
         light = 0.70 + 0.42 * max(dot(n, sun), 0.0) + 0.06 * n.z;
         if (vFacade.y < -100.0 && vFacade.x < 0.5) {
-          if (n.z < 0.97) { if (fract(vPos.z / 0.42) < 0.16) c *= 0.93; }   // tile courses
+          if (n.z < 0.97 && roofDetail) {
+            // preset roofDetail: courses run level (constant height), the tiles along the eaves (u)
+            vec2 t = normalize(vec2(-n.y, n.x) + 1e-6);
+            float u = dot(vPos.xy, t), mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
+            if (c.r > c.g * 1.12 && c.r > c.b * 1.2) {                     // clay: staggered tiles, each its own shade
+              float row = floor(vPos.z / 0.38), fr = fract(vPos.z / 0.38), uu = u / 0.34 + 0.5 * mod(row, 2.0);
+              float h = hash(vec2(floor(uu), row));
+              c *= 0.9 + 0.16 * h;
+              c.g *= 0.97 + 0.06 * hash(vec2(row, floor(uu) * 1.7));      // some more orange, some more brown
+              if (fr < 0.2) c *= 0.82;                                     // the lap shadow under each course
+              else if (fract(uu) < 0.1) c *= 0.9;                          // the joint between tiles
+            } else if (mx - mn < 0.08) {                                   // grey: sheet metal, standing seams down the slope
+              float f = fract(u / 0.55);
+              if (f < 0.06) c *= 0.8; else if (f < 0.12) c *= 1.08;
+            } else if (fract(vPos.z / 0.42) < 0.16) c *= 0.93;             // anything else: plain courses
+          }
+          else if (n.z < 0.97) { if (fract(vPos.z / 0.42) < 0.16) c *= 0.93; }   // tile courses
           else c *= 0.95 + 0.07 * hash(floor(vPos.xy * 2.0));               // gravel
         }
         if (vFacade.y > -100.0) {
@@ -692,7 +709,7 @@ const buildingMaterial = new THREE.ShaderMaterial({
       }
       gl_FragColor = vec4(c * light, 1.0);
     }`,
-  uniforms: { sun: { value: SUN } },
+  uniforms: { sun: { value: SUN }, roofDetail: { value: STYLED && STYLE.roofDetail } },
 });
 
 /**
@@ -1093,6 +1110,27 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
       }, 3);
     }
   }
+  // chimneys (preset roofDetail): a brick or plaster stack a step down the slope from the top of a home's pitched
+  // roof, rising past the ridge, a dark cap on it; one, sometimes two
+  const pitched = planes.filter((q) => q.n[2] <= 0.97 && q.n[2] > 0.35 && q.area > 12).sort((p, q) => q.area - p.area);
+  if (STYLE.roofDetail && (style === 0 || style === 2) && flatShare < 0.4 && pitched.length) {
+    const corners = (pl: Plane) => pl.tris.flatMap((t) => [[t[0], t[1]], [t[2], t[3]], [t[4], t[5]]] as P2[]);
+    const ridge = Math.max(...pitched.flatMap((pl) => corners(pl).map((p) => zAt(pl, p[0], p[1]))));
+    const n = rnd() < 0.3 ? 2 : 1, colour = rnd() < 0.55 ? [0.62, 0.34, 0.27] : wall.map((q) => q * 0.95);
+    for (let k = 0, tries = 0; k < n && tries < 10; tries++) {
+      const pl = pitched[Math.floor(rnd() * Math.min(2, pitched.length))], pts = corners(pl);
+      const top = Math.max(...pts.map((p) => zAt(pl, p[0], p[1]))), high = pts.filter((p) => zAt(pl, p[0], p[1]) > top - 0.3);
+      const a = high[Math.floor(rnd() * high.length)], b = high[Math.floor(rnd() * high.length)], f = 0.2 + 0.6 * rnd();
+      const h = Math.hypot(pl.n[0], pl.n[1]), dx = pl.n[0] / h, dy = pl.n[1] / h; // the normal leans down the slope
+      const x = a[0] + (b[0] - a[0]) * f + dx * 0.9, y = a[1] + (b[1] - a[1]) * f + dy * 0.9, t = Math.atan2(dy, dx);
+      if (!fits(pl, x, y, 0.65, 0.65, t, 0.15)) continue;
+      const z0 = zAt(pl, x, y) - 0.1, z1 = ridge + 0.7 + 0.4 * rnd();
+      prism(o, x, y, z0, 0.65, 0.65, z1 - z0, z1 - z0, t, colour);
+      prism(o, x, y, z1, 0.8, 0.8, 0.1, 0.1, t, [0.32, 0.31, 0.3]);
+      take(x, y, 0.65, 0.65, t);
+      k++;
+    }
+  }
 }
 
 /**
@@ -1361,6 +1399,7 @@ const postMaterial = new THREE.ShaderMaterial({
     uniform float halfW;                  // half the tile camera's width (m)
     uniform vec2 origin;                  // global art pixel of the tile's top-left corner
     uniform float ss;
+    uniform float inkStrength, inkFrom, inkTo, aoStrength;  // preset ink (styles.ts)
     varying vec2 vUv;
     float depth(vec2 uv) { return near + texture2D(tDepth, uv).x * (far - near); }
     vec3 P(vec2 uv) { return vec3(uv * size * px, depth(uv)); }
@@ -1377,7 +1416,7 @@ const postMaterial = new THREE.ShaderMaterial({
       // outlines: depth Laplacian over 2 px (planes are linear in an ortho depth buffer, so only creases and silhouettes show)
       float lx = abs(depth(vUv + 2.0 * e) + depth(vUv - 2.0 * e) - 2.0 * z);
       float ly = abs(depth(vUv + 2.0 * f) + depth(vUv - 2.0 * f) - 2.0 * z);
-      float edge = smoothstep(0.35, 1.2, max(lx, ly));
+      float edge = smoothstep(inkFrom, inkTo, max(lx, ly));
       // ambient occlusion: samples above this pixel's tangent plane, within 1.5 m
       vec3 p = P(vUv);
       vec3 n = normalize(cross(P(vUv + e) - P(vUv - e), P(vUv + f) - P(vUv - f)));
@@ -1408,8 +1447,8 @@ const postMaterial = new THREE.ShaderMaterial({
           }
         }
       }
-      c *= 1.0 - 0.38 * occ;
-      c = mix(c, c * vec3(0.42, 0.40, 0.42), edge * 0.75);
+      c *= 1.0 - aoStrength * occ;
+      c = mix(c, c * vec3(0.42, 0.40, 0.42), edge * inkStrength);
       // paper: soft blotches over a few hundred art pixels + fine grain, continuous across tiles
       vec2 g = origin + vec2(vUv.x, 1.0 - vUv.y) * size / ss;
       float paper = (vnoise(g / 220.0) - 0.5) * 0.05 + (vnoise(g / 37.0) - 0.5) * 0.03 + (hash(floor(g * ss)) - 0.5) * 0.025;
@@ -1427,6 +1466,7 @@ const postMaterial = new THREE.ShaderMaterial({
     camPos: { value: new THREE.Vector3() }, camRight: { value: new THREE.Vector3() }, camUp: { value: new THREE.Vector3() },
     camDir: { value: new THREE.Vector3() }, sun: { value: SUN.clone() }, halfW: { value: 1 },
     shade: { value: new THREE.Vector3(...(STYLE.castShadow ?? [1, 1, 1])) },
+    inkStrength: { value: STYLE.ink.strength }, inkFrom: { value: STYLE.ink.from }, inkTo: { value: STYLE.ink.to }, aoStrength: { value: STYLE.ink.ao },
   },
   depthTest: false, depthWrite: false,
 });

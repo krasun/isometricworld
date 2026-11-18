@@ -76,6 +76,7 @@ body.video #mine-panel, body.video #mine-info { display: none; }
   #mine-info { left: 6px; right: 64px; max-width: none; top: 10px; bottom: auto; padding: 8px 10px; cursor: pointer; max-height: 60vh; overflow: auto; }
   #mine-info:not(.open) .more { display: none; }
   #mine-info .hint { display: inline; color: #b9ae98; }
+  body.has-search #mine-info { top: calc(60px + env(safe-area-inset-top, 0px)); }
 }
 `;
 
@@ -131,6 +132,7 @@ export class Mine {
     this.info.addEventListener("click", (e) => { if (!(e.target as HTMLElement).closest("a, details")) this.info.classList.toggle("open"); });
     document.getElementById("map")!.appendChild(this.info);
     window.addEventListener("keydown", (e) => {
+      if ((e.target as HTMLElement)?.closest?.("input, textarea")) return;
       if (e.key === "PageDown") { e.preventDefault(); this.open(true); this.go(Math.min(this.data.levels.length, this.at + 1)); }
       if (e.key === "PageUp") { e.preventDefault(); this.go(Math.max(0, this.at - 1)); }
     });

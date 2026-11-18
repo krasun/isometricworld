@@ -38,6 +38,7 @@ import { HOSTING } from "./hosting.ts";
 import { DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
 import { CITIES, REGIONS } from "./places.ts";
 import { readHeights } from "./heights.ts";
+import { FILTERS, localOsm } from "./osmlocal.ts";
 import { deckHeight, isBridge } from "./bridges.ts";
 
 const TS = 512;                  // web tile size
@@ -472,6 +473,67 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
   const count = Object.values(index[layer]).reduce((a, m) => a + Object.keys(m).length, 0);
   console.log(`  ${layer} z${minZ}–${NATIVE_Z}: ${count} tiles${layer === "fg" ? " with something tall" : ""}, ${encoded} encoded`);
   checkpoint(true);
+}
+
+/** What a place is, in a word or two, for the search's list (OSM tags). */
+function placeKind(t: Record<string, string>) {
+  const words: Record<string, string> = {
+    suburb: "district", neighbourhood: "neighbourhood", quarter: "quarter", isolated_dwelling: "hamlet", place_of_worship: "church",
+    townhall: "town hall", arts_centre: "arts centre", community_centre: "community centre", fire_station: "fire station",
+    post_office: "post office", bus_station: "bus station", swimming_pool: "swimming pool", attraction: "sight", sports_centre: "sports centre",
+    water_park: "water park", nature_reserve: "nature reserve", mineshaft: "mine shaft", water_tower: "water tower", water: "pond",
+  };
+  const v = t.place ?? t.amenity ?? t.tourism ?? t.historic ?? t.leisure ?? (t.railway ? "station" : undefined) ?? t.man_made ?? t.natural ?? (t.landuse === "cemetery" ? "cemetery" : undefined) ?? t.building ?? "place";
+  return words[v] ?? v.replace(/_/g, " ");
+}
+
+/**
+ * The viewer's search index (places.ts effects.search; web search.ts): every named street (from the areas' roads,
+ * at the point of its line nearest the middle of all its parts) and the named places of the region's OSM extract
+ * (FILTERS.search: settlements, sights, public buildings, parks, stations…), on the real ground, inside the map.
+ * data/search: [name, kind (0 street, 1 settlement or district, 2 place), x, y (global art px), what it is].
+ */
+async function exportSearch(areas: string[], heights: Heights, [bx0, by0, bx1, by1]: number[]) {
+  const items: Array<[string, number, number, number, string]> = [];
+  const inside = (x: number, y: number) => x > bx0 && x < bx1 && y > by0 && y < by1;
+  const streets = new Map<string, Array<[number, number]>>();
+  for (const a of areas) {
+    const f = join(RAW, a, "roads.json");
+    if (!existsSync(f)) continue;
+    for (const el of readJson(f).elements ?? []) {
+      const n = el.tags?.name;
+      if (!n || !el.geometry?.length) continue;
+      const pts = streets.get(n) ?? streets.set(n, []).get(n)!;
+      for (const g of el.geometry) pts.push([g.lat, g.lon]);
+    }
+  }
+  for (const [name, pts] of streets) {
+    const c = [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
+    const p = pts.reduce((b, q) => (Math.hypot(q[0] - c[0], q[1] - c[1]) < Math.hypot(b[0] - c[0], b[1] - c[1]) ? q : b));
+    const { x, y } = await onGround(heights, p[0], p[1]);
+    if (inside(x, y)) items.push([name, 0, Math.round(x), Math.round(y), "street"]);
+  }
+  const extract = REGIONS[activeRegion()].osmExtract;
+  if (extract) {
+    const boxes = areas.map((a) => AREAS[a].bbox);
+    const bbox = [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))];
+    const cache = join(RAW, `search-${activeRegion()}.json`);
+    if (!existsSync(cache)) writeFileSync(cache, JSON.stringify(await localOsm(extract, bbox, FILTERS.search)));
+    const seen = new Set<string>();
+    for (const el of readJson(cache).elements as Array<{ type: string; lat?: number; lon?: number; tags: Record<string, string>; geometry?: Array<{ lat: number; lon: number }>; members?: Array<{ geometry?: Array<{ lat: number; lon: number }> }> }>) {
+      const g = el.type === "node" ? [{ lat: el.lat!, lon: el.lon! }] : el.geometry ?? (el.members ?? []).flatMap((m) => m.geometry ?? []);
+      if (!g.length) continue;
+      const lat = g.reduce((s, q) => s + q.lat, 0) / g.length, lon = g.reduce((s, q) => s + q.lon, 0) / g.length;
+      const { x, y } = await onGround(heights, lat, lon), name = el.tags.name, kind = el.tags.place ? 1 : 2;
+      const k = `${name}@${Math.round(x / 400)},${Math.round(y / 400)}`; // a node and the area it lies in: once
+      if (!inside(x, y) || seen.has(k)) continue;
+      seen.add(k);
+      items.push([name, kind, Math.round(x), Math.round(y), placeKind(el.tags)]);
+    }
+  }
+  items.sort((a, b) => a[0].localeCompare(b[0], "pl") || a[1] - b[1]);
+  writeData("search", JSON.stringify(items));
+  console.log(`  search: ${items.filter((i) => i[1] === 0).length} streets, ${items.filter((i) => i[1] > 0).length} places`);
 }
 
 /**
@@ -1133,6 +1195,8 @@ async function main() {
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
   }
   await exportBorders(heights);
+  const effects = REGIONS[activeRegion()].effects ?? {};
+  if (effects.search) await exportSearch(areas, heights, [x0, y0, x1, y1]);
   const previews = await exportPreviews();
   // OpenSeadragon wants non-negative tile indices at every level: origin aligned to a min-zoom tile
   const block = TS * 2 ** (NATIVE_Z - MIN_Z);
@@ -1148,7 +1212,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), ...(mineLevels.length ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}) },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), ...(mineLevels.length ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}), ...(effects.search ? { search: dataFile("search") } : {}) },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {
