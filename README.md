@@ -230,8 +230,11 @@ their depths and sizes; MINE-RESEARCH.md, kept locally, has the survey). How sur
 the shafts, the mine's outline and the Groty Kryształowe reserve come from OSM (known: turquoise rings and
 boundary); the routes' chambers and galleries are placed schematically round their shafts (approximate: a gold floor
 with a bright rim, "≈" on the map); everything else is generated to each level's published chamber count
-(illustrative: a muted grey floor). One more layer shows the first level on Hondius's 1645 plan (public domain),
-fitted on the three shafts it shares with today (2–4 m residuals).
+(illustrative: a muted grey floor). The cut rock between the workings shows the deposit's general build, green salt
+boulders in clay over folded beds that take more of each level the deeper it goes (`page/minerock.ts`,
+illustrative), and hides a few things just for fun (`EGGS`: a dinosaur, St. Kinga's ring, …), labelled "✦ just for
+fun" on the map. One more layer shows the first level on Hondius's 1645 plan (public domain), fitted on the three
+shafts it shares with today (2–4 m residuals).
 
 ```sh
 npm -w pipeline run mine                      # data/derived/wieliczka-mine-<level>/ (needs wieliczka-town's ground)

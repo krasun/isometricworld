@@ -57,7 +57,7 @@ const features: Feature[] = await (await fetch("/ground/features.json")).json();
 if (MINE) await preloadMine(features as unknown as MineFeature[]);
 const fbox = features.map((f) => {
   let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
-  if (f.j) return [-Infinity, -Infinity, Infinity, Infinity]; // point sets (junctions, zebras): always passed
+  if (f.j || (!f.r && !f.l)) return [-Infinity, -Infinity, Infinity, Infinity]; // point sets (junctions, zebras), placeless (a mine's rock): always passed
   for (const ring of f.r ?? [f.l!]) for (const [x, y] of ring) { a = Math.min(a, x); b = Math.min(b, y); c = Math.max(c, x); d = Math.max(d, y); }
   return [a, b, c, d];
 });

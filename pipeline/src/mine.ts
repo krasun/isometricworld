@@ -9,7 +9,8 @@
  *   approximate   the named chambers of the routes, at their published level, size and order, placed schematically
  *                 round the shaft their route starts from (no open source gives where they lie)
  *   illustrative  galleries and chambers generated to the level's published chamber count inside its span of the
- *                 outline: longitudinal galleries along the deposit's strike, cross-cuts, chambers beside them
+ *                 outline: longitudinal galleries along the deposit's strike, cross-cuts, chambers beside them;
+ *                 the cut rock's build (k: mrock, LAYERED) and a few things hidden just for fun (k: megg, EGGS)
  * Everything is rasterised at 0.5 m and its outline traced (marching squares): the walls and the cut edge of the rock.
  *
  * Output per level (the render's usual ground dir, so render.ts and the page need nothing else):
@@ -26,7 +27,7 @@ import { AREAS } from "./areas.ts";
 import { ecefToEnu, enuToLlh, llhToEcef, useRegion } from "./camera.ts";
 import { contours, simplifyRing } from "./greenery.ts";
 import sharp from "sharp";
-import { CAP, CHAMBERS, COLLAR, GROTTO, HONDIUS, LEVELS, SHAFTS, SOURCES, type Confidence, type MineChamber, type MineLevel } from "./minedata.ts";
+import { CAP, CHAMBERS, COLLAR, EGGS, GROTTO, HONDIUS, LAYERED, LEVELS, SHAFTS, SOURCES, type Confidence, type MineChamber, type MineLevel } from "./minedata.ts";
 import { FILTERS, localOsm } from "./osmlocal.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
@@ -339,6 +340,33 @@ function build(level: MineLevel, li: number) {
   for (const s of shafts) { const p = shaftAt.get(s.name)!; feats.push({ k: "mshaft", l: [[r2(p[0]), r2(p[1])]], w: 2.4, v: CODE[s.conf] }); }
   if (lamps.length) feats.push({ k: "mlamp", j: lamps });
 
+  // ---- the rock: its build (page/mine.ts draws the beds and boulders) and the things hidden in it ------------
+  // e: the strike frame (centre, long axis U; t across, positive north) and where the layered deposit ends, t
+  const ts = outline.map((p) => toST(p)[1]), T0 = Math.min(...ts), T1 = Math.max(...ts);
+  feats.push({ k: "mrock", e: [r2(C[0]), r2(C[1]), +U[0].toFixed(6), +U[1].toFixed(6), r2(T0 + (T1 - T0) * (LAYERED[level.id] ?? 0.5)), li] });
+  // each egg on solid rock: no void within its size and a margin, inside the level's extent, as near its anchor as that allows
+  const solid = (p: P2, r: number) => {
+    for (let a = 0; a < 16; a++) if (!inExt([p[0] + r * Math.cos(a * 0.3927), p[1] + r * Math.sin(a * 0.3927)])) return false;
+    for (let y = p[1] - r; y <= p[1] + r; y += RES) for (let x = p[0] - r; x <= p[0] + r; x += RES) {
+      const i = Math.floor((x - bx0) / RES), j = Math.floor((y - by0) / RES);
+      if (i >= 0 && j >= 0 && i < W && j < H && code[j * W + i] && Math.hypot(x - p[0], y - p[1]) <= r) return false;
+    }
+    return true;
+  };
+  const eggRnd = rng(104729 * (li + 1)), eggs: Array<{ egg: (typeof EGGS)[number]; p: P2; turn: number }> = [];
+  for (const egg of EGGS.filter((e) => e.level === level.id)) {
+    const from = (egg.near && (rooms.find((r) => r.name === egg.near)?.c ?? shaftAt.get(egg.near))) || centroid(ext);
+    let at: P2 | null = null;
+    for (let d = 0; d < 600 && !at; d += 4) for (let a = 0, n = Math.max(1, Math.round(d / 3)); a < n && !at; a++) {
+      const th = (a / n) * 2 * Math.PI + eggRnd(), q: P2 = [from[0] + d * Math.cos(th), from[1] + d * Math.sin(th)];
+      if (solid(q, egg.size / 2 + 4)) at = q;
+    }
+    if (!at) { console.warn(`  ${level.id}: no room for ${egg.name}`); continue; }
+    const turn = Math.round((eggRnd() - 0.5) * 50);
+    eggs.push({ egg, p: at, turn });
+    feats.push({ k: "megg", u: egg.kind, l: [[r2(at[0]), r2(at[1])]], w: egg.size, v: turn });
+  }
+
   // ---- labels and facts (export.ts → web) ----------------------------------------------------------------
   const at = (p: P2) => { const z = terrain(p[0], p[1]) + CAP; const [lat, lon] = enuToLlh([p[0], p[1], 0]); return { x: r2(p[0]), y: r2(p[1]), z: r2(z), lat: +lat.toFixed(6), lon: +lon.toFixed(6) }; };
   // labels by the names on the map (English); minedata.ts keys them by their Polish (OSM) names
@@ -348,6 +376,7 @@ function build(level: MineLevel, li: number) {
       return { name: c?.en ?? r.name!, kind: r.kind, conf: r.conf, route: r.route ?? null, depth: c?.depth ?? null, height: c?.height ?? null, src: c?.src ?? "osm", ...at(r.c) };
     }),
     ...shafts.map((s) => ({ name: s.en, kind: "shaft", conf: s.conf, route: null, depth: s.depth ?? null, height: null, src: "osm", note: s.note, ...at(shaftAt.get(s.name)!) })),
+    ...eggs.map(({ egg, p }) => ({ name: egg.name, kind: "egg", conf: "illustrative", route: null, depth: null, height: null, src: "fun", note: egg.note, size: egg.size, ...at(p) })),
   ];
   const info = {
     id: level.id, name: level.name, depth: level.depth, tourist: level.tourist ?? null, elevation: r2(COLLAR - level.depth),

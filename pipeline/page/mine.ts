@@ -5,12 +5,14 @@
  *   floor  the ground mesh with drawMineFloor's canvas: salt floors, chapel tiles, brine lakes, walkways, rails, lamps
  *   cap    the same mesh CAP higher with drawMineCap's canvas: rock, the voids cut out (alpha), their edges
  *   walls  mineObjects: the voids' outlines raised from floor to cap, timber cribs
+ * The cut rock shows the deposit's build and a few things hidden just for fun (minerock.ts).
  * How sure a part is shows in its colour (CONF), seen at every zoom: approximate parts (the routes' chambers and
  * galleries) on a gold floor with a bright rim, illustrative ones a muted grey, known ones (OSM: the shafts' rings,
  * the reserve's boundary) turquoise.
  */
 import * as THREE from "three";
 import { CAP } from "../src/minedata.ts";
+import { drawEgg, drawRock } from "./minerock.ts";
 
 type P2 = [number, number];
 export type MineFeature = { k: string; r?: P2[][]; l?: P2[]; j?: number[][]; w?: number; v?: number; u?: string; c?: number[]; e?: number[] };
@@ -48,12 +50,12 @@ function noise(): HTMLCanvasElement {
 }
 
 const bounds = (r: P2[]) => { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for (const [x, y] of r) { a = Math.min(a, x); b = Math.min(b, y); c = Math.max(c, x); d = Math.max(d, y); } return [a, b, c, d]; };
-/** features overlapping [x0, y0, x1, y1] (+ m) */
+/** features overlapping [x0, y0, x1, y1] (+ m, + their width); those without a place (lamps, the rock) always */
 export function mineVisible(feats: MineFeature[], [x0, y0, x1, y1]: number[], m = 10) {
   return feats.filter((f) => {
-    if (f.j) return true;
-    const b = bounds(f.r ? f.r.flat() : f.l!);
-    return b[0] < x1 + m && b[2] > x0 - m && b[1] < y1 + m && b[3] > y0 - m;
+    if (f.j || (!f.r && !f.l)) return true;
+    const b = bounds(f.r ? f.r.flat() : f.l!), mw = m + (f.w ?? 0);
+    return b[0] < x1 + mw && b[2] > x0 - mw && b[1] < y1 + mw && b[3] > y0 - mw;
   });
 }
 
@@ -162,20 +164,12 @@ export function drawMineFloor(ctx: CanvasRenderingContext2D, feats: MineFeature[
 export function drawMineCap(ctx: CanvasRenderingContext2D, feats: MineFeature[], rect: number[], mpt: number) {
   begin(ctx, rect, mpt);
   if (feats.some((f) => f.k === "mimg")) return; // an old plan has no rock over it: all transparent
-  ctx.fillStyle = ROCK; ctx.fillRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
+  // the rock's build (minerock.ts: beds, boulders, crystals), grained, and the things hidden in it just for fun
+  const rock = feats.find((f) => f.k === "mrock");
+  if (rock) drawRock(ctx, rock.e!, rect);
+  else { ctx.fillStyle = ROCK; ctx.fillRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]); }
   ctx.save(); ctx.globalCompositeOperation = "multiply"; texture(ctx, rect, mpt, 0.2); ctx.restore();
-  // strata: faint wavy bands along the deposit (roughly east–west), 5–11 m apart
-  for (let y = Math.floor(rect[1] / 8) * 8 - 8; y < rect[3] + 8; y += 8) {
-    const k = Math.round(y / 8), j = Math.abs(Math.sin(k * 12.9898) * 43758.5453) % 1;
-    ctx.lineWidth = 0.8 + j * 1.8;
-    ctx.strokeStyle = j < 0.3 ? "rgba(255,250,235,0.045)" : "rgba(10,9,6,0.07)";
-    ctx.beginPath();
-    for (let i = 0, x = rect[0] - 6; x <= rect[2] + 6; i++, x += 4) {
-      const yy = y + (j - 0.5) * 6 + 2.6 * Math.sin(x / 53 + k * 1.7) + 0.9 * Math.sin(x / 17 + k);
-      if (i) ctx.lineTo(x, yy); else ctx.moveTo(x, yy);
-    }
-    ctx.stroke();
-  }
+  for (const f of feats) if (f.k === "megg") drawEgg(ctx, f.u!, f.l![0], f.w!, f.v ?? 0);
   const voids = feats.filter((f) => f.k === "mvoid");
   ctx.save(); ctx.globalCompositeOperation = "destination-out";
   path(ctx, voids.flatMap((f) => f.r!)); ctx.fillStyle = "#000"; ctx.fill("evenodd");

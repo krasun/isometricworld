@@ -6,7 +6,7 @@
  * PageUp go down and up.
  */
 type Conf = "known" | "approximate" | "illustrative";
-export interface MineLabel { name: string; kind: string; conf: Conf; route: string | null; depth: number | null; height: number | null; src: string; note?: string; x: number; y: number; z: number }
+export interface MineLabel { name: string; kind: string; conf: Conf; route: string | null; depth: number | null; height: number | null; src: string; note?: string; /** across (m): a thing hidden for fun */ size?: number; x: number; y: number; z: number }
 export interface MineLevel {
   id: string; name: string; depth: number; tourist: number | null; elevation: number; chambers: number; generated: number; note: string; layer: string; tiles: string; labels: MineLabel[];
   /** an old plan (Hondius 1645), fitted on the shafts it shares with today */
@@ -29,6 +29,13 @@ const ROUTES: Record<string, string> = { tourist: "Tourist Route", miners: "Mine
 const KINDS: Record<string, string> = { lake: "brine lake", hall: "hall" };
 /** the tiles' confidence colours (pipeline/page/mine.ts CONF) for the pins and the legend */
 const CONF: Record<Conf, string> = { known: "#4fc3cc", approximate: "#f1c76c", illustrative: "#a3a19b" };
+/** the things hidden in the rock just for fun (pipeline/src/minedata.ts EGGS) */
+const FUN = "#c39bff";
+/** words into lines of at most n characters */
+const wrap = (text: string, n: number) => text.split(" ").reduce<string[]>((lines, word) => {
+  if (lines.length && (lines.at(-1)! + " " + word).length <= n) lines[lines.length - 1] += " " + word; else lines.push(word);
+  return lines;
+}, []);
 const NOT_AFFILIATED = "An independent project, not affiliated with the Wieliczka Salt Mine (Kopalnia Soli „Wieliczka” S.A.).";
 
 const CSS = `
@@ -59,6 +66,7 @@ body.video #mine-toggle, body.video #mine-panel, body.video #mine-info { display
 #mine-info .legend i.k { width: 10px; border-radius: 50%; background: #2b2824; box-shadow: inset 0 0 0 2.5px #4fc3cc; }
 #mine-info .legend i.a { background: #d6b26a; box-shadow: inset 0 0 0 1.5px #f1c76c; }
 #mine-info .legend i.i { background: #9a9891; }
+#mine-info .legend i.f { width: auto; height: auto; background: none; color: ${FUN}; font-style: normal; }
 #mine-info small { display: block; color: #b9ae98; margin-top: 4px; }
 #mine-info details { margin-top: 4px; color: #b9ae98; }
 #mine-info details a { color: #e7c98a; }
@@ -186,8 +194,8 @@ export class Mine {
     this.info.innerHTML = `
       <b>Level ${LEVEL_NAMES[l.id] ?? l.id}${l.name ? ` “${l.name}”` : ""}</b> · ${Math.round(l.depth)} m<span class="hint"> ▸</span><span class="more"> below the St. Kinga shaft collar${l.tourist ? ` (${l.tourist} m as the mine gives it)` : ""}
       <br>${l.chambers} ${l.chambers === 1 ? "chamber" : "chambers"} as published${named ? `, ${named} named on the map` : ""}. ${l.note.replace(/^./, (c) => c.toUpperCase())}.
-      <div class="legend"><span><i class="k"></i>known (OSM)</span><span><i class="a"></i>approximate position</span><span><i class="i"></i>illustration</span></div>
-      <small>An overview, not for finding your way. The levels' depths, the chamber counts and the order of the chambers along the routes come from open sources. Where the chambers lie is approximate. The other galleries and chambers are an illustration, not a plan of the mine. ${NOT_AFFILIATED}</small>
+      <div class="legend"><span><i class="k"></i>known (OSM)</span><span><i class="a"></i>approximate position</span><span><i class="i"></i>illustration</span><span><i class="f">✦</i>just for fun</span></div>
+      <small>An overview, not for finding your way. The levels' depths, the chamber counts and the order of the chambers along the routes come from open sources. Where the chambers lie is approximate. The other galleries and chambers are an illustration, not a plan of the mine. The rock between them shows the deposit's general build (green salt boulders in clay above, folded beds below), not its mapped geology. ${NOT_AFFILIATED}</small>
       <details><summary>Sources</summary><ul>${src}</ul></details></span>`;
     this.info.hidden = false;
   }
@@ -211,28 +219,35 @@ export class Mine {
     const order = [...l.labels].sort((a, b) => (a.kind === "shaft" ? 0 : 1) - (b.kind === "shaft" ? 0 : 1));
     for (const lab of order) {
       if (lab.kind !== "shaft" && px < 0.22) continue;
+      if (lab.kind === "egg" && px < 0.8) continue; // the things hidden for fun: only close up
       const gx = m[0][0] * lab.x + m[0][1] * lab.y + m[0][2] * lab.z, gy = m[1][0] * lab.x + m[1][1] * lab.y + m[1][2] * lab.z;
-      const [sx, sy] = toScreen(gx, gy);
+      let [sx, sy] = toScreen(gx, gy);
+      // a thing hidden for fun: its label over it, not on it (the projected half-height of its size)
+      if (lab.kind === "egg") sy -= ((lab.size ?? 0) / 2) * Math.hypot(m[1][0], m[1][1]) * px * dpr;
       if (sx < x0 - 50 || sx > x1 + 50 || sy < y0 - 50 || sy > y1 + 50) continue;
-      const shaft = lab.kind === "shaft", approx = lab.conf !== "known";
-      const title = `${lab.name}${approx ? " ≈" : ""}`;
-      const sub = [lab.depth ? `${lab.depth} m` : null, shaft ? null : KINDS[lab.kind], lab.route ? ROUTES[lab.route] : null, lab.note && lab.src === "hondius" ? lab.note : null].filter(Boolean).join(" · ");
-      ctx.font = `${shaft ? 700 : 600} ${(shaft ? 13 : 12) * dpr}px ui-sans-serif, system-ui, sans-serif`;
-      const w = ctx.measureText(title).width + 10 * dpr, h = (sub ? 30 : 17) * dpr;
+      const shaft = lab.kind === "shaft", egg = lab.kind === "egg", approx = lab.conf !== "known" && !egg;
+      const title = egg ? `✦ ${lab.name}` : `${lab.name}${approx ? " ≈" : ""}`;
+      // the things hidden just for fun say so, over a few short lines
+      const subs = egg ? wrap(lab.note ?? "", 38) : [[lab.depth ? `${lab.depth} m` : null, shaft ? null : KINDS[lab.kind], lab.route ? ROUTES[lab.route] : null, lab.note && lab.src === "hondius" ? lab.note : null].filter(Boolean).join(" · ")].filter(Boolean);
+      const n = subs.length, titleFont = `${shaft ? 700 : 600} ${(shaft ? 13 : 12) * dpr}px ui-sans-serif, system-ui, sans-serif`, subFont = `500 ${10.5 * dpr}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.font = subFont;
+      const subW = Math.max(0, ...subs.map((t) => ctx.measureText(t).width));
+      ctx.font = titleFont;
+      const w = Math.max(ctx.measureText(title).width, egg ? subW : 0) + 10 * dpr, h = (17 + 13 * n) * dpr;
       const box = [sx - w / 2, sy - h - 8 * dpr, sx + w / 2, sy - 6 * dpr];
       if (placed.some((q) => box[0] < q[2] && box[2] > q[0] && box[1] < q[3] && box[3] > q[1])) continue;
       placed.push(box);
-      // pin
-      ctx.beginPath(); ctx.arc(sx, sy, (shaft ? 4 : 3) * dpr, 0, Math.PI * 2);
-      ctx.fillStyle = shaft ? "#1b1712" : CONF[lab.conf]; ctx.fill();
-      ctx.lineWidth = (shaft ? 2 : 1.5) * dpr; ctx.strokeStyle = shaft ? CONF[lab.conf] : "#1b1712"; ctx.stroke();
-      ctx.lineWidth = 3.5 * dpr; ctx.strokeStyle = "rgba(14,12,9,0.85)"; ctx.fillStyle = lab.conf === "illustrative" ? "#cfc6b4" : "#fff6e2";
-      ctx.strokeText(title, sx, sy - (sub ? 22 : 10) * dpr); ctx.fillText(title, sx, sy - (sub ? 22 : 10) * dpr);
-      if (sub) {
-        ctx.font = `500 ${10.5 * dpr}px ui-sans-serif, system-ui, sans-serif`;
-        ctx.fillStyle = "#e7d8b6";
-        ctx.strokeText(sub, sx, sy - 9 * dpr); ctx.fillText(sub, sx, sy - 9 * dpr);
+      // pin (none on the things hidden for fun: the label stands over them)
+      if (!egg) {
+        ctx.beginPath(); ctx.arc(sx, sy, (shaft ? 4 : 3) * dpr, 0, Math.PI * 2);
+        ctx.fillStyle = shaft ? "#1b1712" : CONF[lab.conf]; ctx.fill();
+        ctx.lineWidth = (shaft ? 2 : 1.5) * dpr; ctx.strokeStyle = shaft ? CONF[lab.conf] : "#1b1712"; ctx.stroke();
       }
+      ctx.lineWidth = 3.5 * dpr; ctx.strokeStyle = "rgba(14,12,9,0.85)"; ctx.fillStyle = egg ? "#ead9ff" : lab.conf === "illustrative" ? "#cfc6b4" : "#fff6e2";
+      ctx.strokeText(title, sx, sy - (10 + 12 * n) * dpr); ctx.fillText(title, sx, sy - (10 + 12 * n) * dpr);
+      ctx.font = subFont;
+      ctx.fillStyle = egg ? "#d9c8f2" : "#e7d8b6";
+      subs.forEach((t, i) => { const y = sy - (9 + 12 * (n - 1 - i)) * dpr; ctx.strokeText(t, sx, y); ctx.fillText(t, sx, y); });
     }
     ctx.restore();
   }

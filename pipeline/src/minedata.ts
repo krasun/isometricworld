@@ -64,6 +64,10 @@ export const SOURCES: Record<string, { title: string; url: string; licence: stri
   mine: { title: "Wieliczka Salt Mine, kopalnia.pl: route and chamber depths and sizes", url: "https://www.kopalnia.pl/", licence: "facts only" },
   plwiki: { title: "Polish Wikipedia, „Kopalnia soli w Wieliczce”: chambers of the Tourist Route, in order", url: "https://pl.wikipedia.org/wiki/Kopalnia_soli_w_Wieliczce", licence: "facts only" },
   hondius: { title: "Willem Hondius 1645 after Marcin German 1638, level I plan (Commons)", url: "https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg", licence: "public domain" },
+  geology: { title: "Alexandrowicz 1994, Chrońmy Przyrodę Ojczystą 50(4): the deposit's build, block salt over folded layered salt (the rock's drawing)", url: "https://rcin.org.pl/Content/69150/PDF/KR038_87857_r1994-t50-no4_ChPO-Alexandrowicz_s31-46.pdf", licence: "facts only" },
+  kloski: { title: "Przybyło & Włodarczyk-Żurek 2018, Przegląd Solny 14: the Kloski–Colloredo water inflows of 1868–1879 (level V)", url: "https://yadda.icm.edu.pl/baztech/element/bwmeta1.element.baztech-a0929c9c-607a-41ca-84f1-7205d363d4cc/c/Przybylo_Katastrofa_14_2018.pdf", licence: "facts only" },
+  mina: { title: "Żarębski 2017, Nowoczesne Budownictwo Inżynieryjne 3/2017: the Mina cross-cut inflow of 13 April 1992 (level IV)", url: "https://nbi.com.pl/content/uploads/assets/NBI-pdf/2017/3_72_2017/Pdf/7_Zbigniew_Zarebski.pdf", licence: "facts only" },
+  minaSealed: { title: "Duliński 2017, Przegląd Solny 13: the Mina leak (WIV-27) studied until it was sealed in October 2007", url: "https://yadda.icm.edu.pl/baztech/element/bwmeta1.element.baztech-cba34da1-a860-49b0-8241-3fcea6b515c5/c/Dulinski_Badania_izotopwe_13_2017.pdf", licence: "facts only" },
   osm: { title: "OpenStreetMap: shafts, the mine's outline, the Crystal Grottoes reserve (GDOŚ)", url: "https://www.openstreetmap.org/", licence: "ODbL" },
 };
 
@@ -75,8 +79,8 @@ export const LEVELS: MineLevel[] = [
   { id: "IIw", name: "Markowski Brothers", depth: 84.3, tourist: 90, chambers: 46, span: [0.05, 0.95], note: "about 80 m below the town lies the Crystal Grottoes nature reserve (its outline from GDOŚ via OSM, the grotto itself approximate)" },
   { id: "IIn", name: "Mickiewicz", depth: 103.5, tourist: 110, chambers: 246, span: [0, 1], note: "St. Kinga's Chapel and the Michałowice and Drozdowice chambers" },
   { id: "III", name: "Słowacki", depth: 129.4, tourist: 135, chambers: 378, span: [0, 1], note: "with the Kazanów inter-level: the Warszawa Chamber, the museum, the health resort and the lift back up" },
-  { id: "IV", name: "Grunwald", depth: 170.3, chambers: 512, span: [0, 0.95], note: "left as a stable support, closed to visitors" },
-  { id: "V", name: "Austria", depth: 198.8, chambers: 447, span: [0.1, 0.95], note: "with the Kołobrzeg inter-level; left as a stable support" },
+  { id: "IV", name: "Grunwald", depth: 170.3, chambers: 512, span: [0, 0.95], note: "left as a stable support, closed to visitors. In 1992 water and sand broke in at the Mina cross-cut on its northern edge and the ground above sank; the leak was sealed in 2007" },
+  { id: "V", name: "Austria", depth: 198.8, chambers: 447, span: [0.1, 0.95], note: "with the Kołobrzeg inter-level; left as a stable support. In 1868 water broke in at its Kloski cross-cut, flooding the workings below; it kept coming until 1879" },
   { id: "VI", name: "Regis", depth: 236.5, chambers: 233, span: [0.27, 1], note: "being backfilled; nothing west of the Kościuszko shaft" },
   { id: "VII", name: "Warszawa", depth: 255.2, chambers: 121, span: [0.27, 0.92], note: "being backfilled; nothing west of the Kościuszko shaft" },
   { id: "VIII", name: "Biliński", depth: 287.6, chambers: 66, span: [0.2, 0.75], note: "being backfilled" },
@@ -161,3 +165,33 @@ export const HONDIUS = {
 
 /** OSM name of the Groty Kryształowe reserve (its outline is known: GDOŚ via OSM), ~80 m below the town */
 export const GROTTO = { name: "Rezerwat Groty Kryształowe", en: "Crystal Grottoes", level: "IIw" };
+
+/**
+ * The rock between the workings, for the drawing only (page/mine.ts; illustrative, not mapped). The deposit has two
+ * parts (Alexandrowicz 1994, SOURCES.geology): the block deposit, green salt boulders in clay and zuber, lies over the
+ * layered deposit, folded beds of spiza, shaft and green salt with anhydrite and clay between them. The deeper the
+ * level, the more of it is drawn layered: this is the share of its width across the strike, counted from the south.
+ * The shares are a guess for the picture, not a reading of the mine's sections.
+ */
+export const LAYERED: Record<string, number> = { I: 0.15, IIw: 0.25, IIn: 0.35, III: 0.5, IV: 0.65, V: 0.75, VI: 0.85, VII: 0.9, VIII: 0.95, IX: 1 };
+
+export interface MineEgg {
+  level: string;
+  kind: "dino" | "ring" | "chest" | "tools" | "gnome";
+  name: string;
+  note: string;
+  /** a chamber or shaft (its Polish key) to put it near; else the middle of the level */
+  near?: string;
+  /** across (m) */
+  size: number;
+}
+
+/** Things that are just for fun, hidden in the rock: drawn and labelled as such (✦ on the map). */
+export const EGGS: MineEgg[] = [
+  { level: "I", kind: "tools", name: "A lost lamp and pick", note: "just for fun: someone will be looking for these", near: "Szyb Regis", size: 9 },
+  { level: "IIn", kind: "ring", name: "St. Kinga's ring", note: "just for fun: in the legend it turned up in the first lump of salt dug in Poland", near: "Kaplica św. Kingi", size: 8 },
+  { level: "IV", kind: "gnome", name: "A salt gnome", note: "just for fun: he keeps an eye on the support pillars", near: "Szyb Kościuszko", size: 10 },
+  { level: "V", kind: "chest", name: "The Skarbnik's treasure", note: "just for fun: the mine spirit of Polish miners' tales guards it", near: "Komora Kloski", size: 10 },
+  // the salt is Badenian, about 13.6 million years old; the last dinosaurs died 66 million years ago
+  { level: "IX", kind: "dino", name: "A dinosaur", note: "just for fun: it could never be here, the salt is 52 million years younger than the last dinosaurs", size: 60 },
+];
