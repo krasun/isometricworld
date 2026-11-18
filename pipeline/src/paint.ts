@@ -65,7 +65,15 @@ rails or lane markings across a bridge deck.
 When done, copy the final PNG to {out} and reply only with that path.
 `;
 /** What differs per region in the prompt (and the tree species sheet). */
-interface Local { ground: string; country: string; render: string; treesOf: string; treeHint: string; materials: string; trees: string }
+interface Local {
+  ground: string; country: string; render: string; treesOf: string; treeHint: string; materials: string; trees: string;
+  /**
+   * Refuse paintings with invented roofs or far busier than the render (inventedRoofs, inventedStructure), and
+   * leave the window unpainted after 3 tries. Thresholds tuned on Zagreb's render; other regions opt in after
+   * checking them on their own paintings.
+   */
+  inventionChecks?: boolean;
+}
 const LOCAL: Record<string, Local> = {
   "israel-center": {
     ground: "Streets, squares, parks, beach and sea",
@@ -119,6 +127,7 @@ parks, fields and water stay exactly that: never add buildings, streets or squar
 water. Tall towers stay tall. Draw no trains, trams or buses anywhere (they are animated on top of the map): leave rail \
 and tram tracks empty.`,
     trees: join(PIPELINE, "style", "trees-stuttgart.png"),
+    inventionChecks: true,
   },
 };
 
@@ -468,15 +477,17 @@ async function paintWindow(i: number, j: number) {
         console.warn(`  ${i}_${j}: black band or patch in the paint, repainting`);
         continue;
       }
-      const invented = await inventedRoofs(join(work, "out.png"), join(work, "input.png"));
-      if (invented > MAX_INVENTED && attempt < 3) {
-        console.warn(`  ${i}_${j}: ${(invented * 100).toFixed(1)} % invented roofs (buildings the render doesn't have), repainting`);
-        continue;
-      }
-      if (invented > MAX_INVENTED) { console.warn(`  ${i}_${j}: still inventing buildings after 3 attempts, left unpainted`); return; }
-      if (await inventedStructure(join(work, "out.png"), join(work, "input.png"))) {
-        if (attempt < 3) { console.warn(`  ${i}_${j}: painting far busier than its render (invented structure), repainting`); continue; }
-        console.warn(`  ${i}_${j}: still inventing structure after 3 attempts, left unpainted`); return;
+      if (local.inventionChecks) {
+        const invented = await inventedRoofs(join(work, "out.png"), join(work, "input.png"));
+        if (invented > MAX_INVENTED && attempt < 3) {
+          console.warn(`  ${i}_${j}: ${(invented * 100).toFixed(1)} % invented roofs (buildings the render doesn't have), repainting`);
+          continue;
+        }
+        if (invented > MAX_INVENTED) { console.warn(`  ${i}_${j}: still inventing buildings after 3 attempts, left unpainted`); return; }
+        if (await inventedStructure(join(work, "out.png"), join(work, "input.png"))) {
+          if (attempt < 3) { console.warn(`  ${i}_${j}: painting far busier than its render (invented structure), repainting`); continue; }
+          console.warn(`  ${i}_${j}: still inventing structure after 3 attempts, left unpainted`); return;
+        }
       }
       const structured = r.texture >= MIN_TEXTURE; // open sea / empty land: correlation is meaningless
       if (structured && r.score < MIN_MATCH && attempt < 3) {
