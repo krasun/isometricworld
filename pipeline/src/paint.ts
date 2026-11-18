@@ -11,8 +11,7 @@
  *   npm run paint -- tlv-core --near 32.064,34.775 --radius 2   # a patch of windows
  *   npm run paint -- tlv-core -j 3                              # everything, centre first (--center lat,lon)
  */
-import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, openSync, closeSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import sharp, { type OverlayOptions } from "sharp";
@@ -22,6 +21,7 @@ import { DERIVED, PIPELINE, readJson, writeAtomic } from "./paths.ts";
 import { groundPixel, seaH, readHeights } from "./heights.ts";
 import { areaPois } from "./pois.ts";
 import { applyRegistration, register } from "./register.ts";
+import { codex } from "./codex.ts";
 
 const WIN = 1024, OVERLAP = 128, STRIDE = WIN - OVERLAP, T = CAMERA.tile;
 /** Blend band in the middle of each overlap; outside it a window's own pixels win outright. */
@@ -135,6 +135,13 @@ patterns, and where trees and lawns really are. Where it disagrees with images 1
 noise, photo shadows, smeared edges or tiny cars. Walls and facades come from image 1, drawn in the style of image 3.
 `;
 
+/** --ref: photos of what stands here (rides, tents…), for looks only. */
+const REF_IMAGES = (from: number, n: number) => Array.from({ length: n }, (_, k) => `${from + k}. ref${k + 1}.png: a ground-level \
+photo of the kind of objects that stand at this place (see the notes below). Use it ONLY for what those objects look like \
+(shapes, colours, details), redrawn in the style of image 3. It says nothing about where anything stands, and never copy its \
+photographic look.
+`).join("");
+
 /** --aerial-input: roofs, ground and trees of image 1 are the draped orthophoto, walls the render. */
 const HYBRID_RENDER = `Walls and facades come from the 3D model (exact \
 geometry; their colours and window patterns are stylised hints). Streets, rail tracks, bridges, pedestrian \
@@ -185,14 +192,33 @@ const { values: args, positionals } = parseArgs({
     aerial: { type: "string" },
     // with --aerial: bake the orthophoto into image 1 (roofs/ground/trees) instead of attaching it as image 5
     "aerial-input": { type: "boolean", default: false },
+    // coarse-to-fine: a low-res painting of a whole block (e.g. one Codex image of the Wasen) becomes image 1 of every
+    // window, upscaled, so all windows refine ONE agreed layout instead of each inventing its own;
+    // --guide-frame x,y,w,h = the global art-px box the guide image covers
+    guide: { type: "string" },
+    "guide-frame": { type: "string" },
     // experiments: windows/paint/work go to <dir>-<tag> (export only reads paint/)
     tag: { type: "string" },
     // painted (detailed, the Tel Aviv look) | simple (flat fills, outlines, low-poly trees; see SIMPLE_STYLE)
     look: { type: "string", default: "painted" },
     // extra prompt line for this run (cutouts: what the building at the window centre is and how it looks)
     hint: { type: "string" },
+    // extra reference photos, comma-separated (public domain / CC0 only: their pixels reach the painting): what the
+    // objects of this place look like (e.g. fairground rides), never where they stand
+    ref: { type: "string" },
   },
 });
+const GUIDE = args.guide ? { file: args.guide, box: args["guide-frame"]!.split(",").map(Number) } : null;
+if (GUIDE && (GUIDE.box.length !== 4 || !existsSync(GUIDE.file))) throw new Error("--guide <png> needs --guide-frame x,y,w,h");
+const GUIDE_IMAGE = `1. input.png: a LOW-RESOLUTION PAINTING of this exact place, upscaled (so it looks soft and blurry): the APPROVED \
+DESIGN of this area, orthographic camera tilted 45° down, ~256 m across. Redraw it SHARP at full resolution.
+`;
+const GUIDE_RULE = `- Image 1 is the approved layout: keep every tent, ride, stall row, path, tree and building exactly where and as \
+large as it is in image 1; only make it crisp and detailed. Where image 2 (the ground before the event) disagrees with \
+image 1, follow image 1.
+`;
+const REFS = args.ref ? args.ref.split(",").map((f) => f.trim()).filter(Boolean) : [];
+for (const f of REFS) if (!existsSync(f)) throw new Error(`--ref: ${f} not found`);
 const areaName = positionals[0] ?? "tlv-core";
 const base = join(DERIVED, areaName);
 const manifest = readJson(join(base, "manifest.json"));
@@ -294,7 +320,17 @@ async function composeInput(i: number, j: number, file: string, heightFile: stri
   // (not in the simple look: the contrast lift turns photo grain into texture the model copies)
   const crop = sharp(await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, HYBRID ? hybridTile : undefined)).png().toBuffer()).removeAlpha();
   const lifted = await (SIMPLE ? crop : crop.clahe({ width: 128, height: 128, maxSlope: 2 }).modulate({ saturation: 1.1 })).png().toBuffer();
-  const img = sharp(lifted);
+  let img = sharp(lifted);
+  if (GUIDE) { // the guide's part of this window, upscaled to art px, over the render (outside the guide's box)
+    const [gx, gy, gw, gh] = GUIDE.box, gm = await sharp(GUIDE.file).metadata(), s = gm.width! / gw;
+    const x0 = Math.max(gx, i * STRIDE), y0 = Math.max(gy, j * STRIDE), x1 = Math.min(gx + gw, i * STRIDE + WIN), y1 = Math.min(gy + gh, j * STRIDE + WIN);
+    if (x1 > x0 && y1 > y0) {
+      const part = await sharp(GUIDE.file).removeAlpha()
+        .extract({ left: Math.floor((x0 - gx) * s), top: Math.floor((y0 - gy) * s), width: Math.max(1, Math.round((x1 - x0) * s)), height: Math.max(1, Math.round((y1 - y0) * s)) })
+        .resize(x1 - x0, y1 - y0, { kernel: "lanczos3", fit: "fill" }).png().toBuffer();
+      img = sharp(await img.composite([{ input: part, left: x0 - i * STRIDE, top: y0 - j * STRIDE }]).png().toBuffer());
+    }
+  }
   const comps: OverlayOptions[] = [];
   const edges: string[] = [];
   // already-painted neighbours on any side: paste their overlap strip so this window continues them
@@ -336,16 +372,9 @@ function limitWait(log: string) {
   return backoff * 60_000;
 }
 
-function codex(cwd: string, prompt: string): Promise<void> {
-  return new Promise((resolve) => {
-    const log = openSync(join(cwd, "codex.log"), "w");
-    const images = ["input.png", "height.png", "style.png", "trees.png", ...(args.aerial && !HYBRID ? ["aerial.png"] : [])].flatMap((f) => ["-i", f]);
-    const p = spawn("codex", ["exec", "--skip-git-repo-check", "-s", "workspace-write", "-C", cwd, ...images, "-"],
-      { stdio: ["pipe", log, log] });
-    const timer = setTimeout(() => p.kill("SIGTERM"), 900_000);
-    p.on("close", () => { clearTimeout(timer); closeSync(log); resolve(); });
-    p.stdin!.end(prompt);
-  });
+function codexWindow(cwd: string, prompt: string): Promise<void> {
+  const images = ["input.png", "height.png", "style.png", "trees.png", ...(args.aerial && !HYBRID ? ["aerial.png"] : []), ...REFS.map((_, k) => `ref${k + 1}.png`)];
+  return codex(cwd, images, prompt);
 }
 
 /** Share of a window's surface at sea level (from the height pass). */
@@ -430,23 +459,26 @@ async function paintWindow(i: number, j: number) {
   const edges = await composeInput(i, j, join(work, "input.png"), join(work, "height.png"));
   copyFileSync(SIMPLE ? STYLE_SIMPLE : STYLE, join(work, "style.png"));
   copyFileSync(local.trees, join(work, "trees.png"));
+  for (const [k, f] of REFS.entries()) await sharp(f).resize(1024, 1024, { fit: "inside" }).png().toFile(join(work, `ref${k + 1}.png`));
   if (args.aerial && !HYBRID) {
     const dir = join(base, `aerial-${args.aerial}`);
     const load = async (tx: number, ty: number) => (existsSync(join(dir, `${tx}_${ty}.png`)) ? sharp(join(dir, `${tx}_${ty}.png`)).png().toBuffer() : null);
     await (await cropGlobal(i * STRIDE, j * STRIDE, WIN, WIN, load)).removeAlpha().png().toFile(join(work, "aerial.png"));
   }
-  const prompt = PROMPT.replace("{style}", SIMPLE ? SIMPLE_STYLE : PAINTED_STYLE).replace("{groundLook}", SIMPLE ? SIMPLE_GROUND : PAINTED_GROUND)
+  let prompt = PROMPT.replace("{style}", SIMPLE ? SIMPLE_STYLE : PAINTED_STYLE).replace("{groundLook}", SIMPLE ? SIMPLE_GROUND : PAINTED_GROUND)
     .replace("{title}", title).replace("{country}", local.country).replace("{render}", HYBRID ? HYBRID_RENDER : local.render)
     .replace("{treesOf}", local.treesOf).replace("{treeHint}", local.treeHint).replace("{materials}", local.materials).replace("{ground}", local.ground).replace("{out}", join(work, "out.png"))
     .replace("{continuation}", edges.length ? CONTINUATION.replace("{edges}", edges.join(" and ")) : "")
-    .replace("{count}", args.aerial && !HYBRID ? "Five" : "Four").replace("{aerialImage}", args.aerial && !HYBRID ? AERIAL_IMAGE : "")
+    .replace("{count}", ["Four", "Five", "Six", "Seven", "Eight"][(args.aerial && !HYBRID ? 1 : 0) + REFS.length])
+    .replace("{aerialImage}", (args.aerial && !HYBRID ? AERIAL_IMAGE : "") + REF_IMAGES(args.aerial && !HYBRID ? 6 : 5, REFS.length))
     .replace("{facades}", (await facadeNotes(i, j)) + (args.hint ? `- ${args.hint}\n` : ""))
-    .replace("{aerialRule}", HYBRID ? HYBRID_RULE : args.aerial ? AERIAL_RULE : "");
+    .replace("{aerialRule}", (HYBRID ? HYBRID_RULE : args.aerial ? AERIAL_RULE : "") + (GUIDE ? GUIDE_RULE : ""));
+  if (GUIDE) prompt = prompt.replace(/1\. input\.png:[^\n]*\n/, GUIDE_IMAGE);
   for (let attempt = 1; attempt <= 3; attempt++) {
     while (Date.now() < resumeAt) await sleep(Math.min(60_000, resumeAt - Date.now()));
     rmSync(join(work, "out.png"), { force: true });
     const t0 = Date.now();
-    await codex(work, prompt);
+    await codexWindow(work, prompt);
     if (!existsSync(join(work, "out.png"))) {
       const log = readFileSync(join(work, "codex.log"), "utf8").slice(-4000);
       if (LIMIT.test(log)) {
@@ -475,7 +507,7 @@ async function paintWindow(i: number, j: number) {
       console.log(`  ${i}_${j}: ${((Date.now() - t0) / 1000).toFixed(0)}s edges=${edges.join("+") || "-"} match=${r.score.toFixed(2)}`
         + (structured ? "" : " (low texture)") + (warp ? ` shift=(${r.dx},${r.dy}) scale=${r.scale.toFixed(2)}` : ""));
       // keep qa.json + codex.log for debugging; the images are ~6 MB per window
-      for (const f of ["input.png", "height.png", "style.png", "trees.png", "aerial.png", "out.png"]) rmSync(join(work, f), { force: true });
+      for (const f of ["input.png", "height.png", "style.png", "trees.png", "aerial.png", "out.png", ...REFS.map((_, k) => `ref${k + 1}.png`)]) rmSync(join(work, f), { force: true });
       return;
     }
     console.error(`  ${i}_${j}: attempt ${attempt} failed, see ${join(work, "codex.log")}`);
@@ -762,7 +794,7 @@ async function main() {
     const ci = Math.floor(x / STRIDE), cj = Math.floor(y / STRIDE), r = Number(args.radius);
     wins = wins.filter(([i, j]) => Math.abs(i - ci) <= r && Math.abs(j - cj) <= r);
   }
-  if (args.window) wins = [args.window.split(",").map(Number) as [number, number]];
+  if (args.window) wins = args.window.split(";").map((w) => w.split(",").map(Number) as [number, number]); // "i,j" or "i,j;i,j;…" (painted in that order)
   if (OLDER) { // windows painted before the cut-off or not yet at all (skip sea-texture windows: no trees)
     const old: Array<[number, number]> = [];
     for (const [i, j] of wins) if (!current(i, j) && !(existsSync(winFile(i, j)) && await looksLikeSea(winFile(i, j)))) old.push([i, j]);
@@ -770,7 +802,7 @@ async function main() {
   }
   if (args.plan) return console.log(`${wins.length} windows`);
   if (args.assemble) { await harmoniseSea(); return assemble(true); }
-  if (args.window) { // one window, painted directly: a cutout window may sit off the grid (16.5,2.5), so no rings round it
+  if (args.window) { // listed windows, painted directly in order (each continues those painted before it); a cutout window may sit off the grid (16.5,2.5), so no rings round it
     if (existsSync(SEA) && !(await looksLikeSea(SEA))) { console.warn("  sea texture is bad, repainting it"); rmSync(SEA); }
     for (const [i, j] of wins) await paintWindow(i, j);
     await assemble();

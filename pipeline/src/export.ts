@@ -281,7 +281,8 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
   let jobs: Array<() => Promise<void>> = [];
   for (const [k, file] of sources) {
     const [tx, ty] = parse(k);
-    const painted = layer === "map" && file.includes("/paint/");
+    // a cutout tile laid on a painted tile (cutout.ts) is painted too: it gets the bridge decks
+    const painted = layer === "map" && (file.includes("/paint/") || (file.includes("/cutout/") && existsSync(file.replace("/cutout/", "/paint/"))));
     const src = sourceHash(file);
     for (let j = 0; j < SPLIT; j++)
       for (let i = 0; i < SPLIT; i++) {
@@ -525,6 +526,27 @@ async function placePoint(heights: Heights, lat: number, lon: number, u: number 
 }
 const latLonEnu = (lat: number, lon: number): [number, number] => { const e = ecefToEnu(llhToEcef(lat, lon, 0)); return [e[0], e[1]]; };
 
+/**
+ * Painted-over ground (cutout.ts `key` masks, e.g. the Wasen fairground): the OSM service roads under it are gone in
+ * the painting, so traffic must not drive there. Returns a test: is this map pixel inside any key mask?
+ */
+async function keyMasks(areas: string[]) {
+  const masks: Array<{ x: number; y: number; sx: number; sy: number; mw: number; mh: number; a: Buffer }> = [];
+  for (const area of areas) {
+    const f = join(DERIVED, area, "cutouts.json");
+    if (!existsSync(f)) continue;
+    for (const c of readJson(f)) {
+      if (!c.key) continue;
+      const [x, y, w, h] = c.key.frame, { data, info } = await sharp(join(DERIVED, area, c.key.mask)).extractChannel(0).raw().toBuffer({ resolveWithObject: true });
+      masks.push({ x, y, sx: info.width / w, sy: info.height / h, mw: info.width, mh: info.height, a: data });
+    }
+  }
+  return (px: number, py: number) => masks.some((m) => {
+    const mx = Math.floor((px - m.x) * m.sx), my = Math.floor((py - m.y) * m.sy);
+    return mx >= 0 && my >= 0 && mx < m.mw && my < m.mh && m.a[my * m.mw + mx] > 127;
+  });
+}
+
 /** Drivable roads as ENU polylines sampled every 4 m, each sample flagged visible/occluded. */
 async function exportRoads(areas: string[], heights: Heights) {
   const CLS: Record<string, number> = { motorway: 0, trunk: 0, primary: 1, secondary: 2, tertiary: 3, unclassified: 4, residential: 4, living_street: 5, service: 5 };
@@ -597,6 +619,16 @@ async function exportRoads(areas: string[], heights: Heights) {
     const [x, y] = enuToPixel([w.s[k], w.s[k + 1], w.s[k + 2]]);
     if (edgeDistance(x, y) < (EDGE0 + EDGE1) / 2) { w.s[k + 3] = 0; occluded++; }
   }
+  // painted-over ground (key cutouts): a way mostly under the painting goes; one that only clips it hides its cars there
+  const painted = await keyMasks(areas);
+  let dropped = 0;
+  for (let i = ways.length - 1; i >= 0; i--) {
+    const w = ways[i], inside: number[] = [];
+    for (let k = 0; k < w.s.length; k += 4) { const [x, y] = enuToPixel([w.s[k], w.s[k + 1], w.s[k + 2]]); if (painted(x, y)) inside.push(k); }
+    if (inside.length * 4 * 2 >= w.s.length) { ways.splice(i, 1); dropped++; continue; }
+    for (const k of inside) if (w.s[k + 3]) { w.s[k + 3] = 0; occluded++; }
+  }
+  if (dropped) console.log(`  roads: ${dropped} ways dropped under painted cutouts`);
   bridgeDecks(ways);
   writeData("roads", JSON.stringify(encodeRoads(ways)));
   console.log(`  roads: ${ways.length} ways, ${total} samples, ${((occluded / Math.max(1, total)) * 100).toFixed(1)}% occluded, ${fallback} off the terrain grids`);
@@ -978,7 +1010,7 @@ async function main() {
   await exportRoads(areas, heights); // first: the bridge decks are drawn into the painted tiles
   await exportTrains(areas, heights);
   if (!process.argv.includes("--data-only")) {
-    await exportLayer("map", new Map([...photo, ...cut, ...art])); // painted patches win over cutouts, cutouts over the render
+    await exportLayer("map", new Map([...photo, ...art, ...cut])); // cutouts win: cutout.ts lays them on the painted tile where there is one
     await exportLayer("photo", photo);
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
   }

@@ -96,6 +96,11 @@ not from the render itself (flat massing and aerial photos were both rejected).
   black bands or patches. Never accept a painting that invents or moves streets.
 - **A new climate** (desert, snow, northern trees) may need its own tree sheet, and possibly a region-specific
   style addendum in the prompt; keep `reference.png` as the one house style.
+- **Landmarks** (a fair, a stadium, a museum): never window by window (each window invents its own, and LoD2 massing gets
+  painted literally). `npm run landmark -- <area> <name> overview|edit|key` (`pipeline/src/landmark.ts`, prompts in
+  `pipeline/landmarks/<name>/`): one coherent painting, reviewed with the user, box edits, then a magenta chroma-key
+  cut-out as the mask; `cutout.ts` composes it, export keeps traffic off it. Reference photos: open licence only
+  (PD/CC0/CC BY as images, CC BY-SA as text), credited in `ATTRIBUTION.md`.
 - **From aerial photos** (Stuttgart): where an open orthophoto exists, drape it with `aerial.ts` and paint with
   `--aerial <source> --aerial-input` (README "Stuttgart" has the steps); credit the photos like any source. Use
   `--tag` for experiments so nothing reaches `paint/`.

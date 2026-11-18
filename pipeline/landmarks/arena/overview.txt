@@ -1,0 +1,8 @@
+Repaint the stadium as what it really is, a big modern football stadium (about 60,000 seats), in the exact painted style of image 1 and image 3:
+- A closed oval bowl, footprint and outline exactly as in image 4: the roof's outer edge follows image 4's outer white ring.
+- The roof is ONE continuous ring of white tensile membrane: a crown of identical radial bays, each a softly curved, slightly translucent white fabric panel between thin radial steel cables, running all the way round with no gaps, no buildings and no trees on it. A slim steel compression ring along the outer edge and a thin cable tension ring along the inner edge, with small floodlights along the inner edge.
+- Through the open oval in the middle of the roof you look down onto the steep tiers of seats (mostly red) dropping to a bright green football pitch with white markings, sized and placed as in image 4. No athletics track. The pitch is partly in the roof's shadow on the side facing away from the light, as in image 4.
+- Below the roof's outer edge: the stadium's outer wall, a light façade with slanted slim steel columns and stairs, and a narrow paved concourse around it.
+- Keep the attached buildings around it (the long office building on the right, the low halls at the bottom right) as in image 1.
+- Fill the black hole on the car park on the left with car park, matching its surroundings.
+Everything outside the stadium and its concourse (trees, roads, sports pitches, buildings, the car park) stays EXACTLY as in image 1, pixel for pixel; do not move or restyle anything there. No text, logos or names.
