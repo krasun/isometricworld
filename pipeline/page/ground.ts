@@ -7,8 +7,8 @@
 
 type P2 = [number, number];
 /** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number] }
-interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; s?: string }
+interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number, number?]> }
 
 const FILL: Record<string, string> = {
   residential: "#dcd5c6", commercial: "#dfdbd2", industrial: "#cfcbc2", campus: "#e1dacb",
@@ -145,6 +145,8 @@ export function drawGround(
     stroke(f.l!, 0.9, "rgba(255,255,255,0.9)", [20, 15]);
   }
   ctx.lineCap = "round";
+  // 2c. tracks mapped as lines with a width (a racecourse's training track): a band in their surface's colour
+  for (const f of of("trackline")) stroke(f.l!, f.w!, FILL[f.s ?? "track"] ?? FILL.track);
 
   // 3. soft contact shadows (short: the art has no long shadows)
   ctx.save();

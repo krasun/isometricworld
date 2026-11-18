@@ -8,12 +8,15 @@ import { CAMERA, axes, ecefToEnu, llhToEcef, tileCamera, useRegion } from "../sr
 import { REGIONS } from "../src/places.ts";
 import { drawGround, type Feature } from "./ground.ts";
 import { deckHeight } from "../src/bridges.ts";
+import { ZG_SPECIES } from "../src/species.ts";
 
 const params = new URLSearchParams(location.search);
 const REGION = params.get("region") ?? "israel-center";
 useRegion(REGION); // before any projection below
 /** LGL regions (Baden-Württemberg) get the finished procedural look (no paint step): LoD2 roofs, hillshade, outlines. */
-const STYLED = REGIONS[REGION].sources === "lgl";
+const STYLED = REGIONS[REGION].sources === "lgl" || REGIONS[REGION].sources === "zg3d"; // LoD2 regions: drawn, not painted
+/** Zagreb: its own plaster and tile palette, Austro-Hungarian façades, prefab slabs and the landmark styles 6–10 (shader `ZG`). */
+const ZG = REGIONS[REGION].sources === "zg3d";
 /** Ellipsoid height the height pass counts from (heights.ts). */
 const HEIGHT_BASE = REGIONS[REGION].heightBase ?? 0;
 const SS = Number(params.get("ss") ?? 2); // supersampling
@@ -315,7 +318,7 @@ heightTarget.texture.generateMipmaps = false;
 type P2 = [number, number];
 export interface TileObjects {
   b: Array<[P2[], number, number, number | null]>; // ring, height, style, ground hint (ellipsoid)
-  t: Array<[number, number, number, number]>;      // x, y, radius, crown height
+  t: Array<[number, number, number, number, number?]>; // x, y, radius, crown height, species (Zagreb: species.ts)
   /** LoD2 meshes: style, roof kind, roof xyz[], wall (xyz, along, above base)[], footprint, height, seed */
   m?: Array<[number, number, number[], number[], P2[], number, number, (number[] | null)?, (number[] | null)?, number?]>; // … osm roof, osm wall, bare (no roof furniture)
 }
@@ -344,7 +347,64 @@ const buildingMaterial = new THREE.ShaderMaterial({
     uniform vec3 sun;
     varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float vnoise(vec2 p) {
+      vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+    }
     const vec3 GLASS = vec3(0.30, 0.40, 0.50);
+    #ifdef ZG
+    const bool ZGS = true;
+    #else
+    const bool ZGS = false;
+    #endif
+    #ifdef ZG
+    /** St Mark's roof (style 7): x -10…10 along the eave (west to east), y 0 at the eave … 10 at the ridge; x > 500 = no arms */
+    vec3 markRoof(float x, float y) {
+      vec3 RED = vec3(0.74, 0.20, 0.16), WHITE = vec3(0.95, 0.94, 0.90), BLUE = vec3(0.17, 0.27, 0.58), GOLD = vec3(0.92, 0.72, 0.22), BROWN = vec3(0.36, 0.22, 0.14);
+      bool arms = x < 500.0;
+      x = arms ? x : x - 1000.0;
+      // eave: dark band, then zigzag chevrons in white, red, blue, gold
+      if (y < 0.45) return BROWN;
+      float zz = abs(fract(x / 1.3) - 0.5) * 2.0;
+      if (y < 1.9) {
+        int b = int(mod(floor((y - 0.45 + zz * 0.55) / 0.3), 4.0));
+        return b == 0 ? WHITE : b == 1 ? RED : b == 2 ? BLUE : GOLD;
+      }
+      if (arms && y > 9.6) return BROWN; // ridge (the other planes are in metres from the eave)
+      if (arms) {
+        // left: Kingdom of Croatia-Slavonia-Dalmatia; right: City of Zagreb; shields 4.4 × 5.6 with a round foot
+        for (int s = 0; s < 2; s++) {
+          float cx = s == 0 ? -3.6 : 2.6, dx = x - cx, w = 2.2, top = 8.8, bot = 3.0;
+          float foot = bot + w - sqrt(max(0.0, w * w - dx * dx));
+          if (abs(dx) > w + 0.18 || y > top + 0.18 || y < foot - 0.18) continue;
+          if (abs(dx) > w || y > top || y < foot) return GOLD; // rim
+          float u = (dx + w) / (2.0 * w), v = (y - bot) / (top - bot);
+          if (s == 0) {
+            if (v > 0.5) {
+              if (u < 0.5) return mod(floor(u * 10.0) + floor(v * 10.0), 2.0) < 1.0 ? RED : WHITE;   // Croatia: chequy
+              vec2 q = vec2(fract(u * 2.0), v * 2.0 - 1.0);                                           // Dalmatia: three crowned leopard heads
+              float d = min(length(q - vec2(0.25, 0.68)), min(length(q - vec2(0.5, 0.68)), length(q - vec2(0.75, 0.68))));
+              return d < 0.12 ? GOLD : BLUE;
+            }
+            // Slavonia: blue, two white rivers with the red band (and its marten) between
+            float vv = v * 2.0;
+            return vv > 0.62 && vv < 0.74 ? WHITE : vv > 0.32 && vv < 0.62 ? RED : vv > 0.2 && vv < 0.32 ? WHITE : BLUE;
+          }
+          // Zagreb: white castle with three towers and an open gate on red, on a green hill
+          float ax = abs(dx);
+          if (v < 0.18) return vec3(0.25, 0.48, 0.25);
+          bool wall = v < 0.52 && ax < 1.55, tower = (ax < 0.38 || (ax > 1.0 && ax < 1.55)) && v < 0.7;
+          bool merlon = (wall && v > 0.47 || tower && v > 0.65) && fract(dx / 0.32) < 0.5;
+          if ((wall || tower) && !merlon) return ax < 0.32 && v < 0.36 ? BROWN : WHITE;
+          return RED;
+        }
+      }
+      // field: lozenges in rows of red, white and blue (the rows zigzag across the slope)
+      float s = 0.55, U = floor((x + y) / s), V = floor((x - y) / s);
+      float row = mod(U - V, 6.0);
+      return row < 2.0 ? RED : row < 3.0 ? WHITE : row < 5.0 ? BLUE : WHITE;
+    }
+    #endif
     void main() {
       vec3 n = normalize(vNormal);
       float light = min(1.08, 0.80 + 0.32 * max(dot(n, sun), 0.0));
@@ -355,6 +415,11 @@ const buildingMaterial = new THREE.ShaderMaterial({
         if (vFacade.y < -100.0 && vFacade.x < 0.5) {
           if (n.z < 0.97) { if (fract(vPos.z / 0.42) < 0.16) c *= 0.93; }   // tile courses
           else c *= 0.95 + 0.07 * hash(floor(vPos.xy * 2.0));               // gravel
+          #ifdef ZG
+          // old tile weathers in patches (moss, soot, newer tiles): mottle pitched roofs, soften flat ones
+          if (n.z < 0.97) c *= 0.9 + 0.15 * vnoise(vPos.xy * 0.45) + 0.06 * (hash(floor(vPos.xy * 3.0)) - 0.5);
+          else c *= 0.95 + 0.08 * vnoise(vPos.xy * 0.3);
+          #endif
         }
         if (vFacade.y > -100.0) {
           // kind = 10 + style + 0.05 + 0.9 * v: v is the building's own variation (addMeshes), every
@@ -369,8 +434,9 @@ const buildingMaterial = new THREE.ShaderMaterial({
           vec3 FRAME = r5 < 0.7 ? vec3(0.95, 0.95, 0.93) : (r5 < 0.85 ? vec3(0.32, 0.32, 0.34) : vec3(0.52, 0.40, 0.29));
           if (k <= 2) {
             // punched windows: floor height, bay, window size and grouping, ground floor, frames, shutters
-            float FH = k == 2 ? 3.8 + 0.9 * r1 : (k == 0 ? 3.0 + 0.5 * r1 : 2.75 + 0.35 * r1);
-            bool shop = k != 2 && r6 < 0.22;
+            // Zagreb's 19th-century blocks: tall storeys, window heads, shops in most ground floors
+            float FH = k == 2 ? 3.8 + 0.9 * r1 : (k == 0 ? (ZGS ? 3.5 + 0.7 * r1 : 3.0 + 0.5 * r1) : 2.75 + 0.35 * r1);
+            bool shop = k != 2 && r6 < (ZGS && k == 0 ? 0.45 : 0.22);
             float GF = shop ? 4.2 : (k == 2 || r6 < 0.5 ? FH * 1.2 : FH);
             float BAY = k == 2 ? 3.1 + 1.2 * r2 : 2.2 + 1.7 * r2;
             float hw = min(k == 2 ? 0.55 + 0.25 * r3 : 0.42 + 0.38 * r3, BAY * 0.5 - 0.35);
@@ -398,7 +464,7 @@ const buildingMaterial = new THREE.ShaderMaterial({
               else if (r4 > 0.5 && k != 1 && (abs(cx) < 0.05 || abs(t - 0.7) * wh < 0.05)) c = FRAME; // mullion + transom
             } else if (abs(cx) < hw + 0.1 && fy > s0 - 0.14 && fy <= s0) {
               c = k == 2 ? c * 0.88 : FRAME * 0.97;                                // sill
-            } else if (k == 2 && abs(cx) < hw + 0.18 && fy >= s0 + wh && fy < s0 + wh + 0.3) {
+            } else if ((k == 2 || ZGS && k == 0 && r3 > 0.3) && abs(cx) < hw + 0.18 && fy >= s0 + wh && fy < s0 + wh + 0.3) {
               c *= 0.86;                                                           // window head
             } else if (k == 0 && r5 > 0.8 && abs(cx) >= hw && abs(cx) < hw * 1.85 && fy > s0 && fy < s0 + wh && BAY > hw * 4.0 + 0.4) {
               c = r1 < 0.4 ? vec3(0.33, 0.45, 0.36) : (r1 < 0.7 ? vec3(0.45, 0.50, 0.55) : vec3(0.50, 0.38, 0.28)); // shutters
@@ -414,7 +480,50 @@ const buildingMaterial = new THREE.ShaderMaterial({
             if (fract(y / FH) < 0.1 + 0.15 * r4 || fract(x / M) < 0.06) c = vec3(0.84, 0.86, 0.88);
           } else if (k == 4) {       // sheds, garages, halls: horizontal or vertical cladding
             if (r1 < 0.5 ? fract(y / 0.9) < 0.08 : fract(x / 0.6) < 0.12) c *= 0.93;
-          } else {                   // offices: ribbon windows or a grid of square windows, shop fronts
+          }
+          #ifdef ZG
+          else if (k == 6) {         // post-war prefab slabs (Novi Zagreb, Trnje): storey bands, loggias, panel joints
+            float FH = 2.8 + 0.12 * r1, PW = 3.0 + 1.6 * r2, fy = mod(y, FH), bx = floor(x / PW), cx = mod(x, PW);
+            float run = 3.0 + floor(r4 * 3.0);                                   // a loggia every few bays
+            bool loggia = r3 < 0.7 && mod(bx, run) < (r3 < 0.35 ? 2.0 : 1.0);
+            vec3 accent = r5 < 0.5 ? c : (r5 < 0.65 ? vec3(0.86, 0.56, 0.40) : (r5 < 0.8 ? vec3(0.62, 0.70, 0.80) : vec3(0.90, 0.78, 0.48)));
+            if (y < 2.8) c *= fract(x / 7.0) < 0.6 ? 0.62 : 0.86;                 // entrances and storage at the foot
+            else if (loggia) {
+              if (fy < 1.0) c = accent * (fract(x / 0.25) < 0.5 ? 0.96 : 1.0); // parapet
+              else c = vec3(0.30, 0.31, 0.33) + 0.06 * hash(vec2(bx, floor(y / FH)) + v); // shaded recess
+            } else if (fy > 0.95 && fy < 2.35 && abs(cx - PW * 0.5) < PW * 0.32) {
+              float rw = hash(vec2(bx, floor(y / FH)) + v * 13.0);
+              c = rw < 0.2 ? vec3(0.56, 0.64, 0.72) : rw < 0.35 ? vec3(0.80, 0.78, 0.72) : WIN;
+              if (abs(cx - PW * 0.5) < 0.05) c = vec3(0.9);
+            }
+            if (fy < 0.06 || cx < 0.05) c *= 0.84;                              // panel joints
+          } else if (k == 7) {       // St Mark's tiled roof
+            c = markRoof(x, y);
+            light = 0.86 + 0.24 * max(dot(n, sun), 0.0);
+          } else if (k == 8 && abs(n.z) > 0.12) { // openwork spire: rows of small dark tracery openings
+            vec2 g = vec2(x / 0.8, y / 1.5), f = fract(g) - 0.5;
+            if (length(f * vec2(1.0, 0.7)) < 0.26 && mod(floor(g.y), 2.0) < 1.0) c *= 0.45;
+            c *= 0.96 + 0.06 * vnoise(vec2(x, y) * 0.7);
+          } else if (k == 8) {       // Gothic ashlar (the cathedral): courses, tall lancets per 12 m stage
+            if (fract(y / 0.55) < 0.07) c *= 0.93;
+            float BAY = 2.6, cx = abs(mod(x, BAY) - BAY * 0.5), fy = mod(y, 12.0), w = 0.42;
+            float apex = 9.6 + (w - cx) * 1.6;                                   // pointed arch
+            if (y > 2.0 && cx < w && fy > 3.4 && fy < apex) c = mix(vec3(0.22, 0.25, 0.30), c, fy > 9.6 ? 0.25 : 0.0);
+            else if (fy > 11.2) c *= 0.88;                                       // string course
+            c *= 0.96 + 0.06 * vnoise(vec2(x, y) * 0.7);                         // weathered stone
+          } else if (k == 9) {       // dark glass curtain wall (Cibona): sky reflection, fine floor lines
+            float FH = 3.5, fy = fract(y / FH);
+            c = mix(vec3(0.10, 0.12, 0.16), vec3(0.34, 0.40, 0.48), 0.25 + 0.35 * vnoise(vec2(x * 0.08, y * 0.03)));
+            if (fy < 0.06) c = vec3(0.30, 0.32, 0.35);
+            else if (fract(x / 1.5) < 0.04) c *= 0.8;
+            light = 0.8 + 0.3 * max(dot(n, sun), 0.0);
+          } else if (k == 10) {      // vertical stone ribs and dark window slots (Zagrepčanka)
+            float cx = fract(x / 1.6), fy = fract(y / 3.4);
+            if (cx > 0.58 && cx < 0.94 && fy > 0.08) c = mix(vec3(0.20, 0.23, 0.27), vec3(0.42, 0.48, 0.55), 0.3 * vnoise(vec2(x * 0.1, y * 0.05)));
+            else if (cx > 0.5 && cx <= 0.58) c *= 0.82;                          // rib shadow
+          }
+          #endif
+          else {                   // offices: ribbon windows or a grid of square windows, shop fronts
             float FH = 3.4 + 0.5 * r1, M = 1.3 + 0.8 * r2, fy = fract(y / FH);
             vec3 g = mix(WIN, r5 < 0.5 ? vec3(0.36, 0.48, 0.58) : vec3(0.40, 0.50, 0.46), 0.5) * (0.9 + 0.2 * hash(vec2(floor(x / M), floor(y / FH)) + v));
             float lo = 0.25 + 0.1 * r3, hi = 0.82 + 0.08 * r4;
@@ -453,6 +562,7 @@ const buildingMaterial = new THREE.ShaderMaterial({
       gl_FragColor = vec4(c * light, 1.0);
     }`,
   uniforms: { sun: { value: SUN } },
+  defines: ZG ? { ZG: 1 } : {},
 });
 
 /**
@@ -487,10 +597,13 @@ const SPECIES_STR: typeof SPECIES = [
   ["spruce", 11, [0.13, 0.33, 0.24], 0, 0, true],
 ];
 if (STYLED) SPECIES.splice(0, SPECIES.length, ...SPECIES_STR);
+/** Zagreb: scene.ts names every crown's species (wood, park, street, riverbank… see greenery.ts). */
+const NAMED: typeof SPECIES | null = REGIONS[REGION].sources === "zg3d" ? ZG_SPECIES.map(([n, c, xy, z, cone]) => [n, 1, c, xy, z, cone]) : null;
 const SPECIES_TOTAL = SPECIES.reduce((t, s) => t + s[1], 0);
 const rand = (x: number, y: number) => Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
 /** Mostly one species per ~40 m patch (streets are planted in runs), every 4th tree a random one. */
-function species(x: number, y: number, r: number) {
+function species(x: number, y: number, r: number, named?: number) {
+  if (NAMED && named !== undefined && NAMED[named]) return NAMED[named];
   const own = rand(x, y) < 0.25;
   let h = (own ? rand(y, x) : rand(Math.floor(x / 40), Math.floor(y / 40))) * SPECIES_TOTAL;
   for (const s of SPECIES) if ((h -= s[1]) < 0) return s[5] && r > (STYLED ? 6 : 4.5) ? SPECIES[0] : s; // no palm for a big canopy
@@ -568,6 +681,30 @@ const WALL_BY_STYLE: Record<number, number[][]> = {
 };
 /** roof kinds (scene.ts lod2Style): red tile, brown tile, slate, gravel, copper, dark membrane, green roof */
 const ROOFS_STR = [[0.76, 0.36, 0.25], [0.62, 0.36, 0.26], [0.50, 0.51, 0.55], [0.86, 0.84, 0.79], [0.45, 0.70, 0.60], [0.74, 0.74, 0.74], [0.56, 0.68, 0.40]];
+/**
+ * Zagreb (Commons photos in ATTRIBUTION.md): Donji and Gornji grad are plastered in "Maria Theresa" ochre and
+ * yellow, cream, salmon and pale pink, some pastel green and grey-white; roofs are weathered red-brown tile,
+ * with dark sheet metal on many larger blocks and grey-green copper on public buildings.
+ */
+const WALLS_ZG = [
+  [0.95, 0.82, 0.52], [0.92, 0.75, 0.46], [0.96, 0.87, 0.58], [0.96, 0.89, 0.72], [0.94, 0.72, 0.58], [0.93, 0.79, 0.72],
+  [0.78, 0.85, 0.71], [0.95, 0.84, 0.52], [0.89, 0.88, 0.85], [0.95, 0.93, 0.86], [0.89, 0.79, 0.64], [0.93, 0.80, 0.56],
+];
+const WALL_BY_STYLE_ZG: Record<number, number[][]> = {
+  1: [[0.95, 0.90, 0.78], [0.95, 0.87, 0.66], [0.93, 0.80, 0.70], [0.95, 0.94, 0.90], [0.88, 0.87, 0.84], [0.92, 0.82, 0.62], [0.86, 0.88, 0.80]], // later plaster
+  2: [[0.94, 0.83, 0.56], [0.92, 0.87, 0.76], [0.86, 0.83, 0.76], [0.95, 0.91, 0.82]], // public: ochre, cream, stone
+  3: [[0.80, 0.84, 0.88]],
+  4: [[0.80, 0.79, 0.76], [0.74, 0.74, 0.72], [0.84, 0.82, 0.76]],
+  5: [[0.90, 0.90, 0.89], [0.84, 0.85, 0.86], [0.93, 0.91, 0.86]],
+  6: [[0.82, 0.81, 0.77], [0.87, 0.86, 0.82], [0.78, 0.78, 0.76], [0.86, 0.82, 0.74], [0.90, 0.89, 0.86]], // prefab concrete
+  7: [[0.9, 0.9, 0.9]],
+  8: [[0.90, 0.87, 0.80]], // cathedral limestone
+  9: [[0.2, 0.24, 0.3]],
+  10: [[0.9, 0.89, 0.85]],
+};
+/** red tile, brown tile, dark sheet metal, grey bitumen, copper, light membrane, green roof */
+const ROOFS_ZG = [[0.69, 0.38, 0.27], [0.56, 0.34, 0.26], [0.43, 0.44, 0.46], [0.74, 0.72, 0.68], [0.44, 0.62, 0.54], [0.78, 0.78, 0.76], [0.56, 0.66, 0.42]];
+const ROOFS = ZG ? ROOFS_ZG : ROOFS_STR;
 
 type Plane = { n: number[]; d: number; tris: number[][]; area: number };
 type Out = { pos: number[]; nor: number[]; col: number[]; fac: number[]; kin: number[] };
@@ -615,7 +752,7 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
     const [ax, ay] = footprint[i], [bx, by] = footprint[(i + 1) % footprint.length], L = Math.hypot(bx - ax, by - ay);
     if (L > best) { best = L; axis = Math.atan2(by - ay, bx - ax); }
   }
-  const solar = rnd() < (style === 4 ? 0.4 : 0.22), parapetH = 0.45 + 0.6 * rnd(), hall = style === 4;
+  const solar = rnd() < (style === 4 ? 0.4 : ZG ? 0.06 : 0.22), parapetH = 0.45 + 0.6 * rnd(), hall = style === 4;
   const total = planes.reduce((t, q) => t + q.area, 0), flatShare = planes.filter((q) => q.n[2] > 0.97).reduce((t, q) => t + q.area, 0) / total;
   const taken = new Set<string>();
   const cell = (x: number, y: number) => `${Math.floor(x * 2)},${Math.floor(y * 2)}`;
@@ -754,10 +891,12 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
   for (const [style, roofKind, roof, wall, footprint, , seed, osmRoof, osmWall, bare] of data.m ?? []) {
     const j = (seed % 97) / 97 - 0.5; // per-building tint
-    const walls = WALL_BY_STYLE[style] ?? WALLS_STR, w = (osmWall ?? walls[seed % walls.length]).map((v) => Math.min(1, v * (1 + 0.04 * j)));
+    const walls = (ZG ? WALL_BY_STYLE_ZG[style] ?? WALLS_ZG : WALL_BY_STYLE[style] ?? WALLS_STR), w = (osmWall ?? walls[seed % walls.length]).map((v) => Math.min(1, v * (1 + 0.04 * j)));
     // OSM roof:colour / roof:material where mapped (scene.ts), else the palette by roof kind
-    const tileRoof = (osmRoof ?? ROOFS_STR[Math.floor(roofKind / 10)]).map((v) => v * (1 + 0.14 * j));
-    const flatRoof = (osmRoof && roofKind % 10 !== 6 ? osmRoof : ROOFS_STR[roofKind % 10]).map((v) => v * (1 + 0.08 * j));
+    let tileRoof = (osmRoof ?? ROOFS[Math.floor(roofKind / 10)]).map((v) => v * (1 + 0.14 * j));
+    // Zagreb: tile from orange-red to brown per building (new and old tile, different works)
+    if (ZG && !osmRoof && roofKind < 20) { const t = (seed % 89) / 89; tileRoof = tileRoof.map((v, i) => v * (1 - 0.3 * t) + [0.56, 0.33, 0.24][i] * 0.3 * t); }
+    const flatRoof = (osmRoof && roofKind % 10 !== 6 ? osmRoof : ROOFS[roofKind % 10]).map((v) => v * (1 + 0.08 * j));
     const rnd = mulberry(seed * 7919 + 1);
     // style in the integer part, the building's facade variation in the fraction (buildingMaterial)
     const kind = 10 + style + 0.05 + 0.9 * mulberry(seed * 104729 + 7)();
@@ -872,12 +1011,13 @@ function buildObjects(data: TileObjects) {
     const crowns = new THREE.InstancedMesh(STYLED ? CROWN : new THREE.IcosahedronGeometry(1, 2), treeMaterial, data.t.length);
     const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6).rotateX(Math.PI / 2).translate(0, 0, 0.5), treeMaterial, data.t.length);
     const m = new THREE.Matrix4(), c = new THREE.Color(), bark = new THREE.Color(0.45, 0.36, 0.28);
-    data.t.forEach(([x, y, r, ch], i) => {
-      const g = ground(x, y), [name, , col, sxy, sz, palm] = species(x, y, r);
+    data.t.forEach(([x, y, r, ch, named], i) => {
+      const g = ground(x, y), [name, , col, sxy, sz, palm] = species(x, y, r, named);
       if (palm && STYLED) {
         // conifer: narrow cone from near the ground to the top
         const top = g + ch + r * sz + Math.max(r, 2);
-        m.makeScale(Math.max(1.4, r * 0.8), Math.max(1.4, r * 0.8), top - g - 1.5).setPosition(x, y, g + 1.5);
+        const w = Math.max(1.4, r * 0.8) * (sxy || 1); // sxy: a slimmer cone (thuja, cypress)
+        m.makeScale(w, w, top - g - 1.5).setPosition(x, y, g + 1.5);
         crowns.setMatrixAt(i, m.multiply(CONE));
         m.makeScale(0.3, 0.3, 2).setPosition(x, y, g);
         trunks.setMatrixAt(i, m);

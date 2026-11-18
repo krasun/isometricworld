@@ -40,12 +40,20 @@ function tagsOf(s: string): Tags {
   return t;
 }
 
-/** Every element of the extract inside bbox [s, w, n, e] that passes the filter, as Overpass JSON. */
-export async function localOsm(url: string, [s, w, n, e]: number[], filter: OsmFilter) {
+/**
+ * Every element of the extract inside bbox [s, w, n, e] that passes the filter, as Overpass JSON.
+ * `prefilter` (osmium tags-filter expressions, e.g. "r/boundary=administrative") thins a large box first.
+ */
+export async function localOsm(url: string, [s, w, n, e]: number[], filter: OsmFilter, prefilter?: string[]) {
   const pbf = await extract(url);
   const cut = join(DIR, `cut-${process.pid}.osm.pbf`);
   // smart: complete ways and multipolygon members, like Overpass returns them with `geom`
   execFileSync("osmium", ["extract", "-b", `${w},${s},${e},${n}`, "--strategy", "smart", "-O", "-o", cut, pbf], { stdio: "ignore" });
+  if (prefilter) {
+    const thin = join(DIR, `thin-${process.pid}.osm.pbf`);
+    execFileSync("osmium", ["tags-filter", cut, ...prefilter, "-O", "-o", thin], { stdio: "ignore" });
+    renameSync(thin, cut);
+  }
   const opl = execFileSync("osmium", ["add-locations-to-ways", "--keep-untagged-nodes", "-f", "opl,add_metadata=false", "-o", "-", cut],
     { maxBuffer: 2 ** 31 - 1 }).toString("utf8");
   rmSync(cut);
@@ -100,10 +108,15 @@ export const FILTERS = {
   /** trees + buildings (and parts) tagged with roof/wall colour or material (LoD2 regions take only the looks from OSM) */
   treesAndLooks: ((type, t) => (type === "node" && t.natural === "tree") || (type !== "node" && !!(t.building || t["building:part"])
     && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (type === "way" && (t.name ?? "") in TOWERS) || t.amenity === "fountain") as OsmFilter,
-  /** rail route relations (S-Bahn, regional, long distance, Stadtbahn) and the tracks they run on, tunnels included */
+  /**
+   * rail route relations (S-Bahn, regional, long distance, Stadtbahn) and the tracks they run on, tunnels included;
+   * funicular tracks too (Zagreb's Uspinjača has no route relation: its two cars shuttle on the ways themselves)
+   */
   rails: ((type, t) => (type === "relation" && /^(train|light_rail|subway|tram)$/.test(t.route ?? ""))
-    || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge)$/.test(t.railway ?? ""))) as OsmFilter,
+    || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge|funicular)$/.test(t.railway ?? ""))) as OsmFilter,
   buildingsAndTrees: ((type, t) => (type !== "node" && !!t.building) || (type === "node" && t.natural === "tree")) as OsmFilter,
+  /** both of the above: the looks for LoD2 buildings, and every building for areas the LoD2 model misses */
+  buildingsAndLooks: ((type, t) => FILTERS.buildingsAndTrees(type, t) || FILTERS.treesAndLooks(type, t)) as OsmFilter,
   roads: ((type, t) => type === "way" && ROAD.test(t.highway ?? "") && t.area !== "yes") as OsmFilter,
   ground: ((type, t) =>
     (type === "way" && !!t.highway && !/yes|building_passage/.test(t.tunnel ?? ""))

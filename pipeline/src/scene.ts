@@ -5,12 +5,13 @@
  *   npm -w pipeline run scene -- tlv-core
  *
  * Sources per region (places.ts `sources`): Tel Aviv-Yafo municipal buildings + canopy ("tlv"),
- * LGL LoD2 buildings + nDOM1 tree crowns ("lgl"), else OSM buildings + trees.
+ * LGL LoD2 buildings + nDOM1 tree crowns ("lgl"), ZG3D LoD2 buildings + OSM trees and crowns generated from OSM
+ * land cover ("zg3d", greenery.ts), else OSM buildings + trees.
  *
  * Output: data/derived/<area>/scene/<tx>_<ty>.json — objects visible in each render tile:
  *   b: buildings  [ring (ENU x,y pairs, CCW), height above ground, style, groundHint]
  *   m: LoD2 meshes [style, roof kind, roof xyz[], wall xyz+facade[], footprint ring, height, seed]
- *   t: tree crowns [x, y, radius, crown height above ground]
+ *   t: tree crowns [x, y, radius, crown height above ground, species (zg3d only: species.ts)]
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,15 +19,18 @@ import { openArea } from "./areas.ts";
 import { CAMERA, ecefToEnu, enuToLlh, enuToPixel, llhToEcef } from "./camera.ts";
 import { isBridge } from "./bridges.ts";
 import { crowns } from "./canopy.ts";
-import { ARCADES, arcade, LOOKS, type Piece, TOPS, TOWERS } from "./landmarks.ts";
+import { greenery, osmTreeCrown } from "./greenery.ts";
+import { ARCADES, arcade, LOOKS, type MeshRef, PAINT, type Piece, REBUILDS, TOPS, TOWERS, UMBRELLAS, umbrellas } from "./landmarks.ts";
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
 import { deckHeight } from "./bridges.ts";
 import { lod2Files, rasterSampler } from "./lgl.ts";
-import { type Lod2Building, parseLod2 } from "./lod2.ts";
+import { localOsm } from "./osmlocal.ts";
+import { type Lod2Building, parseLod2, triangulate, type V3 } from "./lod2.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
 import { fromUtm } from "./utm.ts";
+import { zg3dBuildings } from "./zg3d.ts";
 
 type P2 = [number, number];
 const T = CAMERA.tile;
@@ -116,9 +120,13 @@ const ROOF_MATERIAL: Record<string, number[]> = {
   roof_tiles: ROOF_NAMED.red, tiles: ROOF_NAMED.red, slate: [0.44, 0.46, 0.50], metal: [0.62, 0.64, 0.66],
   zinc: [0.60, 0.62, 0.64], tin: [0.62, 0.64, 0.66], copper: [0.45, 0.70, 0.60], concrete: [0.74, 0.74, 0.72],
   gravel: [0.86, 0.84, 0.79], tar_paper: [0.40, 0.40, 0.42], asphalt: [0.40, 0.40, 0.42], glass: [0.58, 0.68, 0.74],
-  grass: [0.56, 0.68, 0.40], plants: [0.56, 0.68, 0.40],
+  grass: [0.56, 0.68, 0.40], plants: [0.56, 0.68, 0.40], eternit: [0.56, 0.56, 0.55],
 };
-function roofRgb(t: Record<string, string>): number[] | null {
+/**
+ * `tiles` = false: roof_tiles alone says nothing about the colour (Zagreb, where an import tagged half the city
+ * with it); the renderer's own red and brown tile then varies per building.
+ */
+function roofRgb(t: Record<string, string>, tiles = true): number[] | null {
   const c = (t["roof:colour"] ?? "").trim().toLowerCase().replace(/[\s_-]/g, "");
   const hex = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/.exec(c)?.[1];
   let rgb: number[] | null = null;
@@ -127,7 +135,7 @@ function roofRgb(t: Record<string, string>): number[] | null {
     rgb = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
     const m = (rgb[0] + rgb[1] + rgb[2]) / 3; // mapped colours tend to the vivid: pull 25 % towards their grey
     rgb = rgb.map((v) => v * 0.75 + m * 0.25);
-  } else rgb = ROOF_NAMED[c] ?? ROOF_MATERIAL[t["roof:material"] ?? ""] ?? null;
+  } else rgb = ROOF_NAMED[c] ?? (!tiles && /^(roof_)?tiles$/.test(t["roof:material"] ?? "") ? null : ROOF_MATERIAL[t["roof:material"] ?? ""]) ?? null;
   return rgb && rgb.map((v) => Math.round(v * 100) / 100);
 }
 
@@ -153,6 +161,7 @@ function wallLook(t: Record<string, string>): { style: number | null; wall: numb
 }
 
 function lod2Style(b: Lod2Building): [number, number] {
+  if (b.fn === "zg3d") return zg3dStyle(b);
   const code = b.fn.split("_")[1] ?? "", group = b.fn.split("_")[0], flatOnly = b.roofType === "1000";
   const r = hash(Math.round(b.center[0] * 1e6) ^ Math.round(b.center[1] * 1e6));
   const r2 = hash(Math.round(b.center[1] * 1e6) * 7 + 3);
@@ -169,6 +178,62 @@ function lod2Style(b: Lod2Building): [number, number] {
   return [flatOnly ? 1 : 0, k(tile, flat)];
 }
 
+/**
+ * Height a ZG3D building stands above the ground on its uphill side. Its walls run down to the terrain at every
+ * corner, so on Gornji grad's slopes (and on Kaptol) zmax - base counts the hill too and a four-storey house
+ * would pass for a tower: count from the lowest wall point at a quarter of the corners instead. Walls that start
+ * on a lower neighbour's roof raise the corners too, so this takes off at most a third of the height.
+ */
+function standing(b: Lod2Building) {
+  const low = new Map<string, number>();
+  for (let i = 0; i + 4 < b.wall.length; i += 5) {
+    const k = `${Math.round(b.wall[i] * 2)},${Math.round(b.wall[i + 1] * 2)}`;
+    low.set(k, Math.min(low.get(k) ?? Infinity, b.wall[i + 2]));
+  }
+  let top = -Infinity;
+  for (let i = 2; i < b.roof.length; i += 3) top = Math.max(top, b.roof[i]);
+  if (!low.size || !Number.isFinite(top)) return b.height;
+  const zs = [...low.values()].sort((x, y) => x - y);
+  return Math.max(b.height * 0.67, Math.min(b.height, top - zs[Math.floor(zs.length / 4)]));
+}
+
+/**
+ * ZG3D has no building function or roof type: style from height, footprint size and roof form.
+ * Zagreb's centre is plastered Austro-Hungarian blocks under red-brown tile (dark sheet metal on many of the
+ * larger ones); Novi Zagreb and the post-war estates are flat-roofed prefab slabs and towers (style 6),
+ * offices glass (3, set from the OSM building use in the mesh loop below).
+ */
+function zg3dStyle(b: Lod2Building): [number, number] {
+  const flatOnly = b.roofType === "1000", A = Math.abs(area2(b.footprint)), h = standing(b);
+  const r = hash(Math.round(b.center[0] * 1e6) ^ Math.round(b.center[1] * 1e6));
+  const r2 = hash(Math.round(b.center[1] * 1e6) * 7 + 3);
+  const tile = r < 0.55 ? 0 : r < 0.8 || A < 600 ? 1 : 2; // red and brown tile; a fifth of the big blocks dark sheet
+  const flat = r2 < 0.62 ? 3 : r2 < 0.94 ? 5 : 6;          // grey bitumen, light membrane, few green roofs
+  const k = (pitched: number, f: number) => pitched * 10 + f;
+  if (h < 3.5 || (A < 40 && h < 6)) return [4, k(tile, 5)];               // garages, sheds, kiosks
+  if (h >= 45) return flatOnly ? [6, k(2, 3)] : [2, k(r < 0.6 ? 4 : 2, 3)]; // high-rises; pitched: church towers (copper, sheet)
+  if (flatOnly && A > 2500 && h < 14 && elongation(b.footprint) <= 4) return [4, k(2, 5)]; // halls, warehouses, malls (not the long 4–5 storey slabs)
+  if (flatOnly) return [h > 19 ? (r2 < 0.8 ? 6 : 5) : r2 < 0.3 ? 5 : 1, k(tile, flat)]; // post-war slabs, modern and 1930s blocks
+  if (A > 1500 && h > 12) return [2, k(r < 0.3 ? 4 : tile, flat)];        // big pitched: public buildings
+  return [h > 9 || r2 < 0.35 ? 0 : 1, k(tile, flat)];                     // houses and old town blocks
+}
+/** length / width of a footprint along its longest edge */
+function elongation(r: P2[]) {
+  let ax = 1, ay = 0, best = 0;
+  for (let i = 0; i < r.length; i++) {
+    const dx = r[(i + 1) % r.length][0] - r[i][0], dy = r[(i + 1) % r.length][1] - r[i][1], L = Math.hypot(dx, dy);
+    if (L > best) { best = L; ax = dx / L; ay = dy / L; }
+  }
+  const u = r.map((p) => p[0] * ax + p[1] * ay), v = r.map((p) => -p[0] * ay + p[1] * ax);
+  return (Math.max(...u) - Math.min(...u)) / Math.max(1, Math.max(...v) - Math.min(...v));
+}
+/**
+ * OSM building uses that settle a ZG3D building's façade: offices glass, flats prefab concrete; housing is never a
+ * windowless hall, industry, shops and sports halls always are (when low and flat). "housing" = building=yes with levels.
+ */
+const OFFICE = /^(office|commercial|hotel|retail|government)$/, FLATS = /^(apartments|residential|dormitory|house|terrace|housing)$/;
+const HALL = /^(industrial|warehouse|retail|commercial|sports_hall|supermarket|manufacture|hangar|storage_tank|garages)$/;
+
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
 const bbox = area.bbox;
@@ -176,6 +241,8 @@ const region = REGIONS[area.region];
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height. */
 const GEOID = region.geoidM;
 const raw = join(RAW, name);
+/** LoD2 meshes for buildings (OSM only adds looks, towers and landmarks to them). */
+const LOD2 = region.sources === "lgl" || region.sources === "zg3d";
 if (!existsSync(join(DERIVED, name, "ground", "meta.json"))) throw new Error(`run: npm run ground -- ${name}`);
 // terrain from ground.ts: objects are binned by where they really stand
 const gmeta = readJson(join(DERIVED, name, "ground", "meta.json"));
@@ -196,7 +263,8 @@ const tlvCover: P2[][] = [];
 /** municipal footprints with their holes, for the OSM 3D swap (1a) */
 const tlvRecs: Array<{ b: Building; holes: P2[][]; id: number }> = [];
 
-const trees: Array<[number, number, number, number]> = [];
+const trees: Array<[number, number, number, number, number?]> = [];
+const mappedTrees: P2[] = []; // zg3d: OSM natural=tree, which generated crowns keep clear of
 const meshes: Lod2Building[] = [];
 
 // 1. Tel Aviv-Yafo municipal buildings: surveyed heights.
@@ -384,6 +452,27 @@ if (region.sources === "lgl") {
   console.log(`  ndom1 tree crowns: ${cs.length - masked - bridged} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water)`);
 }
 
+// 1c. ZG3D LoD2 buildings. Their heights are surveyed but the terrain is Copernicus (30 m): each building is
+// moved to the terrain under its footprint, so none floats or sinks (walls reach 1 m below ground anyway).
+if (region.sources === "zg3d") {
+  const m = 0.002; // buildings whose centre is just outside still reach into edge tiles
+  const box: [number, number, number, number] = [bbox[0] - m, bbox[1] - m, bbox[2] + m, bbox[3] + m];
+  const bs = zg3dBuildings(box, GEOID, readJson(join(RAW, "zg3d", "index.json")));
+  const shifts: number[] = [];
+  for (const b of bs) {
+    const fc = centre(b.footprint), d = Math.min(...b.footprint.map(([x, y]) => groundAt(x, y)), groundAt(...fc)) - b.base;
+    for (let i = 2; i < b.roof.length; i += 3) b.roof[i] += d;
+    for (let i = 2; i < b.wall.length; i += 5) b.wall[i] += d;
+    b.base += d;
+    shifts.push(d);
+    tlvCover.push(b.footprint); // OSM fills in only buildings ZG3D lacks
+  }
+  meshes.push(...bs);
+  shifts.sort((a, b) => a - b);
+  const q = (f: number) => shifts.length ? shifts[Math.floor(f * (shifts.length - 1))].toFixed(1) : "-";
+  console.log(`  zg3d: ${bs.length} buildings; moved to terrain by ${q(0.05)} / ${q(0.5)} / ${q(0.95)} m (5/50/95 %)`);
+}
+
 // 2. OSM buildings where the municipal layer has nothing (Ramat Gan, Givatayim, Bnei Brak…).
 const coverGrid = new Map<string, P2[][]>(); // 50 m grid of municipal footprints for overlap tests
 for (const r of tlvCover) {
@@ -396,6 +485,56 @@ const covered = (pt: P2) => {
     if (coverGrid.get(`${Math.floor(pt[0] / 50) + dx}_${Math.floor(pt[1] / 50) + dy}`)?.some((r) => inside(pt, r))) return true;
   return false;
 };
+/**
+ * An OSM building ZG3D lacks (newer than the survey), as a LoD2-like mesh so it takes the palette, façades and
+ * roof furniture of its surveyed neighbours: gabled or hipped on a four-cornered outline (roof:shape, or houses
+ * without one), else flat. `addRoof`: the height came from levels, so the roof goes on top of it.
+ */
+function osmMesh(ring: P2[], h: number, t: Record<string, string>, addRoof: boolean): Lod2Building {
+  const base = Math.min(...ring.map(([x, y]) => groundAt(x, y)));
+  const roof: number[] = [], wall: number[] = [];
+  const shape = t["roof:shape"] ?? (/^(house|detached|semidetached_house|farm|garage|shed|barn|farm_auxiliary)$/.test(t.building) ? "gabled" : "flat");
+  let along = 0;
+  const side = (a: P2, b: P2, za: number, zb: number) => { // vertical quad base … za (at a) / zb (at b), outward for CCW rings
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const v = (p: P2, s: number, z: number) => wall.push(p[0], p[1], base + z, along + s, z);
+    v(a, 0, 0); v(b, L, 0); v(b, L, zb); v(a, 0, 0); v(b, L, zb); v(a, 0, za);
+    along += L;
+  };
+  let r = ring;
+  const pitched = r.length === 4 && /^(gabled|hipped|half-hipped|gabled_height_moved)$/.test(shape);
+  if (pitched) {
+    const len = (i: number) => Math.hypot(r[(i + 1) % 4][0] - r[i][0], r[(i + 1) % 4][1] - r[i][1]);
+    if (len(1) > len(0)) r = [r[1], r[2], r[3], r[0]];          // p0→p1 and p2→p3 are the long sides
+    const short = (len(1) + len(3)) / 2, long = (len(0) + len(2)) / 2;
+    const rh = Math.min(parseFloat(t["roof:height"]) || 0.42 * short, 0.6 * h);
+    if (addRoof) h += rh;
+    const eave = h - rh, mid = (a: P2, b: P2): P2 => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    let r0 = mid(r[3], r[0]), r1 = mid(r[1], r[2]);
+    const hip = shape === "hipped" && long > short;
+    if (hip) { // ridge pulled in by half the short side at both ends
+      const d: P2 = [(r1[0] - r0[0]) / long, (r1[1] - r0[1]) / long], k = short / 2;
+      r0 = [r0[0] + d[0] * k, r0[1] + d[1] * k]; r1 = [r1[0] - d[0] * k, r1[1] - d[1] * k];
+    }
+    const P = (p: P2, z: number) => [p[0], p[1], base + z];
+    roof.push(...P(r[0], eave), ...P(r[1], eave), ...P(r1, h), ...P(r[0], eave), ...P(r1, h), ...P(r0, h));
+    roof.push(...P(r[2], eave), ...P(r[3], eave), ...P(r0, h), ...P(r[2], eave), ...P(r0, h), ...P(r1, h));
+    for (let i = 0; i < 4; i++) side(r[i], r[(i + 1) % 4], eave, eave);
+    for (const [a, b, q] of [[r[1], r[2], r1], [r[3], r[0], r0]] as Array<[P2, P2, P2]>) {
+      if (hip) roof.push(...P(a, eave), ...P(b, eave), ...P(q, h));
+      else { // gable: a wall triangle up to the ridge
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        wall.push(...P(a, eave), 0, eave, ...P(b, eave), L, eave, ...P(q, h), L / 2, h);
+      }
+    }
+  } else {
+    for (let i = 0; i < r.length; i++) side(r[i], r[(i + 1) % r.length], h, h);
+    for (const tri of triangulate([r.map(([x, y]) => [x, y, base + h] as V3)]) ?? []) for (const v of tri) roof.push(...v);
+  }
+  const c = centre(ring);
+  return { id: "osm", fn: "zg3d", roofType: pitched ? "3100" : "1000", height: h, base, roof, wall, footprint: ring, center: [c[1] / 1e5, c[0] / 1e5], utm: [] };
+}
+
 let osmCount = 0;
 // LoD2 regions: OSM roof:colour / roof:material, building:colour / building:material per footprint or building part
 // tall towers (TV towers…): LoD2 has only a stump, OSM often has the whole shape as building:parts with min_height
@@ -403,8 +542,9 @@ const tallTowers: Array<{ ring: P2[]; h: number; name?: string }> = [];
 const tops: Array<{ ring: P2[]; name: string }> = []; // landmarks.ts TOPS
 const fountains: Array<{ ring?: P2[]; at?: P2 }> = [];
 const arcades: Array<{ ring: P2[]; name: string }> = []; // landmarks.ts ARCADES
+const rebuilds: Array<{ ring: P2[]; key: string }> = []; // landmarks.ts REBUILDS
 const parts: Array<{ ring: P2[]; h: number; min: number; t: Record<string, string> }> = [];
-const looks: Array<{ ring: P2[]; area: number; roof: number[] | null; style: number | null; wall: number[] | null; bare?: boolean }> = [];
+const looks: Array<{ ring: P2[]; area: number; roof: number[] | null; style: number | null; wall: number[] | null; bare?: boolean; use?: string }> = [];
 for (const el of osm.elements) {
   const t = { ...el.tags, ...(LOOKS[el.tags?.name] ?? {}) };
   if (t.amenity === "fountain" && region.sources === "lgl") { // nDOM reads fountain sculptures as tree crowns
@@ -414,32 +554,58 @@ for (const el of osm.elements) {
   }
   if (el.type === "node" && t.natural === "tree") {
     if (region.sources === "lgl") continue; // the nDOM crowns include them
-    const p = toEnu(el.lon, el.lat); trees.push([p[0], p[1], 3, 6]); continue;
+    const p = toEnu(el.lon, el.lat);
+    if (region.sources === "zg3d") { trees.push(osmTreeCrown(t, p[0], p[1])); mappedTrees.push([p[0], p[1]]); continue; } // size, species from tags
+    trees.push([p[0], p[1], 3, 6]); continue;
   }
-  const monument = region.sources === "lgl" && !t.building && !t["building:part"] && el.type === "way" && (t.name ?? "") in TOWERS; // Jubiläumssäule
-  const lglLook = region.sources === "lgl" && (!!(t.building || t["building:part"]) || monument);
+  const monument = LOD2 && !t.building && !t["building:part"] && el.type === "way" && (t.name ?? "") in TOWERS; // Jubiläumssäule
+  const lglLook = LOD2 && (!!(t.building || t["building:part"]) || monument);
   if (!lglLook && (!t.building || t.building === "roof" || t.location === "underground")) continue;
   const coords = el.type === "way" ? el.geometry?.map((q: any) => [q.lon, q.lat])
     : el.members?.find((m: any) => m.role === "outer" && m.geometry)?.geometry.map((q: any) => [q.lon, q.lat]);
   if (!coords || coords.length < 4) continue;
   const ring = ringFromLonLat(coords);
   if (!ring) continue;
-  if (region.sources === "lgl") {
+  if (LOD2) {
     if (!lglLook) continue;
     const h = parseFloat(t.height);
     if (monument) { tallTowers.push({ ring, h, name: t.name }); continue; }
     if (/^(tower|communications_tower)$/.test(t.man_made ?? "") && h >= 60) tallTowers.push({ ring, h, name: t.name });
     if (t.name && t.name in TOPS) tops.push({ ring, name: t.name });
     if (t.name && t.name in ARCADES && t.building) arcades.push({ ring, name: t.name });
+    if (t.wikidata && t.wikidata in REBUILDS && t.building) rebuilds.push({ ring, key: t.wikidata });
     if (t["building:part"] && h) parts.push({ ring, h, min: parseFloat(t.min_height) || 0, t });
-    looks.push({ ring, area: Math.abs(area2(ring)), roof: roofRgb(t), ...wallLook(t), bare: t.name in LOOKS }); // landmarks: no solar panels etc.
-    continue;
+    const kind = t.building === "yes" && t["building:levels"] ? "housing" : t.building ?? "";
+    const use = region.sources === "zg3d" && (OFFICE.test(kind) || FLATS.test(kind) || HALL.test(kind)) ? kind : undefined;
+    const paint = PAINT[t.name] ?? {}; // Zagreb landmarks: colours as rendered
+    const w = wallLook(t);
+    const look = { ring, area: Math.abs(area2(ring)), roof: paint.roof ?? roofRgb(t, region.sources !== "zg3d"), style: paint.style ?? w.style, wall: paint.wall ?? w.wall, bare: t.name in LOOKS || t.name in PAINT, use }; // landmarks: no solar panels etc.
+    if (look.roof || look.wall || look.style !== null || look.bare || look.use) looks.push(look);
+    // ZG3D (2008/2019–22 surveys) misses newer buildings: OSM ones not on a ZG3D footprint are extruded below
+    // (not open structures: Dolac's upper market is building=marketplace over the stalls ZG3D does have)
+    if (region.sources !== "zg3d" || !t.building || /^(roof|marketplace|carport|construction|ruins)$/.test(t.building) || t.location === "underground") continue;
   }
   const c: P2 = [ring.reduce((a, p) => a + p[0], 0) / ring.length, ring.reduce((a, p) => a + p[1], 0) / ring.length];
   if (covered(c)) continue;
+  // ZG3D: a perimeter block's centre lies in its courtyard; count it covered when a third of the points
+  // inside its outline (a 3 m grid, at most ~100) stand on surveyed footprints
+  if (region.sources === "zg3d") {
+    const xs = ring.map((p) => p[0]), ys = ring.map((p) => p[1]);
+    const st = Math.max(3, Math.sqrt(((Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys))) / 100));
+    let ins = 0, cov = 0;
+    for (let x = Math.min(...xs) + st / 2; x < Math.max(...xs); x += st)
+      for (let y = Math.min(...ys) + st / 2; y < Math.max(...ys); y += st)
+        if (inside([x, y], ring)) { ins++; if (covered([x, y])) cov++; }
+    if (ins && cov / ins > 0.33) continue;
+  }
   const levels = parseFloat(t["building:levels"]);
   let h = parseFloat(t.height) || (levels ? levels * FLOOR + 1 : 0);
   if (!h) h = Math.abs(area2(ring)) > 1500 ? 14 : ["house", "garage", "shed", "kiosk"].includes(t.building) ? 5 : 13;
+  if (region.sources === "zg3d") {
+    meshes.push(osmMesh(ring, h, t, !t.height));
+    osmCount++;
+    continue;
+  }
   buildings.push({ ring, h, s: style(h, t.amenity || t.building === "school" ? "public" : "regular", el.id), g: null });
   osmCount++;
 }
@@ -467,7 +633,7 @@ for (const r of looks) {
 }
 const lookAt = (pt: P2) => {
   const hits = lookGrid.get(`${Math.floor(pt[0] / 50)}_${Math.floor(pt[1] / 50)}`)?.filter((r) => inside(pt, r.ring)) ?? [];
-  return { roof: hits.find((r) => r.roof)?.roof ?? null, style: hits.find((r) => r.style !== null)?.style ?? null, wall: hits.find((r) => r.wall)?.wall ?? null, bare: hits.some((r) => r.bare) };
+  return { roof: hits.find((r) => r.roof)?.roof ?? null, style: hits.find((r) => r.style !== null)?.style ?? null, wall: hits.find((r) => r.wall)?.wall ?? null, bare: hits.some((r) => r.bare), use: hits.find((r) => r.use)?.use };
 };
 
 // Bridges and decks recorded as buildings (Arlozorov / Savidor over the Ayalon): any footprint a
@@ -520,10 +686,36 @@ for (const f of can.features) {
         }
   }
 }
+// 3c. Zagreb: no canopy layer, so crowns for woods, parks, cemeteries, scrub, orchards and tree rows come from
+// OSM land cover (greenery.ts), clear of buildings, roads, water and the trees OSM maps one by one.
+if (region.sources === "zg3d") {
+  // natural=tree_row is in neither osm.json nor ground.json: cut once from the region's extract
+  const rowsFile = join(DERIVED, name, "tree-rows.json");
+  if (!existsSync(rowsFile) && region.osmExtract) {
+    const [s, w, n, e] = bbox, m = 0.005;
+    writeFileSync(rowsFile, JSON.stringify(await localOsm(region.osmExtract, [s - m, w - m, n + m, e + m], (type, t) => type === "way" && t.natural === "tree_row")));
+  }
+  // the area plus what its edge tiles show beyond it
+  const corners = [[bbox[0], bbox[1]], [bbox[0], bbox[3]], [bbox[2], bbox[1]], [bbox[2], bbox[3]]].map(([la, lo]) => toEnu(lo, la)), pad = 250;
+  const box: [number, number, number, number] = [Math.min(...corners.map((c) => c[0])) - pad, Math.min(...corners.map((c) => c[1])) - pad,
+    Math.max(...corners.map((c) => c[0])) + pad, Math.max(...corners.map((c) => c[1])) + pad];
+  const t0 = Date.now();
+  const g = greenery({
+    ground: readJson(join(raw, "ground.json")).elements,
+    rows: existsSync(rowsFile) ? readJson(rowsFile).elements : [],
+    mapped: mappedTrees,
+    buildings: [...meshes.map((b) => b.footprint), ...buildings.map((b) => b.ring)],
+    box,
+    toXY: (lon, lat) => { const p = toEnu(lon, lat); return [p[0], p[1]]; },
+    msl: (x, y) => groundAt(x, y) - GEOID,
+  });
+  for (const c of g.crowns) trees.push(c); // too many for a spread push
+  console.log(`  osm trees: ${mappedTrees.length}; generated crowns: ${g.crowns.length} in ${((Date.now() - t0) / 1000).toFixed(1)} s (${Object.entries(g.stats).map(([k, v]) => `${k} ${v}`).join(", ")})`);
+}
 console.log(`  tree crowns: ${trees.length}`);
 
 // 4. Bin objects by the render tiles they can appear on (base … top, + margin).
-type Bin = { b: Array<[P2[], number, number, number | null]>; m: unknown[]; t: Array<[number, number, number, number]> };
+type Bin = { b: Array<[P2[], number, number, number | null]>; m: unknown[]; t: Array<(typeof trees)[number]> };
 const bins = new Map<string, Bin>();
 const add = (minx: number, miny: number, maxx: number, maxy: number, fn: (bin: Bin) => void) => {
   for (let ty = Math.floor((miny - 8) / T); ty <= Math.floor((maxy + 8) / T); ty++)
@@ -558,7 +750,15 @@ function prism(ring: P2[], base: number, min: number, h: number, look: Mesh["loo
   return { id: "osm-tower", fn: "osm_tower", roofType: "1000", height: h, base, roof, wall, footprint: ring, center: [0, 0], utm: [], look } as unknown as Mesh;
 }
 const fromPiece = (p: Piece) => ({ id: "landmark", fn: "osm_landmark", roofType: "1000", center: [0, 0], utm: [], ...p }) as unknown as Mesh;
-for (const tw of tallTowers) {
+// landmarks rebuilt from their LoD2 meshes and OSM building:parts (Zagreb Cathedral's towers, St Mark's roof)
+for (const rb of rebuilds) {
+  const mine = meshes.filter((b) => inside(centre(b.footprint), rb.ring)) as unknown as MeshRef[];
+  const pieces = REBUILDS[rb.key]({ ring: rb.ring, parts: parts.filter((p) => inside(centre(p.ring), rb.ring)), meshes: mine });
+  meshes.push(...pieces.map(fromPiece));
+  console.log(`  landmark ${rb.key}: ${mine.length} LoD2 mesh(es) -> ${pieces.length} piece(s)`);
+}
+const rebuilt = (r: P2[]) => rebuilds.some((rb) => inside(centre(r), rb.ring)); // their tall parts are done
+for (const tw of tallTowers.filter((tw) => !rebuilt(tw.ring))) {
   const near = (p: P2) => inside(p, tw.ring) || tw.ring.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 3);
   const stump = meshes.filter((b) => near(centre(b.footprint)));
   const base = stump.length ? Math.min(...stump.map((b) => b.base)) : groundAt(...centre(tw.ring));
@@ -608,7 +808,7 @@ for (const ac of arcades) {
   for (let i = trees.length - 1; i >= 0; i--) if (near([trees[i][0], trees[i][1]])) trees.splice(i, 1);
 }
 // tunnel portals where roads and tracks go underground (portals.ts)
-if (region.sources === "lgl") {
+if (LOD2) {
   const ways = ["roads.json", "rails.json", "ground.json"].filter((f) => existsSync(join(raw, f)))
     .flatMap((f) => readJson(join(raw, f)).elements.filter((e: any) => e.type === "way"));
   const groups = groupEnds(tunnelEnds(ways, (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }));
@@ -640,6 +840,17 @@ if (region.sources === "lgl") {
     console.log(`  bridge ${e.tags.name}: model`);
   }
 }
+// market umbrellas on named squares (Dolac)
+if (region.sources === "zg3d") for (const el of readJson(join(raw, "ground.json")).elements) {
+  const u = UMBRELLAS[el.tags?.name ?? ""];
+  if (!u || !(el.tags.place === "square" || el.tags.highway === "pedestrian")) continue;
+  const g = el.type === "way" ? el.geometry : el.members?.find((m: any) => m.role === "outer" && m.geometry)?.geometry;
+  const ring = g && g.length >= 4 ? ringFromLonLat(g.map((q: any) => [q.lon, q.lat])) : null;
+  if (!ring) continue;
+  const ps = umbrellas(ring, groundAt, u, inside);
+  meshes.push(...ps.map(fromPiece));
+  console.log(`  umbrellas on ${el.tags.name}: ${ps.length ? "placed" : "none fit"}`);
+}
 for (const b of meshes as Mesh[]) {
   let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
   const see = (x: number, y: number, z: number) => {
@@ -648,9 +859,17 @@ for (const b of meshes as Mesh[]) {
   };
   for (let i = 0; i < b.roof.length; i += 3) see(b.roof[i], b.roof[i + 1], b.roof[i + 2]);
   for (let i = 0; i < b.wall.length; i += 5) see(b.wall[i], b.wall[i + 1], b.wall[i + 2] - 1);
-  const [s, roofKind] = lod2Style(b);
+  let [s, roofKind] = lod2Style(b);
   const fc: P2 = [b.footprint.reduce((a, p) => a + p[0], 0) / b.footprint.length, b.footprint.reduce((a, p) => a + p[1], 0) / b.footprint.length];
   const look = b.look ?? lookAt(fc);
+  // Zagreb high-rises: offices glass or ribbon windows, flats prefab concrete, by their OSM building use
+  const use = "use" in look ? look.use : undefined;
+  if (b.fn === "zg3d" && use && (OFFICE.test(use) || FLATS.test(use)) && [3, 5, 6].includes(s) && standing(b) > 19) s = OFFICE.test(use) ? (standing(b) >= 45 ? 3 : 5) : 6;
+  if (b.fn === "zg3d" && use && b.roofType === "1000") {
+    const hs = standing(b);
+    if (s === 4 && FLATS.test(use) && hs >= 6) s = hs > 19 ? 6 : 1;                                       // housing, not a hall
+    else if (HALL.test(use) && !OFFICE.test(use) && hs < 14 && Math.abs(area2(b.footprint)) > 800) s = 4; // industry, depots, sports halls
+  }
   const entry: unknown[] = [look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
   if (look.roof || look.wall || ("bare" in look && look.bare)) entry.push(look.roof, look.wall);
   if ("bare" in look && look.bare) entry.push(look.bare);
@@ -661,7 +880,7 @@ for (const t of trees) {
   const a = enuToPixel([t[0], t[1], g - 3]), c = enuToPixel([t[0], t[1], g + 3 + t[3] + t[2]]);
   const r = t[2] / CAMERA.mpp;
   add(Math.min(a[0], c[0]) - r, Math.min(a[1], c[1]) - r, Math.max(a[0], c[0]) + r, Math.max(a[1], c[1]) + r,
-    (bin) => bin.t.push(t.map((v) => Math.round(v * 10) / 10) as [number, number, number, number]));
+    (bin) => bin.t.push(t.map((v) => Math.round(v! * 10) / 10) as (typeof trees)[number]));
 }
 for (const [k, v] of bins) writeFileSync(join(out, `${k}.json`), JSON.stringify(v.m.length ? v : { b: v.b, t: v.t }));
 console.log(`  ${bins.size} tile bins -> ${out}`);

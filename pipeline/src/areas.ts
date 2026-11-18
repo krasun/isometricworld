@@ -63,6 +63,42 @@ export const AREAS: Record<string, Area> = {
   "metro-west-north-2": { title: "Leonberg · Gerlingen", region: "stuttgart", bbox: [48.77, 8.9, 48.855, 9.04] },
   "metro-west-south": { title: "Sindelfingen", region: "stuttgart", bbox: [48.70, 8.9, 48.775, 9.04] },
   "metro-west-south-2": { title: "Böblingen", region: "stuttgart", bbox: [48.62, 8.9, 48.705, 9.04] },
+  /** Zagreb test patch: Trg bana Jelačića, Dolac, Kaptol and the Cathedral, Gornji grad, Zrinjevac (~1.1 × 1.4 km). */
+  jelacic: { title: "Trg bana Jelačića · Gornji grad", region: "zagreb", bbox: [45.808, 15.966, 45.818, 15.984] },
+  // The city in boxes of ≤ ~60 km², overlapping ≥ 1 km; places.ts `outline` trims them to the 17 districts.
+  /** Donji and Gornji grad, Trnje, Trešnjevka sjever, Maksimir park, Glavni kolodvor. */
+  "zagreb-core": { title: "Donji grad · Gornji grad · Trnje", region: "zagreb", bbox: [45.785, 15.935, 45.830, 16.030] },
+  /** The Sava and its bridges, Novi Zagreb istok and zapad, Bundek, Arena. */
+  "zagreb-south": { title: "Novi Zagreb · Sava", region: "zagreb", bbox: [45.745, 15.915, 45.795, 16.055] },
+  /** Črnomerec, Stenjevec, Podsused–Vrapče, Jarun, Trešnjevka jug. */
+  "zagreb-west": { title: "Črnomerec · Stenjevec · Jarun", region: "zagreb", bbox: [45.770, 15.840, 45.840, 15.945] },
+  /** Maksimir, Peščenica–Žitnjak, Donja and Gornja Dubrava. */
+  "zagreb-east": { title: "Maksimir · Dubrava · Peščenica", region: "zagreb", bbox: [45.770, 16.020, 45.845, 16.110] },
+  /** Sesvete. */
+  "zagreb-sesvete": { title: "Sesvete", region: "zagreb", bbox: [45.795, 16.100, 45.870, 16.190] },
+  /** Podsljeme foothills: Šestine, Gračani, Markuševec (the ridge of Medvednica stays out). */
+  "zagreb-north": { title: "Podsljeme", region: "zagreb", bbox: [45.825, 15.900, 45.865, 16.060] },
+  /** Brezovica. */
+  "zagreb-southwest": { title: "Brezovica", region: "zagreb", bbox: [45.700, 15.860, 45.775, 15.975] },
+  /** Zagreb Airport (LDZA, in Velika Gorica): the runway the airliners land on. */
+  "zagreb-airport": { title: "Zagreb Airport", region: "zagreb", bbox: [45.715, 16.035, 45.762, 16.100] },
+  // The rest of the city inside the outline (found with a tile-coverage check): rural Brezovica, the edges.
+  /** Brezovica's villages and fields, west (Kupinečki Kraljevec, Lučko's south). */
+  "zagreb-brezovica-west": { title: "Brezovica (west)", region: "zagreb", bbox: [45.612, 15.770, 45.742, 15.875] },
+  /** Brezovica, east (Odranski Obrež, Hrvatski Leskovac). */
+  "zagreb-brezovica-east": { title: "Brezovica (east)", region: "zagreb", bbox: [45.612, 15.865, 45.742, 15.980] },
+  /** Odra and Hrelić, south of Novi Zagreb. */
+  "zagreb-odra": { title: "Odra · Hrelić", region: "zagreb", bbox: [45.700, 15.970, 45.750, 16.035] },
+  /** Podsused, Gornje Vrapče and the hills above them, down to the Sava. */
+  "zagreb-northwest": { title: "Podsused · Gornje Vrapče", region: "zagreb", bbox: [45.758, 15.815, 45.874, 15.910] },
+  /** The strip under the outline's cut across Medvednica (45.87°). */
+  "zagreb-ridge": { title: "Medvednica slopes", region: "zagreb", bbox: [45.858, 15.895, 45.874, 16.065] },
+  /** Gornja Dubrava's and Sesvete's hills (Markuševec, Kašina's south). */
+  "zagreb-northeast": { title: "Gornja Dubrava · Sesvete hills", region: "zagreb", bbox: [45.835, 16.050, 45.874, 16.170] },
+  /** Sesvete, east (Dumovec, Soblinec, Glavnica). */
+  "zagreb-sesvete-east": { title: "Sesvete (east)", region: "zagreb", bbox: [45.770, 16.160, 45.874, 16.245] },
+  /** Between Žitnjak, the Sava and the airport (Kosnica, Ivanja Reka). */
+  "zagreb-southeast": { title: "Žitnjak · Ivanja Reka", region: "zagreb", bbox: [45.755, 16.040, 45.800, 16.170] },
 };
 
 /** Look up an area and switch the camera to its region: call before any projection. */

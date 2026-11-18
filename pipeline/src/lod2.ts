@@ -9,7 +9,7 @@ import * as THREE from "three";
 import { ecefToEnu, llhToEcef } from "./camera.ts";
 import { fromUtm } from "./utm.ts";
 
-type V3 = [number, number, number];
+export type V3 = [number, number, number];
 type P2 = [number, number];
 
 export interface Lod2Building {
@@ -121,10 +121,10 @@ export function parseLod2(xml: string, bbox: number[], geoid: number): Lod2Build
 
 const dist = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 /** offsets the window grid per wall so neighbouring walls don't line up perfectly */
-const hashAlong = (o: V3) => ((Math.abs(Math.sin(o[0] * 12.9898 + o[1] * 78.233)) * 43758.5453) % 1) * 3;
+export const hashAlong = (o: V3) => ((Math.abs(Math.sin(o[0] * 12.9898 + o[1] * 78.233)) * 43758.5453) % 1) * 3;
 
 /** Triangulate a planar 3D polygon with holes (projected onto its own plane). */
-function triangulate(rings: V3[][]): (V3[][] & { normal: V3 }) | null {
+export function triangulate(rings: V3[][]): (V3[][] & { normal: V3 }) | null {
   const ext = rings[0];
   if (ext.length < 3) return null;
   // Newell normal

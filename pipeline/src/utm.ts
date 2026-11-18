@@ -26,7 +26,12 @@ export function toUtm(lat: number, lon: number, zone = 32): [number, number] {
 
 /** [easting, northing] in the given UTM zone (north) -> [lat, lon] (deg). */
 export function fromUtm(east: number, north: number, zone = 32): [number, number] {
-  const ξ = north / (K0 * AA), η = (east - E0) / (K0 * AA);
+  return fromTm(east, north, zone * 6 - 183, K0);
+}
+
+/** [easting, northing] in a GRS80 transverse Mercator with a 500 km false easting (UTM; HTRS96/TM: 16.5°, 0.9999) -> [lat, lon] (deg). */
+export function fromTm(east: number, north: number, lon0: number, k0: number): [number, number] {
+  const ξ = north / (k0 * AA), η = (east - E0) / (k0 * AA);
   let ξ1 = ξ, η1 = η;
   for (let j = 1; j <= 4; j++) {
     ξ1 -= beta[j - 1] * Math.sin(2 * j * ξ) * Math.cosh(2 * j * η);
@@ -36,5 +41,5 @@ export function fromUtm(east: number, north: number, zone = 32): [number, number
   let φ = χ;
   for (let j = 1; j <= 4; j++) φ += delta[j - 1] * Math.sin(2 * j * χ);
   const λ = Math.atan2(Math.sinh(η1), Math.cos(ξ1));
-  return [φ / rad, λ / rad + (zone * 6 - 183)];
+  return [φ / rad, λ / rad + lon0];
 }

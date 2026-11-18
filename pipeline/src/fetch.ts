@@ -9,12 +9,15 @@
  * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage)
  * data/raw/<area>/osm_parts.json         OSM building:parts (Tel Aviv-Yafo: towers on podiums)
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
- * data/raw/<area>/rails.json             OSM rail routes (S-Bahn, regional, Stadtbahn…) and their tracks (trains)
+ * data/raw/<area>/rails.json             OSM rail routes (S-Bahn, regional, Stadtbahn…) and their tracks (trains), funiculars
  * data/raw/<area>/ground.json            OSM ground surface: roads/paths, landuse, parks, water,
  *                                        coastline, rail (bbox + margin, drawn onto the terrain)
  * data/raw/dem/*.tif                     Copernicus GLO-30 elevation (1°×1° tiles, AWS open data)
  * data/raw/lgl/{dgm1,ndom1,lod2}/*.zip    LGL Baden-Württemberg terrain, surface heights, LoD2 buildings
  *                                        (regions with sources "lgl"; see lgl.ts)
+ *
+ * data/raw/zg3d/*.zip                    City of Zagreb ZG3D 2022 LoD2 buildings, one Shapefile per district
+ *                                        (regions with sources "zg3d"; see zg3d.ts)
  *
  * The Tel Aviv-Yafo layers are fetched only for regions with sources "tlv".
  */
@@ -27,6 +30,7 @@ import { FILTERS, localOsm, type OsmFilter } from "./osmlocal.ts";
 import { overpass } from "./overpass.ts";
 import { RAW } from "./paths.ts";
 import { REGIONS } from "./places.ts";
+import { downloadZg3d } from "./zg3d.ts";
 
 const TLV = "https://gisn.tel-aviv.gov.il/arcgis/rest/services/IView2/MapServer/{layer}/query";
 const UA = { "User-Agent": "isometric-world/0.3 (open-data isometric map)" };
@@ -93,12 +97,15 @@ if (sources === "lgl") {
   await download("ndom1", [s - m, w - m, n + m, e + m]);
   await download("dgm1", [s - g, w - g, n + g, e + g]);
 }
+if (sources === "zg3d") await downloadZg3d();
+/** OSM building selection: LGL takes only roof/wall looks, ZG3D also every building (newer ones fill its gaps). */
+const buildingFilter = sources === "lgl" ? FILTERS.treesAndLooks : sources === "zg3d" ? FILTERS.buildingsAndLooks : FILTERS.buildingsAndTrees;
 if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;
   const b = `(${s},${w},${n},${e})`;
   const data = await osmQuery(`[out:json][timeout:300];
 ${sources === "lgl" ? `(node["natural"="tree"]${b}; ${["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)).join(" ")} ${Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`).join(" ")} ${Object.keys(TOWERS).map((n) => `way["name"="${n}"]${b};`).join(" ")} nwr["amenity"="fountain"]${b};);` : `(way["building"]${b}; relation["building"]${b}; node["natural"="tree"]${b};);`}
-out body geom;`, area.bbox, sources === "lgl" ? FILTERS.treesAndLooks : FILTERS.buildingsAndTrees);
+out body geom;`, area.bbox, buildingFilter);
   writeFileSync(join(dir, "osm.json"), JSON.stringify(data));
   console.log(`  osm: ${data.elements.length} elements`);
 }
@@ -126,7 +133,7 @@ if (!existsSync(join(dir, "rails.json"))) {
   const data = await osmQuery(`[out:json][timeout:300];
 relation["route"~"^(train|light_rail|subway|tram)$"]${b}->.r;
 .r out body;
-way["railway"~"^(rail|light_rail|subway|tram|narrow_gauge)$"]${b};
+way["railway"~"^(rail|light_rail|subway|tram|narrow_gauge|funicular)$"]${b};
 out body geom;
 node(r.r:"stop")${b};
 out body;`, area.bbox, FILTERS.rails);
