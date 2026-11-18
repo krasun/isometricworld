@@ -56,6 +56,27 @@ Render tiles are repainted by OpenAI's image model through the Codex CLI (ChatGP
 assign the output rights to the user. No credit is required; the map and clips say "Painted with AI" because
 social platforms ask for AI-generated content to be labelled.
 
+Zagreb was painted through [fal.ai](https://fal.ai) instead (`PAINT_BACKEND=fal`, paid per call): OpenAI GPT Image
+2.6 (`openai/gpt-image-2.6/sunburst/edit`) and, for the last windows, Google Nano Banana 2.1
+(`google/nano-banana-2.1/edit`, based on Gemini). The inputs are the same as with Codex: the project's own
+open-data renders and style sheets, no proprietary imagery. Terms as checked in November 2026:
+
+- [fal.ai Terms of Service](https://fal.ai/legal/terms-of-service) (8 Sept 2026): fal claims no intellectual
+  property in outputs (§4(c)) and allows lawful, non-infringing use, commercial use and publication included.
+  Partner models may carry their own terms (§14(b)); outputs may not be used to build products that compete
+  with those models, e.g. to train AI (§14(c)). fal does not itself assign output rights to the customer.
+- OpenAI ([Terms of Use](https://openai.com/policies/terms-of-use),
+  [Usage Policies](https://openai.com/policies/usage-policies/)): OpenAI assigns its rights, if any, in output;
+  output may not be presented as human-made.
+- Google ([Gemini API Additional Terms](https://ai.google.dev/gemini-api/terms),
+  [Generative AI Prohibited Use Policy](https://policies.google.com/terms/generative-ai/use-policy)): Google
+  claims no ownership of generated content; no models competing with the service; no misrepresenting AI output as
+  solely human-made. Every Gemini image carries an invisible [SynthID](https://deepmind.google/technologies/synthid/)
+  watermark (left in). Grounding with Google Maps or Search stays off: it would bring Google Maps data in.
+
+Obligations, whichever painter: "Painted with AI" on the map and on clips; the painted tiles are never used to
+train AI models. No credit to OpenAI or Google is required.
+
 Everything in `pipeline/style/` was painted the same way for this project: `reference.png` (the house style,
 a stretch of the painted Tel Aviv map: Gordon beach and the city behind it), `trees.png` (tree species
 sheet), `trees-stuttgart.png` (Stuttgart tree species sheet, derived from `trees.png` with Codex/ChatGPT)
