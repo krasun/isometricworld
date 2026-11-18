@@ -27,6 +27,8 @@ const LEVEL_NAMES: Record<string, string> = { IIw: "II upper", IIn: "II lower" }
 const ROUTES: Record<string, string> = { tourist: "Tourist Route", miners: "Miners' Route", museum: "Museum" };
 /** what a chamber is, where its name does not say it */
 const KINDS: Record<string, string> = { lake: "brine lake", hall: "hall" };
+/** the tiles' confidence colours (pipeline/page/mine.ts CONF) for the pins and the legend */
+const CONF: Record<Conf, string> = { known: "#4fc3cc", approximate: "#f1c76c", illustrative: "#a3a19b" };
 const NOT_AFFILIATED = "An independent project, not affiliated with the Wieliczka Salt Mine (Kopalnia Soli „Wieliczka” S.A.).";
 
 const CSS = `
@@ -53,9 +55,10 @@ body.video #mine-toggle, body.video #mine-panel, body.video #mine-info { display
 #mine-info b { color: #f3d9a0; font-weight: 600; }
 #mine-info .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0; }
 #mine-info .legend span { display: inline-flex; align-items: center; gap: 5px; }
-#mine-info .legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid #e2d6bd; }
-#mine-info .legend i.a { border-top-style: dashed; }
-#mine-info .legend i.i { border-top-style: dotted; opacity: .7; }
+#mine-info .legend i { display: inline-block; width: 16px; height: 10px; border-radius: 6px 4px 7px 3px; }
+#mine-info .legend i.k { width: 10px; border-radius: 50%; background: #2b2824; box-shadow: inset 0 0 0 2.5px #4fc3cc; }
+#mine-info .legend i.a { background: #d6b26a; box-shadow: inset 0 0 0 1.5px #f1c76c; }
+#mine-info .legend i.i { background: #9a9891; }
 #mine-info small { display: block; color: #b9ae98; margin-top: 4px; }
 #mine-info details { margin-top: 4px; color: #b9ae98; }
 #mine-info details a { color: #e7c98a; }
@@ -183,7 +186,7 @@ export class Mine {
     this.info.innerHTML = `
       <b>Level ${LEVEL_NAMES[l.id] ?? l.id}${l.name ? ` “${l.name}”` : ""}</b> · ${Math.round(l.depth)} m<span class="hint"> ▸</span><span class="more"> below the St. Kinga shaft collar${l.tourist ? ` (${l.tourist} m as the mine gives it)` : ""}
       <br>${l.chambers} ${l.chambers === 1 ? "chamber" : "chambers"} as published${named ? `, ${named} named on the map` : ""}. ${l.note.replace(/^./, (c) => c.toUpperCase())}.
-      <div class="legend"><span><i></i>known (OSM)</span><span><i class="a"></i>approximate position</span><span><i class="i"></i>illustration</span></div>
+      <div class="legend"><span><i class="k"></i>known (OSM)</span><span><i class="a"></i>approximate position</span><span><i class="i"></i>illustration</span></div>
       <small>An overview, not for finding your way. The levels' depths, the chamber counts and the order of the chambers along the routes come from open sources. Where the chambers lie is approximate. The other galleries and chambers are an illustration, not a plan of the mine. ${NOT_AFFILIATED}</small>
       <details><summary>Sources</summary><ul>${src}</ul></details></span>`;
     this.info.hidden = false;
@@ -221,8 +224,8 @@ export class Mine {
       placed.push(box);
       // pin
       ctx.beginPath(); ctx.arc(sx, sy, (shaft ? 4 : 3) * dpr, 0, Math.PI * 2);
-      ctx.fillStyle = shaft ? "#1b1712" : "#f3d9a0"; ctx.fill();
-      ctx.lineWidth = 1.5 * dpr; ctx.strokeStyle = shaft ? "#f3d9a0" : "#1b1712"; ctx.stroke();
+      ctx.fillStyle = shaft ? "#1b1712" : CONF[lab.conf]; ctx.fill();
+      ctx.lineWidth = (shaft ? 2 : 1.5) * dpr; ctx.strokeStyle = shaft ? CONF[lab.conf] : "#1b1712"; ctx.stroke();
       ctx.lineWidth = 3.5 * dpr; ctx.strokeStyle = "rgba(14,12,9,0.85)"; ctx.fillStyle = lab.conf === "illustrative" ? "#cfc6b4" : "#fff6e2";
       ctx.strokeText(title, sx, sy - (sub ? 22 : 10) * dpr); ctx.fillText(title, sx, sy - (sub ? 22 : 10) * dpr);
       if (sub) {

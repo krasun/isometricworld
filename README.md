@@ -226,11 +226,12 @@ round button under the tilt-shift one (or `?level=III`), goes down the mine's le
 tile layer (`tiles/mine-<level>/`) over the dimmed town, drawn as a cutaway (the rock cut 3 m above the floor) and
 draped on the terrain so every chamber lies under the spot above it. No plan of the mine is open: `minedata.ts`
 holds what open sources give (level depths and chamber counts, shaft depths, the routes' chambers in order with
-their depths and sizes; MINE-RESEARCH.md, kept locally, has the survey). The shafts, the mine's outline and the
-Groty Kryształowe reserve come from OSM (known); the routes' chambers are placed schematically round their shafts
-(approximate, dashed edges, "≈" on the map); everything else is generated to each level's published chamber count
-(illustrative: paler, hatched, dotted edges). One more layer shows the first level on Hondius's 1645 plan (public
-domain), fitted on the three shafts it shares with today (2–4 m residuals).
+their depths and sizes; MINE-RESEARCH.md, kept locally, has the survey). How sure each part is shows in its colour:
+the shafts, the mine's outline and the Groty Kryształowe reserve come from OSM (known: turquoise rings and
+boundary); the routes' chambers and galleries are placed schematically round their shafts (approximate: a gold floor
+with a bright rim, "≈" on the map); everything else is generated to each level's published chamber count
+(illustrative: a muted grey floor). One more layer shows the first level on Hondius's 1645 plan (public domain),
+fitted on the three shafts it shares with today (2–4 m residuals).
 
 ```sh
 npm -w pipeline run mine                      # data/derived/wieliczka-mine-<level>/ (needs wieliczka-town's ground)

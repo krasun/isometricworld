@@ -5,8 +5,9 @@
  *   floor  the ground mesh with drawMineFloor's canvas: salt floors, chapel tiles, brine lakes, walkways, rails, lamps
  *   cap    the same mesh CAP higher with drawMineCap's canvas: rock, the voids cut out (alpha), their edges
  *   walls  mineObjects: the voids' outlines raised from floor to cap, timber cribs
- * How sure a part is shows in its drawing: known and approximate parts in full colour (approximate edges dashed),
- * illustrative ones paler, hatched, with dotted edges.
+ * How sure a part is shows in its colour (CONF), seen at every zoom: approximate parts (the routes' chambers and
+ * galleries) on a gold floor with a bright rim, illustrative ones a muted grey, known ones (OSM: the shafts' rings,
+ * the reserve's boundary) turquoise.
  */
 import * as THREE from "three";
 import { CAP } from "../src/minedata.ts";
@@ -15,12 +16,15 @@ type P2 = [number, number];
 export type MineFeature = { k: string; r?: P2[][]; l?: P2[]; j?: number[][]; w?: number; v?: number; u?: string; c?: number[]; e?: number[] };
 
 export const MINE_CAP = CAP;
-const FLOOR = "#a7a090", FLOOR_ILL = "#b7b2a6";
+/** confidence colours (codes from src/mine.ts: 1 illustrative, 2 approximate, 3 known); web mine.ts's legend matches */
+const CONF = { known: "#4fc3cc", approximate: "#f1c76c", illustrative: "#a3a19b" };
+/** illustrative floors: the generated workings, most of the map, kept in the background */
+const FLOOR = "#9a9891";
+/** approximate floors: salt in lamplight, a shade per kind */
 const ROOM: Record<string, string> = {
-  chamber: "#b2ab9b", hall: "#bcb4a2", chapel: "#d8cfb9", museum: "#c3b598", podszybie: "#a29b8b", grotto: "#c8d4d8", lake: "#b2ab9b",
+  chamber: "#d6b26a", hall: "#dcb873", chapel: "#e8cf94", museum: "#d1a660", podszybie: "#cfab68", grotto: "#e4d7b4", lake: "#d6b26a",
 };
 const ROCK = "#4f4b45";
-const EDGE = "#d4ccbb";
 
 let noiseTile: HTMLCanvasElement | null = null;
 /** 256 px of soft mottling and salt specks, wrapped (fixed to the map: no seams between tiles) */
@@ -70,14 +74,6 @@ function texture(ctx: CanvasRenderingContext2D, rect: number[], mpt: number, sca
   ctx.fillStyle = p;
   ctx.fillRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
 }
-/** diagonal hatching over the current path (illustrative parts) */
-function hatch(ctx: CanvasRenderingContext2D, rings: P2[][], gap: number, colour: string, w: number) {
-  ctx.save(); path(ctx, rings); ctx.clip("evenodd");
-  const [a, b, c, d] = bounds(rings.flat());
-  ctx.beginPath();
-  for (let k = Math.floor((a + b) / gap) * gap; k < c + d; k += gap) { ctx.moveTo(k - b, b); ctx.lineTo(k - d, d); }
-  ctx.strokeStyle = colour; ctx.lineWidth = w; ctx.stroke(); ctx.restore();
-}
 /** a stroke along a polyline offset sideways by d (left of its direction) */
 function offset(l: P2[], d: number): P2[] {
   return l.map((p, i) => {
@@ -108,10 +104,10 @@ export function drawMineFloor(ctx: CanvasRenderingContext2D, feats: MineFeature[
     return;
   }
   ctx.fillStyle = FLOOR; ctx.fillRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
-  // galleries and chambers (illustrative ones paler and hatched)
-  for (const g of of("mgal")) { line(ctx, g.l!); ctx.strokeStyle = g.v === 1 ? FLOOR_ILL : FLOOR; ctx.lineWidth = g.w! + 1; ctx.stroke(); }
+  // galleries and chambers: the routes' (approximate) gold, the generated ones (illustrative) the grey floor
+  for (const g of [...of("mgal"), ...of("mroute")]) if (g.v !== 1) { line(ctx, g.l!); ctx.strokeStyle = ROOM.chamber; ctx.lineWidth = g.w! + 1; ctx.stroke(); }
   for (const f of of("mfloor")) {
-    path(ctx, f.r!); ctx.fillStyle = f.v === 1 ? "#bbb6aa" : ROOM[f.u ?? "chamber"] ?? ROOM.chamber; ctx.fill("evenodd");
+    path(ctx, f.r!); ctx.fillStyle = f.v === 1 ? FLOOR : ROOM[f.u ?? "chamber"] ?? ROOM.chamber; ctx.fill("evenodd");
     if (f.u === "chapel") { // salt floor tiles: a 1.2 m grid, every other one lighter
       ctx.save(); path(ctx, f.r!); ctx.clip("evenodd");
       const [a, b, c, d] = bounds(f.r!.flat());
@@ -120,12 +116,11 @@ export function drawMineFloor(ctx: CanvasRenderingContext2D, feats: MineFeature[
       ctx.restore();
     }
     if (f.u === "grotto") { ctx.save(); path(ctx, f.r!); ctx.clip("evenodd"); const [a, b, c, d] = bounds(f.r!.flat()); for (let i = 0; i < 160; i++) { const h = Math.abs(Math.sin(i * 12.9898 + a) * 43758.5453) % 1, k = Math.abs(Math.sin(i * 78.233 + b) * 12345.678) % 1; ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(a + h * (c - a), b + k * (d - b), 0.35, 0.35); } ctx.restore(); }
-    if (f.v === 1) hatch(ctx, f.r!, 1.4, "rgba(90,80,66,0.16)", 0.12);
   }
   ctx.save(); ctx.globalCompositeOperation = "multiply"; texture(ctx, rect, mpt); ctx.restore();
-  // brine lakes: deep green water, a pale rim of salt crust, glints
+  // brine lakes: deep green water (greener than the known parts' turquoise), a pale rim of salt crust, glints
   for (const f of of("mlake")) {
-    path(ctx, f.r!); ctx.fillStyle = "#3b7a7c"; ctx.fill("evenodd");
+    path(ctx, f.r!); ctx.fillStyle = "#2f6b55"; ctx.fill("evenodd");
     ctx.save(); ctx.clip("evenodd");
     ctx.lineWidth = 2.2; ctx.strokeStyle = "rgba(160,215,205,0.35)"; ctx.stroke();
     const [a, b, c, d] = bounds(f.r!.flat());
@@ -144,9 +139,10 @@ export function drawMineFloor(ctx: CanvasRenderingContext2D, feats: MineFeature[
     line(ctx, f.l!); ctx.strokeStyle = "#a58861"; ctx.lineWidth = 1.8; ctx.stroke();
     ctx.setLineDash([0.08, 0.5]); line(ctx, f.l!); ctx.strokeStyle = "rgba(70,50,30,0.55)"; ctx.lineWidth = 1.8; ctx.stroke(); ctx.setLineDash([]);
   }
-  // shafts: a dark pit in a timber collar
+  // shafts: a dark pit in a timber collar, ringed in their confidence colour
   for (const f of of("mshaft")) {
     const [[x, y]] = f.l!, r = f.w!;
+    ctx.beginPath(); ctx.arc(x, y, r + 1.6, 0, 2 * Math.PI); ctx.fillStyle = f.v === 3 ? CONF.known : CONF.approximate; ctx.fill();
     ctx.beginPath(); ctx.arc(x, y, r + 0.7, 0, 2 * Math.PI); ctx.fillStyle = "#6a4f33"; ctx.fill();
     const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
     gr.addColorStop(0, "#050404"); gr.addColorStop(1, "#2b2420");
@@ -184,27 +180,26 @@ export function drawMineCap(ctx: CanvasRenderingContext2D, feats: MineFeature[],
   ctx.save(); ctx.globalCompositeOperation = "destination-out";
   path(ctx, voids.flatMap((f) => f.r!)); ctx.fillStyle = "#000"; ctx.fill("evenodd");
   ctx.restore();
-  // the cut edge: crisp where known, dashed where approximate, dotted where illustrative
-  const style: Record<number, [string, number, number[]]> = { 3: [EDGE, 0.45, []], 2: [EDGE, 0.45, [1.6, 0.9]], 1: ["rgba(212,204,187,0.55)", 0.3, [0.35, 0.65]] };
+  // the cut edge in its confidence colour: a bright rim round the approximate parts, a faint line round the rest
+  const style: Record<number, [string, number]> = { 3: [CONF.known, 1], 2: [CONF.approximate, 1], 1: ["rgba(200,198,190,0.4)", 0.35] };
   for (const f of voids) {
     const r = f.r![0], c = f.c ?? [];
     for (const code of [1, 2, 3]) {
-      const [col, w, dash] = style[code];
+      const [col, w] = style[code];
       ctx.beginPath();
       for (let i = 0; i < r.length; i++) {
         const a = r[i], b = r[(i + 1) % r.length];
         if ((c[i] ?? 1) !== code) continue;
         ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
       }
-      ctx.setLineDash(dash); ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
+      ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
     }
   }
-  // the underground reserve's boundary (GDOŚ via OSM), on the cut rock: a protected block, not a void
+  // the underground reserve's boundary (GDOŚ via OSM, known), on the cut rock: a protected block, not a void
   for (const f of feats.filter((q) => q.k === "mzone")) {
-    path(ctx, f.r!); ctx.fillStyle = "rgba(110,170,190,0.10)"; ctx.fill("evenodd");
-    ctx.setLineDash([3, 2]); ctx.strokeStyle = "rgba(130,190,210,0.9)"; ctx.lineWidth = 0.7; ctx.stroke();
+    path(ctx, f.r!); ctx.fillStyle = "rgba(79,195,204,0.12)"; ctx.fill("evenodd");
+    ctx.strokeStyle = CONF.known; ctx.lineWidth = 1; ctx.stroke();
   }
-  ctx.setLineDash([]);
 }
 
 // ---- walls and props -----------------------------------------------------------------------------------
@@ -224,7 +219,7 @@ export function mineObjects(feats: MineFeature[], [x0, y0, x1, y1]: number[], gr
     const k = 0.62 + 0.5 * Math.max(0, n[0] * sun.x + n[1] * sun.y + n[2] * sun.z);
     return base.map((v) => Math.min(1, v * k));
   };
-  const WALL = hex("#948c7c"), WALL_ILL = hex("#a29d92");
+  const WALL = hex("#a88d5c"), WALL_ILL = hex("#8b8982");
   for (const f of feats) {
     if (f.k !== "mvoid") continue;
     const r = f.r![0], c = f.c ?? [];
