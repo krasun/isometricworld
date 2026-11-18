@@ -43,12 +43,13 @@ function tagsOf(s: string): Tags {
 /**
  * Every element of the extract inside bbox [s, w, n, e] that passes the filter, as Overpass JSON.
  * `prefilter` (osmium tags-filter expressions, e.g. "r/boundary=administrative") thins a large box first.
+ * `complete`: the relation types whose members the cut completes beyond the box (osmium's default: multipolygon).
  */
-export async function localOsm(url: string, [s, w, n, e]: number[], filter: OsmFilter, prefilter?: string[]) {
+export async function localOsm(url: string, [s, w, n, e]: number[], filter: OsmFilter, prefilter?: string[], complete = "multipolygon") {
   const pbf = await extract(url);
   const cut = join(DIR, `cut-${process.pid}.osm.pbf`);
-  // smart: complete ways and multipolygon members, like Overpass returns them with `geom`
-  execFileSync("osmium", ["extract", "-b", `${w},${s},${e},${n}`, "--strategy", "smart", "-O", "-o", cut, pbf], { stdio: "ignore" });
+  // smart: complete ways and the members of `complete` relations, like Overpass returns them with `geom`
+  execFileSync("osmium", ["extract", "-b", `${w},${s},${e},${n}`, "--strategy", "smart", "-S", `types=${complete}`, "-O", "-o", cut, pbf], { stdio: "ignore" });
   if (prefilter) {
     const thin = join(DIR, `thin-${process.pid}.osm.pbf`);
     execFileSync("osmium", ["tags-filter", cut, ...prefilter, "-O", "-o", thin], { stdio: "ignore" });

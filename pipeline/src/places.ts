@@ -21,6 +21,11 @@ export interface Region {
   /** admin_level values of the border overlay's municipalities (default ["8"]; a city-county like Stuttgart is 6). */
   adminLevels?: string[];
   /**
+   * Where `boundaries` reads the borders: Overpass (default), or the region's `osmExtract`. The extract only
+   * holds what Geofabrik cut: use it when every municipality lies well inside it (Croatia for Zagreb).
+   */
+  boundariesFrom?: "overpass" | "extract";
+  /**
    * Airliners on final approach drawn over the map (optional): runway threshold, true heading,
    * threshold ellipsoid height (default 0) and the stretch drawn in metres before the threshold
    * (default 22000 → 7000; negative = past it, on the runway), and optionally braking after touchdown (m/s²;
@@ -183,6 +188,7 @@ export const REGIONS: Record<string, Region> = {
       "Terrain: Copernicus DEM © DLR, Airbus DS · Painted with AI",
     ],
     osmExtract: "https://download.geofabrik.de/europe/croatia-latest.osm.pbf",
+    boundariesFrom: "extract",
     geoidM: 46.06, // EGM2008 at Trg bana Jelačića (PROJ cs2cs EPSG:4326+3855 -> 4979: 46.057 m)
     groundH: 166, // Lower Town ~120 m a.s.l. + geoid
     heightBase: 200, // Sava ~105 m a.s.l. (151 m ellipsoid) … foothills + towers below ~700 m a.s.l.: 100…755 m fits
