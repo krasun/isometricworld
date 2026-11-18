@@ -592,6 +592,9 @@ async function assemble(all = false, only?: Set<string>) {
   for (let k = 0; k < WIN; k++) ramp[k] = Math.min(edge(k), edge(WIN - 1 - k));
   mkdirSync(join(base, "paint"), { recursive: true });
   let written = 0, withdrawn: string | undefined;
+  // tile -> the windows a partial tile was assembled from (a full tile uses all that cover it: not listed)
+  const partialFile = join(base, "paint-partial.json");
+  const partialTiles: Record<string, string> = existsSync(partialFile) ? readJson(partialFile) : {};
   for (const k of tileSet) {
     const [tx, ty] = k.split("_").map(Number);
     const covering: Array<[number, number]> = [];
@@ -609,11 +612,17 @@ async function assemble(all = false, only?: Set<string>) {
         mkdirSync(withdrawn, { recursive: true });
         renameSync(tile, join(withdrawn, `${tx}_${ty}.png`));
       }
+      delete partialTiles[k];
       continue;
     }
     const partial = have.length < covering.length;
-    // rebuilt when any covering window was (re)painted since
-    if (!only && existsSync(tile) && !args.force && !all && have.every(([i, j]) => mtime(winFile(i, j)) <= mtime(tile))) continue;
+    // rebuilt when any covering window was (re)painted since, the set of windows changed (one withdrawn or added),
+    // or, for a partial tile, the render showing through was re-rendered
+    const used = have.map(([i, j]) => `${i}_${j}`).join(" ");
+    const usedBefore = partialTiles[k] ?? covering.map(([i, j]) => `${i}_${j}`).join(" ");
+    if (!only && existsSync(tile) && !args.force && !all && used === usedBefore
+      && have.every(([i, j]) => mtime(winFile(i, j)) <= mtime(tile))
+      && !(partial && existsSync(renderFile(tx, ty)) && mtime(renderFile(tx, ty)) > mtime(tile))) continue;
     const acc = new Float32Array(T * T * 3), wsum = new Float32Array(T * T);
     for (const [i, j] of have) {
       const px = await sharp(winFile(i, j)).resize(WIN, WIN).removeAlpha().raw().toBuffer();
@@ -647,8 +656,11 @@ async function assemble(all = false, only?: Set<string>) {
         out[d * 3 + c] = render && w < 1 ? acc[d * 3 + c] + render[d * 3 + c] * (1 - w) : acc[d * 3 + c] / Math.max(w, 1e-6);
     }
     await writeAtomic(sharp(out, { raw: { width: T, height: T, channels: 3 } }).png(), join(base, "paint", `${tx}_${ty}.png`));
+    if (partial) partialTiles[k] = used; else delete partialTiles[k];
+    writeFileSync(partialFile, JSON.stringify(partialTiles));
     written++;
   }
+  writeFileSync(partialFile, JSON.stringify(partialTiles));
   console.log(`  assembled ${written} art tiles`);
 }
 
