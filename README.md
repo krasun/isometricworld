@@ -221,15 +221,16 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
 - Areas: the city (`stuttgart-*`) and the towns around it (`metro-*`) are split into overlapping areas. Where
   they overlap, export takes each tile from the area it lies deepest inside.
 
-**Wieliczka's salt mine** (`mine.ts`, `minedata.ts`, `page/mine.ts`; web `mine.ts`): a lift panel on the map goes
-down the mine's levels I–IX, each its own transparent tile layer (`tiles/mine-<level>/`) over the dimmed town, drawn
-as a cutaway (the rock cut 3 m above the floor) and draped on the terrain so every chamber lies under the spot above
-it. No plan of the mine is open: `minedata.ts` holds what open sources give (level depths and chamber counts, shaft
-depths, the routes' chambers in order with their depths and sizes; MINE-RESEARCH.md, kept locally, has the survey).
-The shafts, the mine's outline and the Groty Kryształowe reserve come from OSM (known); the routes' chambers are
-placed schematically round their shafts (approximate, dashed edges, "≈" on the map); everything else is generated
-to each level's published chamber count (illustrative: paler, hatched, dotted edges). One more layer shows the first
-level on Hondius's 1645 plan (public domain), fitted on the three shafts it shares with today (2–4 m residuals).
+**Wieliczka's salt mine** (`mine.ts`, `minedata.ts`, `page/mine.ts`; web `mine.ts`): a lift panel, opened by the
+round button under the tilt-shift one (or `?level=III`), goes down the mine's levels I–IX, each its own transparent
+tile layer (`tiles/mine-<level>/`) over the dimmed town, drawn as a cutaway (the rock cut 3 m above the floor) and
+draped on the terrain so every chamber lies under the spot above it. No plan of the mine is open: `minedata.ts`
+holds what open sources give (level depths and chamber counts, shaft depths, the routes' chambers in order with
+their depths and sizes; MINE-RESEARCH.md, kept locally, has the survey). The shafts, the mine's outline and the
+Groty Kryształowe reserve come from OSM (known); the routes' chambers are placed schematically round their shafts
+(approximate, dashed edges, "≈" on the map); everything else is generated to each level's published chamber count
+(illustrative: paler, hatched, dotted edges). One more layer shows the first level on Hondius's 1645 plan (public
+domain), fitted on the three shafts it shares with today (2–4 m residuals).
 
 ```sh
 npm -w pipeline run mine                      # data/derived/wieliczka-mine-<level>/ (needs wieliczka-town's ground)

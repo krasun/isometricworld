@@ -22,14 +22,15 @@ export interface MineLevel {
   chambers: number;
   /** the part of the mine's outline (OSM) along its long axis the level's workings span, 0 west … 1 east */
   span: [number, number];
+  /** what the map's level panel says about it */
   note: string;
-  /** the note as the map shows it (Polish) */
-  pl: string;
 }
 
 export interface MineShaft {
   /** name as in OSM (man_made=mineshaft) */
   name: string;
+  /** name on the map (English, as the mine's own English pages name it) */
+  en: string;
   /** deepest level reached */
   to: string;
   depth?: number;
@@ -39,6 +40,8 @@ export interface MineShaft {
 
 export interface MineChamber {
   name: string;
+  /** name on the map (English) */
+  en: string;
   level: string;
   kind: "chamber" | "chapel" | "lake" | "hall" | "museum" | "grotto";
   /** floor size (m): along, across; and height where published */
@@ -54,40 +57,40 @@ export interface MineChamber {
 }
 
 export const SOURCES: Record<string, { title: string; url: string; licence: string }> = {
-  decree: { title: "Zarządzenie Prezydenta RP z 8 IX 1994 (M.P. 1994 nr 50 poz. 424): extent, levels, totals", url: "https://eli.gov.pl/eli/MP/1994/424/ogl/pol/pdf", licence: "official act, not protected (Polish Copyright Act art. 4)" },
+  decree: { title: "Decree of the President of Poland of 8 September 1994 (M.P. 1994 nr 50 poz. 424): extent, levels, totals", url: "https://eli.gov.pl/eli/MP/1994/424/ogl/pol/pdf", licence: "official act, not protected (Polish Copyright Act art. 4)" },
   dobyrn: { title: "d'Obyrn & Hydzik-Wiśniewska 2017, Arch. Min. Sci. 62(1), Table 1: level depths and chamber counts", url: "https://doi.org/10.1515/amsc-2017-0014", licence: "facts only" },
   wiewiorka: { title: "Wiewiórka et al. 2009, Geoturystyka 4(18): level names and depths, shaft order", url: "https://doi.org/10.7494/geotour.2009.18.61", licence: "CC BY 4.0 (facts only used)" },
-  minersRoute: { title: "Trasa Górnicza, Geologia/Geology, Geophysics & Environment 38(2) 2012: order of the Miners' Route", url: "https://doi.org/10.7494/geol.2012.38.2.283", licence: "CC BY 4.0 (facts only used)" },
-  mine: { title: "Kopalnia Soli „Wieliczka”, kopalnia.pl: route and chamber depths and sizes", url: "https://www.kopalnia.pl/", licence: "facts only" },
-  plwiki: { title: "Polish Wikipedia, Kopalnia soli w Wieliczce: chambers of the Tourist Route, in order", url: "https://pl.wikipedia.org/wiki/Kopalnia_soli_w_Wieliczce", licence: "facts only" },
+  minersRoute: { title: "„Trasa Górnicza”, Geology, Geophysics & Environment 38(2) 2012: order of the Miners' Route", url: "https://doi.org/10.7494/geol.2012.38.2.283", licence: "CC BY 4.0 (facts only used)" },
+  mine: { title: "Wieliczka Salt Mine, kopalnia.pl: route and chamber depths and sizes", url: "https://www.kopalnia.pl/", licence: "facts only" },
+  plwiki: { title: "Polish Wikipedia, „Kopalnia soli w Wieliczce”: chambers of the Tourist Route, in order", url: "https://pl.wikipedia.org/wiki/Kopalnia_soli_w_Wieliczce", licence: "facts only" },
   hondius: { title: "Willem Hondius 1645 after Marcin German 1638, level I plan (Commons)", url: "https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg", licence: "public domain" },
-  osm: { title: "OpenStreetMap: shafts, the mine's outline, the Groty Kryształowe reserve (GDOŚ)", url: "https://www.openstreetmap.org/", licence: "ODbL" },
+  osm: { title: "OpenStreetMap: shafts, the mine's outline, the Crystal Grottoes reserve (GDOŚ)", url: "https://www.openstreetmap.org/", licence: "ODbL" },
 };
 
 /** St. Kinga shaft collar, NMT (EVRF2007), the depths' zero */
 export const COLLAR = 242.9;
 
 export const LEVELS: MineLevel[] = [
-  { id: "I", name: "Bono", depth: 57.4, tourist: 64, chambers: 126, span: [0, 1], note: "the start of the Tourist Route (Daniłowicz shaft stairs) and of the Miners' Route (Regis)", pl: "tu zaczyna się Trasa Turystyczna (schody szybu Daniłowicza) i Trasa Górnicza (szyb Regis)" },
-  { id: "IIw", name: "Braci Markowskich", depth: 84.3, tourist: 90, chambers: 46, span: [0.05, 0.95], note: "level II, upper: the Groty Kryształowe reserve (~80 m below the town, between IIw and IIn)", pl: "tu, około 80 m pod miastem, leży rezerwat przyrody Groty Kryształowe (obrys GDOŚ z OSM, sama grota orientacyjnie)" },
-  { id: "IIn", name: "Mickiewicz", depth: 103.5, tourist: 110, chambers: 246, span: [0, 1], note: "level II, lower: St. Kinga's Chapel, Michałowice, Drozdowice", pl: "poziom II niższy: kaplica św. Kingi, komory Michałowice i Drozdowice" },
-  { id: "III", name: "Słowacki", depth: 129.4, tourist: 135, chambers: 378, span: [0, 1], note: "with the Kazanów inter-level: Warszawa, the museum, the health resort, the lift up", pl: "z międzypoziomem Kazanów: komora Warszawa, muzeum, uzdrowisko, winda na powierzchnię" },
-  { id: "IV", name: "Grunwald", depth: 170.3, chambers: 512, span: [0, 0.95], note: "kept as a stable support; not open to visitors", pl: "pozostawiony jako stabilna podpora, niedostępny dla zwiedzających" },
-  { id: "V", name: "Austria", depth: 198.8, chambers: 447, span: [0.1, 0.95], note: "with the Kołobrzeg inter-level; kept as a stable support", pl: "z międzypoziomem Kołobrzeg; pozostawiony jako stabilna podpora" },
-  { id: "VI", name: "Regis", depth: 236.5, chambers: 233, span: [0.27, 1], note: "being backfilled; nothing west of the Kościuszko shaft", pl: "podsadzany; nic na zachód od szybu Kościuszko" },
-  { id: "VII", name: "Warszawa", depth: 255.2, chambers: 121, span: [0.27, 0.92], note: "being backfilled; nothing west of the Kościuszko shaft", pl: "podsadzany; nic na zachód od szybu Kościuszko" },
-  { id: "VIII", name: "Biliński", depth: 287.6, chambers: 66, span: [0.2, 0.75], note: "being backfilled", pl: "podsadzany" },
-  { id: "IX", name: "", depth: 327.2, chambers: 2, span: [0.33, 0.45], note: "the deepest: two chambers, by the St. Kinga shaft", pl: "najgłębszy: dwie komory przy szybie św. Kingi" },
+  { id: "I", name: "Bono", depth: 57.4, tourist: 64, chambers: 126, span: [0, 1], note: "the Tourist Route starts here (the Daniłowicz shaft stairs), and so does the Miners' Route (the Regis shaft)" },
+  { id: "IIw", name: "Markowski Brothers", depth: 84.3, tourist: 90, chambers: 46, span: [0.05, 0.95], note: "about 80 m below the town lies the Crystal Grottoes nature reserve (its outline from GDOŚ via OSM, the grotto itself approximate)" },
+  { id: "IIn", name: "Mickiewicz", depth: 103.5, tourist: 110, chambers: 246, span: [0, 1], note: "St. Kinga's Chapel and the Michałowice and Drozdowice chambers" },
+  { id: "III", name: "Słowacki", depth: 129.4, tourist: 135, chambers: 378, span: [0, 1], note: "with the Kazanów inter-level: the Warszawa Chamber, the museum, the health resort and the lift back up" },
+  { id: "IV", name: "Grunwald", depth: 170.3, chambers: 512, span: [0, 0.95], note: "left as a stable support, closed to visitors" },
+  { id: "V", name: "Austria", depth: 198.8, chambers: 447, span: [0.1, 0.95], note: "with the Kołobrzeg inter-level; left as a stable support" },
+  { id: "VI", name: "Regis", depth: 236.5, chambers: 233, span: [0.27, 1], note: "being backfilled; nothing west of the Kościuszko shaft" },
+  { id: "VII", name: "Warszawa", depth: 255.2, chambers: 121, span: [0.27, 0.92], note: "being backfilled; nothing west of the Kościuszko shaft" },
+  { id: "VIII", name: "Biliński", depth: 287.6, chambers: 66, span: [0.2, 0.75], note: "being backfilled" },
+  { id: "IX", name: "", depth: 327.2, chambers: 2, span: [0.33, 0.45], note: "the deepest: two chambers by the St. Kinga shaft" },
 ];
 
 export const SHAFTS: MineShaft[] = [
-  { name: "Szyb Kościuszko", to: "VIII", depth: 297.5, conf: "known", note: "1790; links levels I–VIII; ventilation, drainage, backfill" },
-  { name: "Szyb św. Kingi", to: "IX", conf: "approximate", note: "1864; the depths' zero; reaches at least level VIII" },
-  { name: "Szyb Daniłowicza", to: "III", depth: 135, conf: "known", note: "1635; the Tourist Route: stairs down to level I, the lift up from level III" },
-  { name: "Szyb Górsko", to: "IV", depth: 177, conf: "approximate", note: "1620, closed 1954; depth from OSM" },
-  { name: "Szyb Regis", to: "III", depth: 127, conf: "known", note: "14th century; the Miners' Route lifts" },
-  { name: "Szyb Paderewskiego", to: "I", conf: "approximate", note: "1812; being rebuilt for visitors, lined down to level I so far" },
-  { name: "Szyb Wilson", to: "III", conf: "illustrative", note: "1913, a ventilation shaft; its depth is not published" },
+  { name: "Szyb Kościuszko", en: "Kościuszko Shaft", to: "VIII", depth: 297.5, conf: "known", note: "1790; links levels I–VIII; ventilation, drainage, backfill" },
+  { name: "Szyb św. Kingi", en: "St. Kinga Shaft", to: "IX", conf: "approximate", note: "1864; the depths' zero; reaches at least level VIII" },
+  { name: "Szyb Daniłowicza", en: "Daniłowicz Shaft", to: "III", depth: 135, conf: "known", note: "1635; the Tourist Route: stairs down to level I, the lift up from level III" },
+  { name: "Szyb Górsko", en: "Górsko Shaft", to: "IV", depth: 177, conf: "approximate", note: "1620, closed 1954; depth from OSM" },
+  { name: "Szyb Regis", en: "Regis Shaft", to: "III", depth: 127, conf: "known", note: "14th century; the Miners' Route lifts" },
+  { name: "Szyb Paderewskiego", en: "Paderewski Shaft", to: "I", conf: "approximate", note: "1812; being rebuilt for visitors, lined down to level I so far" },
+  { name: "Szyb Wilson", en: "Wilson Shaft", to: "III", conf: "illustrative", note: "1913, a ventilation shaft; its depth is not published" },
 ];
 
 /** Height of the cutaway: walls rise this far over a level's floor, where the rock is cut (renderer page/mine.ts). */
@@ -97,64 +100,64 @@ const D = "Szyb Daniłowicza", R = "Szyb Regis";
 /** The routes' chambers in their published order; positions schematic round the shaft each route starts from. */
 export const CHAMBERS: MineChamber[] = [
   // Tourist Route, level I (64 m): down the Daniłowicz stairs
-  { name: "Komora Mikołaja Kopernika", level: "I", kind: "chamber", size: [22, 14], at: { shaft: D, e: 40, n: -25 }, route: "tourist", conf: "approximate", src: "plwiki" },
-  { name: "Kaplica św. Antoniego", level: "I", kind: "chapel", size: [7.5, 6], height: 5.5, at: { shaft: D, e: 78, n: -5 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Komora Mikołaja Kopernika", en: "Nicolaus Copernicus Chamber", level: "I", kind: "chamber", size: [22, 14], at: { shaft: D, e: 40, n: -25 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Kaplica św. Antoniego", en: "St. Anthony's Chapel", level: "I", kind: "chapel", size: [7.5, 6], height: 5.5, at: { shaft: D, e: 78, n: -5 }, route: "tourist", conf: "approximate", src: "plwiki" },
   // Janowice and Sielec where Hondius's 1645 plan puts them (georeferenced on three shafts: mine.ts, HONDIUS)
-  { name: "Komora Janowice", level: "I", kind: "chamber", size: [30, 18], at: { shaft: D, e: 34, n: 22 }, route: "tourist", conf: "approximate", src: "hondius" },
-  { name: "Komora Sielec", level: "I", kind: "chamber", size: [26, 15], at: { shaft: D, e: -39, n: 60, turn: 30 }, route: "tourist", conf: "approximate", src: "hondius" },
-  { name: "Komora Kazimierza Wielkiego", level: "I", kind: "chamber", size: [24, 16], at: { shaft: D, e: 95, n: 45 }, route: "tourist", conf: "approximate", src: "plwiki" },
-  { name: "Komora Pieskowa Skała", level: "I", kind: "chamber", size: [20, 12], at: { shaft: D, e: 175, n: 5, turn: -20 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Komora Janowice", en: "Janowice Chamber", level: "I", kind: "chamber", size: [30, 18], at: { shaft: D, e: 34, n: 22 }, route: "tourist", conf: "approximate", src: "hondius" },
+  { name: "Komora Sielec", en: "Sielec Chamber", level: "I", kind: "chamber", size: [26, 15], at: { shaft: D, e: -39, n: 60, turn: 30 }, route: "tourist", conf: "approximate", src: "hondius" },
+  { name: "Komora Kazimierza Wielkiego", en: "Casimir the Great Chamber", level: "I", kind: "chamber", size: [24, 16], at: { shaft: D, e: 95, n: 45 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Komora Pieskowa Skała", en: "Pieskowa Skała Chamber", level: "I", kind: "chamber", size: [20, 12], at: { shaft: D, e: 175, n: 5, turn: -20 }, route: "tourist", conf: "approximate", src: "plwiki" },
   // level II upper (90 m)
-  { name: "Kaplica Krzyża Świętego", level: "IIw", kind: "chapel", size: [12, 8], at: { shaft: D, e: 235, n: -75 }, route: "tourist", conf: "approximate", src: "plwiki" },
-  { name: "Komora Weimar", level: "IIw", kind: "lake", size: [34, 16], at: { shaft: D, e: 300, n: -25, turn: 15 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Kaplica Krzyża Świętego", en: "Holy Cross Chapel", level: "IIw", kind: "chapel", size: [12, 8], at: { shaft: D, e: 235, n: -75 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Komora Weimar", en: "Weimar Chamber", level: "IIw", kind: "lake", size: [34, 16], at: { shaft: D, e: 300, n: -25, turn: 15 }, route: "tourist", conf: "approximate", src: "plwiki" },
   // level II lower (110 m)
-  { name: "Kaplica św. Kingi", level: "IIn", kind: "chapel", size: [54, 18], height: 12, depth: 101, at: { shaft: D, e: 330, n: -110 }, route: "tourist", conf: "approximate", src: "mine" },
-  { name: "Komora Erazma Barącza", level: "IIn", kind: "lake", size: [30, 18], at: { shaft: D, e: 400, n: -55, turn: -10 }, route: "tourist", conf: "approximate", src: "plwiki" },
-  { name: "Komora Michałowice", level: "IIn", kind: "hall", size: [34, 22], height: 36, depth: 110, at: { shaft: D, e: 440, n: -150 }, route: "tourist", conf: "approximate", src: "mine" },
-  { name: "Komora Drozdowice", level: "IIn", kind: "chamber", size: [22, 15], depth: 110, at: { shaft: D, e: 500, n: -95 }, route: "tourist", conf: "approximate", src: "mine" },
-  { name: "Komora Józefa Piłsudskiego", level: "IIn", kind: "lake", size: [32, 14], at: { shaft: D, e: 545, n: -175, turn: 20 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Kaplica św. Kingi", en: "St. Kinga's Chapel", level: "IIn", kind: "chapel", size: [54, 18], height: 12, depth: 101, at: { shaft: D, e: 330, n: -110 }, route: "tourist", conf: "approximate", src: "mine" },
+  { name: "Komora Erazma Barącza", en: "Erazm Barącz Chamber", level: "IIn", kind: "lake", size: [30, 18], at: { shaft: D, e: 400, n: -55, turn: -10 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Komora Michałowice", en: "Michałowice Chamber", level: "IIn", kind: "hall", size: [34, 22], height: 36, depth: 110, at: { shaft: D, e: 440, n: -150 }, route: "tourist", conf: "approximate", src: "mine" },
+  { name: "Komora Drozdowice", en: "Drozdowice Chamber", level: "IIn", kind: "chamber", size: [22, 15], depth: 110, at: { shaft: D, e: 500, n: -95 }, route: "tourist", conf: "approximate", src: "mine" },
+  { name: "Komora Józefa Piłsudskiego", en: "Józef Piłsudski Chamber", level: "IIn", kind: "lake", size: [32, 14], at: { shaft: D, e: 545, n: -175, turn: 20 }, route: "tourist", conf: "approximate", src: "plwiki" },
   // level III with Kazanów (125–135 m): back west to the Daniłowicz lift
-  { name: "Komora Stanisława Staszica", level: "III", kind: "hall", size: [30, 20], height: 36, at: { shaft: D, e: 520, n: -255 }, route: "tourist", conf: "approximate", src: "mine" },
-  { name: "Komora Witolda Budryka", level: "III", kind: "chamber", size: [20, 12], at: { shaft: D, e: 445, n: -285 }, route: "tourist", conf: "approximate", src: "plwiki" },
-  { name: "Komora Warszawa", level: "III", kind: "hall", size: [54, 17], height: 9, depth: 125, at: { shaft: D, e: 350, n: -250, turn: -10 }, route: "tourist", conf: "approximate", src: "mine" },
-  { name: "Karczma Górnicza", level: "III", kind: "hall", size: [24, 14], depth: 125, at: { shaft: D, e: 290, n: -200 }, route: "tourist", conf: "approximate", src: "mine" },
-  { name: "Komora Wisła", level: "III", kind: "chamber", size: [22, 12], at: { shaft: D, e: 230, n: -230 }, route: "tourist", conf: "approximate", src: "plwiki" },
-  { name: "Kaplica św. Jana", level: "III", kind: "chapel", size: [14, 11], depth: 135, at: { shaft: D, e: 165, n: -160 }, route: "tourist", conf: "approximate", src: "mine" },
-  { name: "Jezioro Wessel", level: "III", kind: "lake", size: [40, 18], depth: 135, at: { shaft: D, e: 100, n: -115, turn: 25 }, route: "tourist", conf: "approximate", src: "plwiki" },
-  { name: "Komora Gwarków", level: "III", kind: "hall", size: [14, 8], depth: 135, at: { shaft: D, e: 35, n: -45 }, route: "tourist", conf: "approximate", src: "mine" },
+  { name: "Komora Stanisława Staszica", en: "Stanisław Staszic Chamber", level: "III", kind: "hall", size: [30, 20], height: 36, at: { shaft: D, e: 520, n: -255 }, route: "tourist", conf: "approximate", src: "mine" },
+  { name: "Komora Witolda Budryka", en: "Witold Budryk Chamber", level: "III", kind: "chamber", size: [20, 12], at: { shaft: D, e: 445, n: -285 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Komora Warszawa", en: "Warszawa Chamber", level: "III", kind: "hall", size: [54, 17], height: 9, depth: 125, at: { shaft: D, e: 350, n: -250, turn: -10 }, route: "tourist", conf: "approximate", src: "mine" },
+  { name: "Karczma Górnicza", en: "Miners' Tavern", level: "III", kind: "hall", size: [24, 14], depth: 125, at: { shaft: D, e: 290, n: -200 }, route: "tourist", conf: "approximate", src: "mine" },
+  { name: "Komora Wisła", en: "Wisła Chamber", level: "III", kind: "chamber", size: [22, 12], at: { shaft: D, e: 230, n: -230 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Kaplica św. Jana", en: "St. John's Chapel", level: "III", kind: "chapel", size: [14, 11], depth: 135, at: { shaft: D, e: 165, n: -160 }, route: "tourist", conf: "approximate", src: "mine" },
+  { name: "Jezioro Wessel", en: "Wessel Lake", level: "III", kind: "lake", size: [40, 18], depth: 135, at: { shaft: D, e: 100, n: -115, turn: 25 }, route: "tourist", conf: "approximate", src: "plwiki" },
+  { name: "Komora Gwarków", en: "Gwarków Chamber", level: "III", kind: "hall", size: [14, 8], depth: 135, at: { shaft: D, e: 35, n: -45 }, route: "tourist", conf: "approximate", src: "mine" },
   // the museum (level III, 1.5 km, towards Regis)
-  { name: "Komora Saurau", level: "III", kind: "museum", size: [36, 20], at: { shaft: D, e: 240, n: 40 }, route: "museum", conf: "approximate", src: "plwiki" },
-  { name: "Komora Kraj", level: "III", kind: "museum", size: [20, 16], at: { shaft: D, e: 320, n: 70 }, route: "museum", conf: "approximate", src: "plwiki" },
-  { name: "Komora Maria Teresa", level: "III", kind: "museum", size: [26, 14], at: { shaft: D, e: 400, n: 40 }, route: "museum", conf: "approximate", src: "plwiki" },
-  { name: "Komora Russegger", level: "III", kind: "museum", size: [24, 12], at: { shaft: D, e: 470, n: 85 }, route: "museum", conf: "approximate", src: "plwiki" },
+  { name: "Komora Saurau", en: "Saurau Chamber", level: "III", kind: "museum", size: [36, 20], at: { shaft: D, e: 240, n: 40 }, route: "museum", conf: "approximate", src: "plwiki" },
+  { name: "Komora Kraj", en: "Kraj Chamber", level: "III", kind: "museum", size: [20, 16], at: { shaft: D, e: 320, n: 70 }, route: "museum", conf: "approximate", src: "plwiki" },
+  { name: "Komora Maria Teresa", en: "Maria Teresa Chamber", level: "III", kind: "museum", size: [26, 14], at: { shaft: D, e: 400, n: 40 }, route: "museum", conf: "approximate", src: "plwiki" },
+  { name: "Komora Russegger", en: "Russegger Chamber", level: "III", kind: "museum", size: [24, 12], at: { shaft: D, e: 470, n: 85 }, route: "museum", conf: "approximate", src: "plwiki" },
   // Miners' Route round the Regis shaft: level I (57 m), then down to level II
-  { name: "Komora Boczaniec", level: "I", kind: "chamber", size: [22, 14], at: { shaft: R, e: 35, n: -40 }, route: "miners", conf: "approximate", src: "minersRoute" },
-  { name: "Komora Fortymbark", level: "I", kind: "chamber", size: [18, 12], at: { shaft: R, e: 95, n: -20 }, route: "miners", conf: "approximate", src: "minersRoute" },
-  { name: "Komora Janik", level: "I", kind: "chamber", size: [16, 12], at: { shaft: R, e: 120, n: 40 }, route: "miners", conf: "approximate", src: "minersRoute" },
-  { name: "Komora Gospoda", level: "I", kind: "chamber", size: [18, 11], at: { shaft: R, e: 60, n: 85 }, route: "miners", conf: "approximate", src: "minersRoute" },
-  { name: "Komora Lipowiec", level: "I", kind: "chamber", size: [20, 13], at: { shaft: R, e: -15, n: 100 }, route: "miners", conf: "approximate", src: "minersRoute" },
-  { name: "Komora Korytno", level: "I", kind: "chamber", size: [18, 12], at: { shaft: R, e: -75, n: 50 }, route: "miners", conf: "approximate", src: "minersRoute" },
-  { name: "Komora Tanecznica", level: "I", kind: "chamber", size: [20, 12], at: { shaft: R, e: -110, n: -15 }, route: "miners", conf: "approximate", src: "minersRoute" },
-  { name: "Komora Rzepki", level: "I", kind: "chamber", size: [16, 12], at: { shaft: R, e: -70, n: -75 }, route: "miners", conf: "approximate", src: "minersRoute" },
-  { name: "Komora Franciszka Karola", level: "IIn", kind: "chamber", size: [24, 14], at: { shaft: R, e: 25, n: -65 }, route: "miners", conf: "approximate", src: "minersRoute" },
+  { name: "Komora Boczaniec", en: "Boczaniec Chamber", level: "I", kind: "chamber", size: [22, 14], at: { shaft: R, e: 35, n: -40 }, route: "miners", conf: "approximate", src: "minersRoute" },
+  { name: "Komora Fortymbark", en: "Fortymbark Chamber", level: "I", kind: "chamber", size: [18, 12], at: { shaft: R, e: 95, n: -20 }, route: "miners", conf: "approximate", src: "minersRoute" },
+  { name: "Komora Janik", en: "Janik Chamber", level: "I", kind: "chamber", size: [16, 12], at: { shaft: R, e: 120, n: 40 }, route: "miners", conf: "approximate", src: "minersRoute" },
+  { name: "Komora Gospoda", en: "Gospoda Chamber", level: "I", kind: "chamber", size: [18, 11], at: { shaft: R, e: 60, n: 85 }, route: "miners", conf: "approximate", src: "minersRoute" },
+  { name: "Komora Lipowiec", en: "Lipowiec Chamber", level: "I", kind: "chamber", size: [20, 13], at: { shaft: R, e: -15, n: 100 }, route: "miners", conf: "approximate", src: "minersRoute" },
+  { name: "Komora Korytno", en: "Korytno Chamber", level: "I", kind: "chamber", size: [18, 12], at: { shaft: R, e: -75, n: 50 }, route: "miners", conf: "approximate", src: "minersRoute" },
+  { name: "Komora Tanecznica", en: "Tanecznica Chamber", level: "I", kind: "chamber", size: [20, 12], at: { shaft: R, e: -110, n: -15 }, route: "miners", conf: "approximate", src: "minersRoute" },
+  { name: "Komora Rzepki", en: "Rzepki Chamber", level: "I", kind: "chamber", size: [16, 12], at: { shaft: R, e: -70, n: -75 }, route: "miners", conf: "approximate", src: "minersRoute" },
+  { name: "Komora Franciszka Karola", en: "Franciszek Karol Chamber", level: "IIn", kind: "chamber", size: [24, 14], at: { shaft: R, e: 25, n: -65 }, route: "miners", conf: "approximate", src: "minersRoute" },
   // elsewhere
-  { name: "Komora Kloski", level: "V", kind: "hall", size: [30, 18], depth: 197, at: { shaft: D, e: 120, n: -60 }, conf: "approximate", src: "dobyrn" },
+  { name: "Komora Kloski", en: "Kloski Chamber", level: "V", kind: "hall", size: [30, 18], depth: 197, at: { shaft: D, e: 120, n: -60 }, conf: "approximate", src: "dobyrn" },
 ];
 
 /**
  * Hondius's 1645 plan of the first level (after Marcin German's 1638 survey; Commons, public domain), in image
  * pixels of data/raw/mine/hondius/<file>: the three shafts it shares with today (control points for the fit in
  * mine.ts: 2–4 m residuals, 0.156 m per pixel, turned 173°: north is down), the plan without its register,
- * title and views, and what it names that is gone or renamed (placed through the fit).
+ * title and views, and what it names that is gone or renamed, keyed by their names on the map (placed through the fit).
  */
 export const HONDIUS = {
   file: "Wieliczka_Salt_Mines_2.jpg",
   url: "https://commons.wikimedia.org/wiki/Special:FilePath/Wieliczka_Salt_Mines_2.jpg",
   crop: [3150, 3560, 11600, 7700],
   control: { "Szyb Górsko": [9697, 4632], "Szyb Daniłowicza": [10902, 5579], "Szyb Regis": [8482, 6471] } as Record<string, [number, number]>,
-  gone: { "Szyb Lubomierz": [3314, 3924], "Szyb Boner": [5577, 5156], "Szyb Buzenin": [4121, 5762], "Szyb Lays": [5573, 6391], "Szyb Seraf": [7911, 5304], "Szyb Wodny": [8788, 6647] } as Record<string, [number, number]>,
-  chambers: { "Komora Janowice": [10691, 5728], "Komora Sielec": [11189, 5914], "Komora Kazanów": [10530, 4860], "Komora Witów": [11067, 5361] } as Record<string, [number, number]>,
+  gone: { "Lubomierz Shaft": [3314, 3924], "Boner Shaft": [5577, 5156], "Buzenin Shaft": [4121, 5762], "Lays Shaft": [5573, 6391], "Seraf Shaft": [7911, 5304], "Wodny Shaft": [8788, 6647] } as Record<string, [number, number]>,
+  chambers: { "Janowice Chamber": [10691, 5728], "Sielec Chamber": [11189, 5914], "Kazanów Chamber": [10530, 4860], "Witów Chamber": [11067, 5361] } as Record<string, [number, number]>,
 };
 
 /** OSM name of the Groty Kryształowe reserve (its outline is known: GDOŚ via OSM), ~80 m below the town */
-export const GROTTO = { name: "Rezerwat Groty Kryształowe", level: "IIw" };
+export const GROTTO = { name: "Rezerwat Groty Kryształowe", en: "Crystal Grottoes", level: "IIw" };

@@ -164,7 +164,7 @@ function build(level: MineLevel, li: number) {
   if (level.id === GROTTO.level && reserveEl) {
     const ring = ringOf(reserveEl), c = centroid(ring);
     zones.push({ ring, name: GROTTO.name });
-    rooms.push({ ring: blob(c, 26, 12, strike + 0.4, 0.6, rnd), c, rad: 14, conf: "approximate", kind: "grotto", name: "Groty Kryształowe" });
+    rooms.push({ ring: blob(c, 26, 12, strike + 0.4, 0.6, rnd), c, rad: 14, conf: "approximate", kind: "grotto", name: GROTTO.en });
   }
   // the routes through this level, in their published order, from/to their shafts
   const D = "Szyb Daniłowicza", R = "Szyb Regis";
@@ -341,16 +341,17 @@ function build(level: MineLevel, li: number) {
 
   // ---- labels and facts (export.ts → web) ----------------------------------------------------------------
   const at = (p: P2) => { const z = terrain(p[0], p[1]) + CAP; const [lat, lon] = enuToLlh([p[0], p[1], 0]); return { x: r2(p[0]), y: r2(p[1]), z: r2(z), lat: +lat.toFixed(6), lon: +lon.toFixed(6) }; };
+  // labels by the names on the map (English); minedata.ts keys them by their Polish (OSM) names
   const labels = [
     ...rooms.filter((r) => r.name && r.kind !== "podszybie").map((r) => {
       const c = CHAMBERS.find((q) => q.name === r.name);
-      return { name: r.name!, kind: r.kind, conf: r.conf, route: r.route ?? null, depth: c?.depth ?? null, height: c?.height ?? null, src: c?.src ?? "osm", ...at(r.c) };
+      return { name: c?.en ?? r.name!, kind: r.kind, conf: r.conf, route: r.route ?? null, depth: c?.depth ?? null, height: c?.height ?? null, src: c?.src ?? "osm", ...at(r.c) };
     }),
-    ...shafts.map((s) => ({ name: s.name, kind: "shaft", conf: s.conf, route: null, depth: s.depth ?? null, height: null, src: "osm", note: s.note, ...at(shaftAt.get(s.name)!) })),
+    ...shafts.map((s) => ({ name: s.en, kind: "shaft", conf: s.conf, route: null, depth: s.depth ?? null, height: null, src: "osm", note: s.note, ...at(shaftAt.get(s.name)!) })),
   ];
   const info = {
     id: level.id, name: level.name, depth: level.depth, tourist: level.tourist ?? null, elevation: r2(COLLAR - level.depth),
-    chambers: level.chambers, note: level.pl, generated: placed, cap: CAP,
+    chambers: level.chambers, note: level.note, generated: placed, cap: CAP,
     extent: ext.map((p) => [r2(p[0]), r2(p[1])]), labels,
   };
   const dir = join(DERIVED, `wieliczka-mine-${level.id}`), gdir = join(dir, "ground");
@@ -392,14 +393,14 @@ async function build1645() {
   writeFileSync(join(gdir, "features.json"), JSON.stringify([{ k: "mimg", u: "hondius-I.jpg", e, r: [corners.map(([x, y]) => [r2(x), r2(y)])] }]));
   const at = (pt: P2) => { const z = terrain(pt[0], pt[1]); return { x: r2(pt[0]), y: r2(pt[1]), z: r2(z) }; };
   const labels = [
-    ...Object.keys(HONDIUS.control).filter((n) => shaftAt.has(n)).map((n) => ({ name: n, kind: "shaft", conf: "known", route: null, depth: null, height: null, src: "osm", ...at(shaftAt.get(n)!) })),
-    ...Object.entries(HONDIUS.gone).map(([n, uv]) => ({ name: n, kind: "shaft", conf: "approximate", route: null, depth: null, height: null, src: "hondius", note: "1645; dziś nie istnieje", ...at(toEnu(uv)) })),
+    ...Object.keys(HONDIUS.control).filter((n) => shaftAt.has(n)).map((n) => ({ name: SHAFTS.find((s) => s.name === n)?.en ?? n, kind: "shaft", conf: "known", route: null, depth: null, height: null, src: "osm", ...at(shaftAt.get(n)!) })),
+    ...Object.entries(HONDIUS.gone).map(([n, uv]) => ({ name: n, kind: "shaft", conf: "approximate", route: null, depth: null, height: null, src: "hondius", note: "1645; gone today", ...at(toEnu(uv)) })),
     ...Object.entries(HONDIUS.chambers).map(([n, uv]) => ({ name: n, kind: "chamber", conf: "approximate", route: null, depth: null, height: null, src: "hondius", ...at(toEnu(uv)) })),
   ];
   const lev = LEVELS[0];
   writeFileSync(join(dir, "mine.json"), JSON.stringify({
-    id: "1645", name: "plan z 1645", depth: lev.depth + 0.1, tourist: lev.tourist, elevation: r2(COLLAR - lev.depth), chambers: 234, generated: 0, cap: 0, historic: true,
-    note: "poziom I na planie Willema Hondiusa z 1645 r. według pomiarów Marcina Germana z 1638 r., dopasowanym do szybów Regis, Daniłowicza i Górsko",
+    id: "1645", name: "1645 plan", depth: lev.depth + 0.1, tourist: lev.tourist, elevation: r2(COLLAR - lev.depth), chambers: 234, generated: 0, cap: 0, historic: true,
+    note: "level I on Willem Hondius's 1645 plan after Marcin German's 1638 survey, fitted on the Regis, Daniłowicz and Górsko shafts",
     fit: { scale: r2(Math.hypot(p, q)), turn: r2((Math.atan2(q, p) * 180) / Math.PI), residuals: res.map(r2) },
     extent: corners.map(([x, y]) => [r2(x), r2(y)]), labels,
   }));

@@ -358,7 +358,7 @@ document.getElementById("credits")!.innerHTML = [
   } as Record<string, string>)[REGION] ?? `<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`,
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
   // the salt mine's levels (mine.ts): Hondius's 1645 plan; the facts' sources are listed in the mine panel
-  ...(files.mine ? [`Kopalnia: plan <a href="https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg">W. Hondiusa 1645</a> (domena publiczna)`] : []),
+  ...(files.mine ? [`Salt mine: plan by <a href="https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg">W. Hondius, 1645</a> (public domain)`] : []),
   // the method to recreate the derived database (ODbL) and the code
   `<a href="https://github.com/krasun/isometricworld">Source</a>`,
   // the region's maker: Stuttgart was built by Lukas Hermann, Wieliczka by Maciek Chmura
