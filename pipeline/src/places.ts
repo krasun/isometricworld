@@ -36,6 +36,8 @@ export interface Region {
   };
   /** Small airfield with light aircraft taking off, flying its routes and landing (optional). web/src/scripts/sky.ts. */
   airfield?: Airfield;
+  /** Rotating rooftop signs, drawn in 3D over the map (web/src/scripts/sky.ts `Signs`). */
+  signs?: RoofSign[];
   /** Credit lines (video mode and footer). */
   credits: string[];
   /** Geoid undulation at the origin (EGM2008, m): sea level as ellipsoid height. */
@@ -73,6 +75,13 @@ type Fix = [number, number] | [number, number, number];
  *   arrival    one of `entries` (fades in), `in`, land
  *   circuit    take off, `out`, `circuit`, `in`, land
  */
+/** A three-pointed star in a ring on a mast, turning about the vertical (the Bonatzbau tower's). */
+export interface RoofSign {
+  /** foot of the mast: roof centre, ellipsoid height (m) */
+  lat: number; lon: number; h: number;
+  diameterM: number; mastM: number; rpm: number;
+}
+
 export interface Airfield {
   /** threshold of the landing/take-off direction and the far runway end: [lat, lon, ellipsoid h] */
   runway: [[number, number, number], [number, number, number]];
@@ -155,6 +164,10 @@ export const REGIONS: Record<string, Region> = {
       in: [[48.8483, 9.2683, 250]], // OEFFINGEN 48°50.9' 9°16.1'
       entries: [[[48.8498, 9.3218, 400]], [[48.8350, 9.2840, 400]]], // from the east, from the south
     },
+    // the star on the Hauptbahnhof's Bonatzbau tower (since 1952; taken down in 2021 for Stuttgart 21, due back on
+    // the restored tower): tower roof centre and height from LGL LoD2 (56 m tower, roof 346.4 m ellipsoid);
+    // ~5 m across in reality, drawn 8 m so it reads on the map; turning slowly
+    signs: [{ lat: 48.783379, lon: 9.182763, h: 346.4, diameterM: 8, mastM: 1.5, rpm: 6 }],
     osmExtract: "https://download.geofabrik.de/europe/germany/baden-wuerttemberg/stuttgart-regbez-latest.osm.pbf",
     geoidM: 48.4, // EGM2008 at Schlossplatz (GeographicLib GeoidEval: 48.373 m)
     groundH: 300, // Kessel floor ~245 m NHN + geoid

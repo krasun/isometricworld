@@ -265,14 +265,24 @@ if (region.sources === "lgl") {
     over.push({ r: rings, b: [Math.min(...all.map((q) => q[0])), Math.min(...all.map((q) => q[1])), Math.max(...all.map((q) => q[0])), Math.max(...all.map((q) => q[1]))] });
   }
   const overWater = (p: P2) => over.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && r.filter((q) => inside(p, q)).length % 2 === 1);
-  let masked = 0, bridged = 0;
+  // Tall buildings: where the surface model and the LoD2 walls disagree by a metre or two, the wall's top
+  // edge reads as a tall, slim crown beside it (the Bonatzbau tower grew a row of 55 m "trees").
+  const tall = meshes.filter((b) => b.height > 25).flatMap((b) => b.utm.map((r) => {
+    const xs = r.map((q) => q[0]), ys = r.map((q) => q[1]);
+    return { r, h: b.height, box: [Math.min(...xs) - 4, Math.min(...ys) - 4, Math.max(...xs) + 4, Math.max(...ys) + 4] };
+  }));
+  const wallEdge = (c: { e: number; n: number; h: number }) => tall.some(({ r, h, box }) => c.h > 0.6 * h &&
+    c.e >= box[0] && c.e <= box[2] && c.n >= box[1] && c.n <= box[3] && (inside([c.e, c.n], r) || r.some((q, i) => segDist([c.e, c.n], r[(i + r.length - 1) % r.length], q) < 4)));
+  let masked = 0, bridged = 0, edges = 0;
   for (const c of cs) {
     const [lat, lon] = fromUtm(c.e, c.n), p = toEnu(lon, lat);
     if (onDeck([p[0], p[1]]) || overWater([p[0], p[1]])) { bridged++; continue; }
-    if ((c.r < 4 || c.h < 8) && noTrees.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && inside([p[0], p[1]], r))) { masked++; continue; }
+    if (wallEdge(c)) { edges++; continue; }
+    // there, cranes and masts are tall and slim: a tree is wide for its height and under ~25 m
+    if ((c.r < 4 || c.h < 8 || c.h > 25 || c.h > 6 * c.r) && noTrees.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && inside([p[0], p[1]], r))) { masked++; continue; }
     trees.push([p[0], p[1], c.r, Math.max(c.r * 0.6 + 1, c.h - c.r * 0.85)]);
   }
-  console.log(`  ndom1 tree crowns: ${cs.length - masked - bridged} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water)`);
+  console.log(`  ndom1 tree crowns: ${cs.length - masked - bridged - edges} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water, ${edges} tall-building edges)`);
 }
 
 // 2. OSM buildings where the municipal layer has nothing (Ramat Gan, Givatayim, Bnei Brak…).

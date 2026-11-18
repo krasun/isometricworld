@@ -9,7 +9,7 @@ export type ToScreen = (x: number, y: number) => [number, number];
 
 import { ink } from "./ink.ts";
 import { ecefToEnu, llhToEcef } from "../../../pipeline/src/camera.ts";
-import type { Airfield } from "../../../pipeline/src/places.ts";
+import type { Airfield, RoofSign } from "../../../pipeline/src/places.ts";
 
 /** The region's airport: runway threshold and heading (places.ts, passed on in world.json). */
 export interface Airport {
@@ -99,6 +99,97 @@ export function airliner(ctx: CanvasRenderingContext2D, body: string, wing: stri
 }
 
 interface Flock { p: Vec3; h: number; turn: number; timer: number; birds: Array<[number, number, number, number]> }
+
+/**
+ * Rotating rooftop signs (places.ts `signs`): a faceted three-pointed star in a ring on a mast, turning about the
+ * vertical. Real 3D: the polygons are rotated, lit by the sun (south-west, high, as the shadows) and depth-sorted
+ * along the camera's line of sight every frame, so the star turns edge-on and back.
+ */
+export class Signs {
+  private items: Array<{ foot: Vec3; c: Vec3; R: number; mast: number; w: number; a: number }>;
+  private look: Vec3; // camera viewing direction (into the scene)
+  private sun: Vec3;
+  constructor(private M: number[][], signs: RoofSign[]) {
+    this.items = signs.map((s) => {
+      const e = ecefToEnu(llhToEcef(s.lat, s.lon, s.h)), R = s.diameterM / 2;
+      return { foot: [e[0], e[1], e[2]], c: [e[0], e[1], e[2] + s.mastM + R], R, mast: s.mastM, w: (2 * Math.PI * s.rpm) / 60, a: 0 };
+    });
+    const [a, b] = M; // the projection's null direction is the line of sight; it points down into the scene
+    let v: Vec3 = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    if (v[2] > 0) v = [-v[0], -v[1], -v[2]];
+    this.look = norm(v);
+    this.sun = norm([-0.25, -0.35, 1]);
+  }
+
+  step(dt: number) {
+    for (const s of this.items) s.a = (s.a + s.w * Math.min(dt, 0.1)) % (2 * Math.PI);
+  }
+
+  draw(ctx: CanvasRenderingContext2D, toScreen: ToScreen, view: number[]) {
+    const M = this.M, proj = (q: Vec3) => toScreen(M[0][0] * q[0] + M[0][1] * q[1] + M[0][2] * q[2], M[1][0] * q[0] + M[1][1] * q[1] + M[1][2] * q[2]);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    for (const s of this.items) {
+      const o = proj(s.c), top = proj([s.c[0], s.c[1], s.c[2] + 1]), perM = Math.hypot(top[0] - o[0], top[1] - o[1]);
+      if (s.R * perM < 1.5 || !inView(o, view, s.R * perM + 20)) continue;
+      const cs = Math.cos(s.a), sn = Math.sin(s.a), R = s.R;
+      // local (u across, v up, t through the plane) → ENU
+      const P = (u: number, v: number, t: number): Vec3 => [s.c[0] + (u * cs - t * sn) * R, s.c[1] + (u * sn + t * cs) * R, s.c[2] + v * R];
+      const polys: Vec3[][] = [];
+      // the star: three arms, each a low pyramid on both faces (ridge from the raised centre to the tip)
+      for (let k = 0; k < 3; k++) {
+        const f = Math.PI / 2 + (k * 2 * Math.PI) / 3, tip = [Math.cos(f) * 0.97, Math.sin(f) * 0.97];
+        const l = [Math.cos(f + Math.PI / 3) * 0.19, Math.sin(f + Math.PI / 3) * 0.19], r = [Math.cos(f - Math.PI / 3) * 0.19, Math.sin(f - Math.PI / 3) * 0.19];
+        for (const t of [0.13, -0.13]) {
+          polys.push([P(0, 0, t), P(tip[0], tip[1], 0), P(l[0], l[1], 0)]);
+          polys.push([P(0, 0, t), P(tip[0], tip[1], 0), P(r[0], r[1], 0)]);
+        }
+      }
+      // the ring: both faces and the outer rim, in 32 segments
+      const N = 32, r0 = 0.95, r1 = 1.08, h = 0.05;
+      for (let k = 0; k < N; k++) {
+        const g0 = (k / N) * 2 * Math.PI, g1 = ((k + 1) / N) * 2 * Math.PI, c0 = Math.cos(g0), s0 = Math.sin(g0), c1 = Math.cos(g1), s1 = Math.sin(g1);
+        for (const t of [h, -h]) polys.push([P(c0 * r0, s0 * r0, t), P(c0 * r1, s0 * r1, t), P(c1 * r1, s1 * r1, t), P(c1 * r0, s1 * r0, t)]);
+        polys.push([P(c0 * r1, s0 * r1, h), P(c1 * r1, s1 * r1, h), P(c1 * r1, s1 * r1, -h), P(c0 * r1, s0 * r1, -h)]);
+      }
+      // the mast (dark, behind everything it holds)
+      const m0 = proj(s.foot), m1 = proj([s.c[0], s.c[1], s.c[2] - R * 0.95]);
+      const ink = Math.max(1.5, Math.min(3, 0.12 * R * perM)); // the map's dark outline, in screen pixels
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "#1c1f24"; ctx.lineWidth = Math.max(1, 0.35 * perM) + 2 * ink;
+      ctx.beginPath(); ctx.moveTo(m0[0], m0[1]); ctx.lineTo(m1[0], m1[1]); ctx.stroke();
+      ctx.strokeStyle = "#5a6068"; ctx.lineWidth = Math.max(1, 0.35 * perM);
+      ctx.beginPath(); ctx.moveTo(m0[0], m0[1]); ctx.lineTo(m1[0], m1[1]); ctx.stroke();
+      // far to near along the line of sight; each face lit as seen (double-sided chrome)
+      const L = this.look, depth = (p: Vec3[]) => p.reduce((d, q) => d + q[0] * L[0] + q[1] * L[1] + q[2] * L[2], 0) / p.length;
+      polys.sort((p, q) => depth(q) - depth(p));
+      ctx.lineJoin = "round";
+      // ink first: every face stroked wide in the dark outline colour, so only the silhouette's rim stays dark
+      ctx.fillStyle = ctx.strokeStyle = "#1c1f24"; ctx.lineWidth = 2 * ink;
+      for (const p of polys) {
+        ctx.beginPath();
+        p.forEach((q, i) => { const [x, y] = proj(q); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+      ctx.lineWidth = 0.6;
+      for (const p of polys) {
+        const e1 = sub(p[1], p[0]), e2 = sub(p[2], p[0]);
+        let n = norm([e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]);
+        if (n[0] * L[0] + n[1] * L[1] + n[2] * L[2] > 0) n = [-n[0], -n[1], -n[2]]; // the face seen
+        const lam = Math.max(0, n[0] * this.sun[0] + n[1] * this.sun[1] + n[2] * this.sun[2]);
+        const hv = norm([this.sun[0] - L[0], this.sun[1] - L[1], this.sun[2] - L[2]]); // glint
+        const spec = Math.pow(Math.max(0, n[0] * hv[0] + n[1] * hv[1] + n[2] * hv[2]), 24);
+        const v = Math.min(1, 0.32 + 0.55 * lam + 0.5 * spec);
+        const col = `rgb(${Math.round(70 + 180 * v)},${Math.round(76 + 178 * v)},${Math.round(86 + 172 * v)})`;
+        ctx.fillStyle = col; ctx.strokeStyle = col;
+        ctx.beginPath();
+        p.forEach((q, i) => { const [x, y] = proj(q); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+    }
+  }
+}
+const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const norm = (v: Vec3): Vec3 => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
 
 export class Parrots {
   private flocks: Flock[] = [];
