@@ -286,8 +286,11 @@ const FAL_QUALITY = process.env.PAINT_QUALITY ?? "high";
 const GOOGLE = /nano-banana|gemini/.test(FAL_ENDPOINT);
 const BUDGET = Number(process.env.PAINT_BUDGET_USD) || Infinity;
 const SPEND = join(base, "paint-spend.jsonl");
-let spent = existsSync(SPEND) ? readFileSync(SPEND, "utf8").split("\n").filter(Boolean).reduce((a, l) => a + (JSON.parse(l).usd || 0), 0) : 0;
-const overBudget = () => BACKEND === "fal" && spent >= BUDGET;
+const spendLog: Array<{ usd?: number }> = existsSync(SPEND) ? readFileSync(SPEND, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+let spent = spendLog.reduce((a, l) => a + (l.usd || 0), 0);
+/** cost held back for calls in flight (-j workers call at once): the most one call has cost so far, $0.20 before any */
+let reserved = 0, perCall = Math.max(0.2, ...spendLog.map((l) => l.usd || 0));
+const overBudget = () => BACKEND === "fal" && spent + reserved + perCall > BUDGET;
 
 /**
  * USD per billable unit of the endpoint (fal's pricing API): gpt-image-2.6 and Nano Banana 2.1 bill in dollar units,
@@ -311,30 +314,51 @@ async function falPaint(cwd: string, prompt: string, id: string): Promise<void> 
     + "finely drawn tree crowns, the same light ground showing between them, the same colours and brightness. No part of the "
     + "result may keep the flat, chunky look of the 3D render: it must be impossible to tell where the strips end.";
   const uri = (f: string) => `data:image/png;base64,${readFileSync(join(cwd, f)).toString("base64")}`;
+  let r: Response | undefined, j: any = {}, usd = 0;
   for (let attempt = 1; attempt <= 5; attempt++) {
+    if (overBudget()) { writeFileSync(log, `budget of $${BUDGET} reached`); return; }
+    const hold = perCall;
+    reserved += hold;
     try {
-      const r = await fetch(`https://fal.run/${FAL_ENDPOINT}`, {
+      r = await fetch(`https://fal.run/${FAL_ENDPOINT}`, {
         method: "POST", headers: { Authorization: `Key ${process.env.FAL_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: text, image_urls: ["input.png", "height.png", "style.png", "trees.png"].map(uri),
           num_images: 1, output_format: "png",
           ...(GOOGLE ? { aspect_ratio: "1:1", resolution: "1K", ...(process.env.PAINT_THINKING ? { thinking_level: process.env.PAINT_THINKING } : {}) } : { image_size: { width: WIN, height: WIN }, quality: FAL_QUALITY }) }),
         signal: AbortSignal.timeout(600_000),
       });
-      const units = Number(r.headers.get("x-fal-billable-units") ?? 0), usd = units * (await unitPrice());
+      const units = Number(r.headers.get("x-fal-billable-units") ?? 0);
+      usd = units * (await unitPrice());
       spent += usd;
+      perCall = Math.max(perCall, usd);
       appendFileSync(SPEND, JSON.stringify({ window: id, usd, units, status: r.status, request: r.headers.get("x-fal-request-id"), at: new Date().toISOString() }) + "\n");
-      const j: any = await r.json().catch(() => ({}));
-      if (r.status === 429 || r.status >= 500) { writeFileSync(log, JSON.stringify(j)); await sleep(20_000 * attempt); continue; }
-      if (!r.ok || !j.images?.[0]?.url) { writeFileSync(log, JSON.stringify(j)); return; }
-      const img = Buffer.from(await (await fetch(j.images[0].url, { signal: AbortSignal.timeout(120_000) })).arrayBuffer());
+      j = await r.json().catch(() => ({}));
+    } catch (err) { // no response: nothing billed, call again
+      writeFileSync(log, String(err));
+      r = undefined;
+      await sleep(10_000 * attempt);
+      continue;
+    } finally {
+      reserved -= hold;
+    }
+    if (r.status === 429 || r.status >= 500) { writeFileSync(log, JSON.stringify(j)); await sleep(20_000 * attempt); continue; }
+    break;
+  }
+  if (!r || !r.ok || !j.images?.[0]?.url) { if (r) writeFileSync(log, JSON.stringify(j)); return; }
+  // the image is paid for: retry only its download, never the generation
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const d = await fetch(j.images[0].url, { signal: AbortSignal.timeout(120_000) });
+      if (!d.ok) throw new Error(`HTTP ${d.status}`);
+      const img = Buffer.from(await d.arrayBuffer());
       // Google's models pick their own pixel size for 1:1 at 1K: back to the window's
       const meta = await sharp(img).metadata();
       writeFileSync(join(cwd, "out.png"), meta.width === WIN && meta.height === WIN ? img : await sharp(img).resize(WIN, WIN, { fit: "fill" }).png().toBuffer());
       writeFileSync(log, `fal ${FAL_ENDPOINT} ${FAL_QUALITY} $${usd} request ${r.headers.get("x-fal-request-id")}`);
       return;
     } catch (err) {
-      writeFileSync(log, String(err));
-      await sleep(10_000 * attempt);
+      writeFileSync(log, `paid image ${j.images[0].url} not downloaded: ${String(err)}`);
+      await sleep(5_000 * attempt);
     }
   }
 }
