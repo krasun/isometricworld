@@ -664,18 +664,25 @@ async function main() {
     console.log(`  ${wins.length} windows over OSM 3D buildings; old paintings in ${keep}`);
   }
   if (!args.window && !OLDER && !args.assemble && !args.parts) {
-    // reuse what other areas of the region painted: this area's windows and their neighbours (for continuation)
+    // reuse what other areas of the region painted: this area's windows and their neighbours (for continuation).
+    // Each window is considered once (windows-reused.json): one this area has or had is never linked back, so a
+    // window deleted on purpose (a seam fix, a dark window dropped) is repainted, not restored from a sibling.
     const want = new Set<string>();
     for (const [i, j] of wins) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) want.add(`${i + di}_${j + dj}`);
+    const ledgerFile = join(base, "windows-reused.json");
+    const ledger = new Set<string>(existsSync(ledgerFile) ? readJson(ledgerFile) : []);
     let linked = 0;
     for (const k of want) {
+      if (ledger.has(k)) continue;
       const own = join(winDir, `${k}.png`);
-      if (existsSync(own)) continue;
+      if (existsSync(own)) { ledger.add(k); continue; }
       const sib = SIBLINGS.map((d) => join(d, "windows", `${k}.png`)).find((f) => existsSync(f));
-      if (!sib) continue;
+      if (!sib) continue; // not painted anywhere yet: a sibling may still paint it
       try { linkSync(sib, own); } catch { copyFileSync(sib, own); }
+      ledger.add(k);
       linked++;
     }
+    writeFileSync(ledgerFile, JSON.stringify([...ledger].sort()));
     if (linked) console.log(`  reused ${linked} windows painted by other areas of the region`);
   }
   if (args.assemble) {
