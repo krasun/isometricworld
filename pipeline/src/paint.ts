@@ -591,7 +591,7 @@ async function assemble(all = false, only?: Set<string>) {
   const edge = (k: number) => Math.min(1, Math.max(0, (k + 0.5 - (OVERLAP - FEATHER) / 2) / FEATHER));
   for (let k = 0; k < WIN; k++) ramp[k] = Math.min(edge(k), edge(WIN - 1 - k));
   mkdirSync(join(base, "paint"), { recursive: true });
-  let written = 0;
+  let written = 0, withdrawn: string | undefined;
   for (const k of tileSet) {
     const [tx, ty] = k.split("_").map(Number);
     const covering: Array<[number, number]> = [];
@@ -599,12 +599,20 @@ async function assemble(all = false, only?: Set<string>) {
       for (let i = Math.floor((tx * T - WIN) / STRIDE) + 1; i * STRIDE < (tx + 1) * T; i++) covering.push([i, j]);
     // a tile is painted as soon as one window covers it; where windows are missing the render shows through,
     // faded in across the window feather (no hard edge between the painted and the unpainted map)
+    // (only): nothing outside the given windows is touched
+    if (only && !covering.some(([i, j]) => only.has(`${i}_${j}`))) continue;
     const have = covering.filter(([i, j]) => existsSync(winFile(i, j)));
     const tile = join(base, "paint", `${tx}_${ty}.png`);
-    if (!have.length) { if (existsSync(tile)) rmSync(tile); continue; } // windows withdrawn: back to the render
+    if (!have.length) { // windows withdrawn: back to the render; the old tile moves aside, never deleted
+      if (existsSync(tile)) {
+        withdrawn ??= join(base, "paint-withdrawn", new Date().toISOString().slice(0, 19).replace(/:/g, "-"));
+        mkdirSync(withdrawn, { recursive: true });
+        renameSync(tile, join(withdrawn, `${tx}_${ty}.png`));
+      }
+      continue;
+    }
     const partial = have.length < covering.length;
-    // rebuilt when any covering window was (re)painted since, or (only) when it lies under the given windows
-    if (only && !covering.some(([i, j]) => only.has(`${i}_${j}`))) continue;
+    // rebuilt when any covering window was (re)painted since
     if (!only && existsSync(tile) && !args.force && !all && have.every(([i, j]) => mtime(winFile(i, j)) <= mtime(tile))) continue;
     const acc = new Float32Array(T * T * 3), wsum = new Float32Array(T * T);
     for (const [i, j] of have) {
