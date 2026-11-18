@@ -7,6 +7,7 @@
  *
  *   data/raw/zg3d/<dataset>.zip   the district's Shapefile zip, as published
  *   data/raw/zg3d/index.json      dataset -> bbox [s, w, n, e] (read from each .shp header)
+ *   data/raw/zg3d/<dataset>.centres.json  each record's offset, centre and lowest point (one pass, then reused)
  *
  * The GeoJSON downloads and the ArcGIS feature service only carry flat footprints; the Shapefile has the
  * real wall and roof faces. Their winding differs between buildings (most are wound inward, the Esri
@@ -14,7 +15,7 @@
  * outward, as in CityGML.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ecefToEnu, llhToEcef } from "./camera.ts";
 import { type Lod2Building, hashAlong, triangulate, type V3 } from "./lod2.ts";
@@ -84,30 +85,49 @@ function boxLatLon(b: BBox): BBox {
 
 const overlaps = (a: BBox, b: BBox) => a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
 
-/** Faces of one MultiPatch record: polygons (outer ring + holes) and loose triangles, as [lon, lat, h] points. */
-function* records(shp: Buffer, tm = false): Generator<{ id: number; polys: V3[][][] }> {
-  for (let o = 100; o + 8 <= shp.length;) {
-    const id = shp.readInt32BE(o), len = shp.readInt32BE(o + 4) * 2, b = o + 8;
-    o = b + len;
-    if (shp.readInt32LE(b) !== 31) continue;
-    const nParts = shp.readInt32LE(b + 36), nPts = shp.readInt32LE(b + 40);
-    const parts = b + 44, types = parts + 4 * nParts, xy = types + 4 * nParts, zs = xy + 16 * nPts + 16;
-    const pt = (i: number): V3 => {
-      const x = shp.readDoubleLE(xy + 16 * i), y = shp.readDoubleLE(xy + 16 * i + 8), z = shp.readDoubleLE(zs + 8 * i);
-      return tm ? [...htrs(x, y), z] : [x, y, z];
-    };
-    const polys: V3[][][] = [];
-    for (let p = 0; p < nParts; p++) {
-      const a = shp.readInt32LE(parts + 4 * p), e = p + 1 < nParts ? shp.readInt32LE(parts + 4 * (p + 1)) : nPts;
-      const type = shp.readInt32LE(types + 4 * p), pts: V3[] = [];
-      for (let i = a; i < e; i++) pts.push(pt(i));
-      if (type === 0) for (let i = 2; i < pts.length; i++) polys.push([i % 2 ? [pts[i - 1], pts[i - 2], pts[i]] : [pts[i - 2], pts[i - 1], pts[i]]]);
-      else if (type === 1) for (let i = 2; i < pts.length; i++) polys.push([[pts[0], pts[i - 1], pts[i]]]);
-      else if (type === 2 || type === 4) polys.push([pts]); // outer / first ring: a new face
-      else if (polys.length) polys[polys.length - 1].push(pts); // inner / ring: a hole in the current face
-    }
-    yield { id, polys };
+/** The MultiPatch record at byte `o`: polygons (outer ring + holes) and loose triangles, as [lon, lat, h] points. */
+function record(shp: Buffer, o: number, tm = false): { id: number; polys: V3[][][]; next: number } {
+  const id = shp.readInt32BE(o), len = shp.readInt32BE(o + 4) * 2, b = o + 8, next = b + len;
+  if (shp.readInt32LE(b) !== 31) return { id, polys: [], next };
+  const nParts = shp.readInt32LE(b + 36), nPts = shp.readInt32LE(b + 40);
+  const parts = b + 44, types = parts + 4 * nParts, xy = types + 4 * nParts, zs = xy + 16 * nPts + 16;
+  const pt = (i: number): V3 => {
+    const x = shp.readDoubleLE(xy + 16 * i), y = shp.readDoubleLE(xy + 16 * i + 8), z = shp.readDoubleLE(zs + 8 * i);
+    return tm ? [...htrs(x, y), z] : [x, y, z];
+  };
+  const polys: V3[][][] = [];
+  for (let p = 0; p < nParts; p++) {
+    const a = shp.readInt32LE(parts + 4 * p), e = p + 1 < nParts ? shp.readInt32LE(parts + 4 * (p + 1)) : nPts;
+    const type = shp.readInt32LE(types + 4 * p), pts: V3[] = [];
+    for (let i = a; i < e; i++) pts.push(pt(i));
+    if (type === 0) for (let i = 2; i < pts.length; i++) polys.push([i % 2 ? [pts[i - 1], pts[i - 2], pts[i]] : [pts[i - 2], pts[i - 1], pts[i]]]);
+    else if (type === 1) for (let i = 2; i < pts.length; i++) polys.push([[pts[0], pts[i - 1], pts[i]]]);
+    else if (type === 2 || type === 4) polys.push([pts]); // outer / first ring: a new face
+    else if (polys.length) polys[polys.length - 1].push(pts); // inner / ring: a hole in the current face
   }
+  return { id, polys, next };
+}
+
+/** One district's records: [byte offset, centre lat, centre lon, lowest point], from its cache or one full pass. */
+interface Centres { zipMtime: number; tm: boolean; recs: Array<[number, number, number, number]> }
+function centres(name: string): Centres {
+  const zip = join(DIR, `${name}.zip`), cache = join(DIR, `${name}.centres.json`), zipMtime = statSync(zip).mtimeMs;
+  if (existsSync(cache)) {
+    const c: Centres = readJson(cache);
+    if (c.zipMtime === zipMtime) return c;
+  }
+  const tm = projected(zip), shp = readShp(zip), recs: Centres["recs"] = [];
+  for (let o = 100; o + 8 <= shp.length;) {
+    const rec = record(shp, o, tm);
+    let lon = 0, lat = 0, n = 0, z = Infinity;
+    for (const poly of rec.polys) for (const p of poly[0]) { lon += p[0]; lat += p[1]; n++; z = Math.min(z, p[2]); }
+    if (n) recs.push([o, lat / n, lon / n, z]);
+    o = rec.next;
+  }
+  const c = { zipMtime, tm, recs };
+  writeFileSync(`${cache}.tmp`, JSON.stringify(c));
+  renameSync(`${cache}.tmp`, cache);
+  return c;
 }
 
 /**
@@ -119,14 +139,7 @@ export function zg3dBases(bbox: BBox, index: Record<string, BBox>): Array<[numbe
   const [S, W, N, E] = bbox, out: Array<[number, number, number]> = [];
   for (const [name, box] of Object.entries(index)) {
     if (!overlaps(boxLatLon(box), bbox)) continue;
-    const zip = join(DIR, `${name}.zip`);
-    for (const rec of records(readShp(zip), projected(zip))) {
-      let lon = 0, lat = 0, n = 0, z = Infinity;
-      for (const poly of rec.polys) for (const p of poly[0]) { lon += p[0]; lat += p[1]; n++; z = Math.min(z, p[2]); }
-      if (!n) continue;
-      lon /= n; lat /= n;
-      if (lat >= S && lat <= N && lon >= W && lon <= E) out.push([lat, lon, z]);
-    }
+    for (const [, lat, lon, z] of centres(name).recs) if (lat >= S && lat <= N && lon >= W && lon <= E) out.push([lat, lon, z]);
   }
   return out;
 }
@@ -206,13 +219,12 @@ export function zg3dBuildings(bbox: BBox, geoid: number, index: Record<string, B
   const [S, W, N, E] = bbox, out: Lod2Building[] = [];
   for (const [name, box] of Object.entries(index)) {
     if (!overlaps(boxLatLon(box), bbox)) continue;
-    const zip = join(DIR, `${name}.zip`);
-    for (const rec of records(readShp(zip), projected(zip))) {
-      let lon = 0, lat = 0, n = 0;
-      for (const poly of rec.polys) for (const p of poly[0]) { lon += p[0]; lat += p[1]; n++; }
-      if (!n) continue;
-      lon /= n; lat /= n;
-      if (lat < S || lat > N || lon < W || lon > E) continue;
+    // only districts with a building centred in the box are unzipped, and only those records parsed
+    const c = centres(name), inside = c.recs.filter(([, lat, lon]) => lat >= S && lat <= N && lon >= W && lon <= E);
+    if (!inside.length) continue;
+    const shp = readShp(join(DIR, `${name}.zip`));
+    for (const [o, lat, lon] of inside) {
+      const rec = record(shp, o, c.tm);
       const b = building(`${name}/${rec.id}`, rec.polys, [lat, lon], geoid);
       if (b) out.push(b);
     }
