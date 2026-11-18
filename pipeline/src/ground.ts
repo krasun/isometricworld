@@ -465,6 +465,59 @@ if (region.sources === "gugik") {
   }
 }
 
+// GUGiK NMT is bare earth with every structure taken out, a short underpass's roof too: a road or track over a tunnel
+// (OSM tunnel=yes; the way above is rarely tagged a bridge) would dip into the cutting it crosses and step out of it.
+// Along each tunnel, between its portals, every cross-section is filled from crest to crest: walking out from the
+// tunnel's axis on each side, over the flat road bed (and up to 8 m of verges) and up the cutting's wall to where the
+// ground stops rising, the surface between the two crests becomes a straight slope from one to the other. Only ever
+// raised (a tunnel under a hill keeps its hill), never past a crest; water is left alone.
+if (region.sources === "gugik") {
+  const h0 = h.slice(), at = (x: number, y: number) => {
+    const fx = Math.min(grid.nx - 1.001, Math.max(0, (x - grid.x0) / STEP)), fy = Math.min(grid.ny - 1.001, Math.max(0, (y - grid.y0) / STEP));
+    const ix = Math.floor(fx), iy = Math.floor(fy), ax = fx - ix, ay = fy - iy, i = iy * grid.nx + ix;
+    return (h0[i] * (1 - ax) + h0[i + 1] * ax) * (1 - ay) + (h0[i + grid.nx] * (1 - ax) + h0[i + grid.nx + 1] * ax) * ay;
+  };
+  const step = STEP / 2;
+  let tunnels = 0, cells = 0;
+  for (const file of ["roads.json", "rails.json"]) {
+    const f = join(RAW, name, file);
+    if (!existsSync(f)) continue;
+    for (const el of readJson(f).elements ?? []) {
+      const t: Record<string, string> = el.tags ?? {};
+      if (el.type !== "way" || t.tunnel !== "yes" || !el.geometry || el.geometry.length < 2 || t.location === "underground") continue;
+      const l = geom(el.geometry), road = (t.highway ? roadWidth(t) : 5) / 2;
+      let raised = 0;
+      for (let s = 1; s < l.length; s++) {
+        const [a, b] = [l[s - 1], l[s]], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (L < 0.5) continue;
+        const ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L, nx = -uy, ny = ux;
+        for (let al = 0; al <= L; al += step) {
+          const px = a[0] + ux * al, py = a[1] + uy * al;
+          /** the crest on one side: [height, distance from the axis] */
+          const crest = (sg: number) => {
+            let best = at(px, py), dist = 0;
+            for (let d = step; d <= road + 20; d += step) {
+              const v = at(px + nx * d * sg, py + ny * d * sg);
+              if (v > best + 0.05) { best = v; dist = d; } else if (d > road + 8 && d - dist > 4.5) break; // past the verges
+            }
+            return [best, dist];
+          };
+          const [lv, ld] = crest(1), [rv, rd] = crest(-1);
+          if (ld + rd < 2) continue;
+          for (let d = -rd; d <= ld; d += step / 2) {
+            const ix = Math.round((px + nx * d - grid.x0) / STEP), iy = Math.round((py + ny * d - grid.y0) / STEP);
+            if (ix < 0 || iy < 0 || ix >= grid.nx || iy >= grid.ny) continue;
+            const i = iy * grid.nx + ix, lid = rv + ((lv - rv) * (d + rd)) / (ld + rd);
+            if (!isWater[i] && lid > h[i] + 0.3) { h[i] = lid; raised++; }
+          }
+        }
+      }
+      if (raised) { tunnels++; cells += raised; }
+    }
+  }
+  console.log(`  tunnels: ${tunnels} with their cutting under them filled crest to crest (${cells} cells)`);
+}
+
 // orthometric -> ellipsoid -> ENU up (Earth curvature drops the ellipsoid below the tangent plane)
 for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
   const x = grid.x0 + ix * STEP, y = grid.y0 + iy * STEP, i = iy * grid.nx + ix;
