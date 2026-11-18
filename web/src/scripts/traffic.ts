@@ -75,6 +75,8 @@ export class Traffic {
   private box2: Float32Array;
   private zone: number[] = [];           // ways in or near the view
   private inZone = new Uint8Array(0);    // 1 near the view, 2 on screen
+  private boxE: Float32Array;            // per way: ENU box [e0, n0, e1, n1]
+  private zoneE: number[] | null = null; // ENU box of the zone's ways: only trams near it are looked up
   private nextManage = 0;
   private nextId = 0;
   private lastView: number[] | null = null;
@@ -104,14 +106,17 @@ export class Traffic {
     this.weight = this.ways.map((w) => w.len * CLASS_WEIGHT[w.r.c]);
     const M = this.enu2px;
     this.box2 = new Float32Array(this.ways.length * 4);
+    this.boxE = new Float32Array(this.ways.length * 4);
     this.ways.forEach((way, w) => {
-      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, e0 = Infinity, n0 = Infinity, e1 = -Infinity, n1 = -Infinity;
       for (let i = 0; i < way.n; i++) {
         const e = way.r.s[i * 4], n = way.r.s[i * 4 + 1], u = way.r.s[i * 4 + 2];
         const x = M[0][0] * e + M[0][1] * n + M[0][2] * u, y = M[1][0] * e + M[1][1] * n + M[1][2] * u;
         x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+        e0 = Math.min(e0, e); e1 = Math.max(e1, e); n0 = Math.min(n0, n); n1 = Math.max(n1, n);
       }
       this.box2.set([x0, y0, x1, y1], w * 4);
+      this.boxE.set([e0, n0, e1, n1], w * 4);
     });
     this.inZone = new Uint8Array(this.ways.length);
   }
@@ -125,14 +130,17 @@ export class Traffic {
   private manage([ax0, ay0, ax1, ay1]: number[]) {
     const mx = (ax1 - ax0) * 0.5, my = (ay1 - ay0) * 0.5, B = this.box2;
     this.zone = [];
-    let total = 0;
+    let total = 0, e0 = Infinity, n0 = Infinity, e1 = -Infinity, n1 = -Infinity;
     for (let w = 0; w < this.ways.length; w++) {
       const x0 = B[w * 4], y0 = B[w * 4 + 1], x1 = B[w * 4 + 2], y1 = B[w * 4 + 3];
       if (x1 < ax0 - mx || x0 > ax1 + mx || y1 < ay0 - my || y0 > ay1 + my) { this.inZone[w] = 0; continue; }
       const vis = x1 >= ax0 && x0 <= ax1 && y1 >= ay0 && y0 <= ay1;
       this.inZone[w] = vis ? 2 : 1;
       this.zone.push(w); total += this.weight[w];
+      const E = this.boxE;
+      e0 = Math.min(e0, E[w * 4]); n0 = Math.min(n0, E[w * 4 + 1]); e1 = Math.max(e1, E[w * 4 + 2]); n1 = Math.max(n1, E[w * 4 + 3]);
     }
+    this.zoneE = this.zone.length ? [e0, n0, e1, n1] : null;
     const before = this.vehicles.length;
     this.vehicles = this.vehicles.filter((v) => { if (this.inZone[v.w]) return true; this.release(v); return false; });
     if (this.vehicles.length !== before) this.regroup();
@@ -299,8 +307,10 @@ export class Traffic {
     this.t += dt;
     this.regroup();
     this.tramGrid.clear();
-    // the trams now and in 2 and 4 s; each car in every 16 m cell its box touches
-    if (this.trams) for (const f of [0, 2, 4].flatMap((later) => this.trams!.footprints(0, 0, Infinity, later).map((f) => (later ? { ...f, soon: true } : f)))) {
+    // the trams near the zone (vehicles only drive there; 80 m: a car's look-ahead) now and in 2 and 4 s;
+    // each car in every 16 m cell its box touches
+    const Z = this.zoneE, ze = Z ? (Z[0] + Z[2]) / 2 : 0, zn = Z ? (Z[1] + Z[3]) / 2 : 0, zr = Z ? Math.max(Z[2] - Z[0], Z[3] - Z[1]) / 2 + 80 : 0;
+    if (this.trams && Z) for (const f of [0, 2, 4].flatMap((later) => this.trams!.footprints(ze, zn, zr, later).map((f) => (later ? { ...f, soon: true } : f)))) {
       const r = f.len / 2 + f.wid;
       for (let x = Math.floor((f.x - r) / 16); x <= Math.floor((f.x + r) / 16); x++)
         for (let y = Math.floor((f.y - r) / 16); y <= Math.floor((f.y + r) / 16); y++) {
