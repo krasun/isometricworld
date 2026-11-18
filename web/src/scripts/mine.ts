@@ -39,14 +39,8 @@ const wrap = (text: string, n: number) => text.split(" ").reduce<string[]>((line
 const NOT_AFFILIATED = "An independent project, not affiliated with the Wieliczka Salt Mine (Kopalnia Soli „Wieliczka” S.A.).";
 
 const CSS = `
-#mine-toggle { position: fixed; z-index: 10; top: calc(60px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
-  width: 40px; height: 40px; border: 0; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
-  background: rgba(255, 255, 255, 0.85); color: #555; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); touch-action: manipulation; }
-#mine-toggle.first { top: calc(12px + env(safe-area-inset-top, 0px)); }
-#mine-toggle[aria-pressed="true"] { background: #1f2a37; color: #fff; }
-#mine-toggle:hover { filter: brightness(1.08); }
 #mine-panel[hidden] { display: none; }
-body.video #mine-toggle, body.video #mine-panel, body.video #mine-info { display: none; }
+body.video #mine-panel, body.video #mine-info { display: none; }
 #mine-panel { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); z-index: 20; display: flex; flex-direction: column; align-items: stretch;
   gap: 2px; padding: 8px 6px; border-radius: 12px; background: rgba(18,17,15,0.82); backdrop-filter: blur(6px); color: #eee7d6;
   font: 500 12px/1.2 ui-sans-serif, system-ui, sans-serif; box-shadow: 0 4px 18px rgba(0,0,0,0.35); user-select: none; max-height: 86vh; }
@@ -121,7 +115,7 @@ export class Mine {
       this.buttons.push(b);
     });
     document.getElementById("map")!.appendChild(panel);
-    // the button: crossed hammer and pick, the miners' sign; under the tilt-shift button where there is one
+    // the button: crossed hammer and pick, the miners' sign; in the corner column under tilt-shift
     const t = (this.toggleButton = document.createElement("button"));
     t.id = "mine-toggle";
     t.type = "button";
@@ -129,9 +123,8 @@ export class Mine {
     t.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="currentColor">
       <g transform="rotate(45 12 12)"><rect x="11.15" y="6" width="1.7" height="15.5" rx="0.85"/><rect x="8.2" y="2.6" width="7.6" height="4.2" rx="0.9"/></g>
       <g transform="rotate(-45 12 12)"><rect x="11.15" y="5" width="1.7" height="16.5" rx="0.85"/><path d="M5.6 6.6 Q12 1.8 18.4 6.6 L18.4 7.4 Q12 4.6 5.6 7.4 Z"/></g></svg>`;
-    if (!document.getElementById("tilt-toggle")) t.classList.add("first");
     t.addEventListener("click", () => this.open(!this.isOpen));
-    document.body.appendChild(t);
+    (document.getElementById("corner-buttons") ?? document.body).appendChild(t); // MapPage.astro styles and orders them
     this.info = document.createElement("aside");
     this.info.id = "mine-info";
     this.info.hidden = true;

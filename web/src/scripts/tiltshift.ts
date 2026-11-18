@@ -2,7 +2,7 @@
  * Tilt-shift (places.ts `effects.tiltShift`): the map as a miniature. A sharp band across the middle of the
  * screen, the map blurring more and more towards the top and bottom edges: layers of backdrop blur over the
  * tiles and the overlay, each covering what lies further than its distance from the middle and fading in over
- * a ramp, so the blur grows in steps too soft to see. A button (top right) and the M key switch it on and off;
+ * a ramp, so the blur grows in steps too soft to see. A button (top right, #corner-buttons) and the M key switch it on and off;
  * the choice is remembered in this browser.
  */
 /** [blur in CSS px, where it starts (share of the screen height from the middle), its ramp (share)] */
@@ -39,7 +39,7 @@ export class TiltShift {
       <rect x="2.5" y="3.5" width="19" height="17" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
       ${dots(7.5)}<rect x="5" y="10.5" width="14" height="3" rx="1" fill="currentColor"/>${dots(16.5)}</svg>`;
     this.button.addEventListener("click", () => this.toggle());
-    document.body.appendChild(this.button);
+    (document.getElementById("corner-buttons") ?? document.body).appendChild(this.button);
     try { if (localStorage.getItem(KEY) === "off") this.set(false); } catch { /* storage blocked: on */ }
     this.set(this.on);
   }

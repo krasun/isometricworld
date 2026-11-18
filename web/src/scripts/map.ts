@@ -8,6 +8,7 @@ import { TiltShift } from "./tiltshift.ts";
 import type { Pigeons } from "./pigeons.ts";
 import { Foreground, type FgIndex } from "./foreground.ts";
 import type { Mine, MineData } from "./mine.ts";
+import type { Fly } from "./fly.ts";
 import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
@@ -145,6 +146,29 @@ if (modern && files.mine) Promise.all([import("./mine.ts"), json<MineData>(files
   });
   Object.assign(window as object, { __mine: mine });
 });
+// a biplane to fly over the map (effects.fly; fly.ts): the map follows it and stops panning by drag meanwhile
+let fly: Fly | null = null;
+if (REGIONS[REGION]?.effects?.fly) import("./fly.ts").then(({ Fly: Biplane }) => {
+  const gestures = viewer as unknown as { gestureSettingsMouse: { dragToPan: boolean; flickEnabled: boolean }; gestureSettingsTouch: { dragToPan: boolean; flickEnabled: boolean } };
+  const [[by0, bx0], [by1, bx1]] = world.bounds;
+  fly = new Biplane({
+    enu2px: world.enu2px,
+    groundZ: REGIONS[REGION].groundH,
+    bounds: [bx0, by0, bx1, by1],
+    center: () => { const c = base().viewportToImageCoordinates(viewer.viewport.getCenter(true)); return [c.x + ox, c.y + oy]; },
+    screenToGlobal: (sx, sy) => { const dpr = window.devicePixelRatio || 1; return [(sx * dpr - tx) / k, (sy * dpr - ty) / k]; },
+    follow: (x, y) => viewer.viewport.panTo(globalToViewport(x, y), true),
+    onChange: (flying) => {
+      for (const g of [gestures.gestureSettingsMouse, gestures.gestureSettingsTouch]) { g.dragToPan = !flying; g.flickEnabled = !flying; }
+      if (!flying) return;
+      if (mine?.underground) mine.open(false); // up from the mine to take off
+      // the plane is ~24 m across, like the map's houses: from farther out than ~1 km across, close in to take off
+      const dpr = window.devicePixelRatio || 1, across = ((canvas.clientWidth * dpr) / k) * CAMERA.mpp;
+      if (across > 1000) viewer.viewport.zoomTo(base().getContentSize().x / (600 / CAMERA.mpp));
+    },
+  }, document.getElementById("map")!);
+  Object.assign(window as object, { __fly: fly });
+});
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
@@ -257,6 +281,10 @@ function frame(t: number) {
   if (above) { // sky above everything: parakeets, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (planes) { planes.step(dt); planes.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
+  }
+  if (fly?.flying) { // over everything; down into the mine it lands
+    if (mine?.underground) fly.stop();
+    else { fly.step(dt); fly.draw(ctx, toScreen); }
   }
   mine?.draw(ctx, toScreen, px, dpr, [0, 0, w, hgt]);
   if (showBorders || k / dpr < 0.05) drawBorders(dpr); // borders appear automatically far out
