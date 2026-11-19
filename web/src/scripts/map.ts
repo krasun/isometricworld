@@ -333,6 +333,8 @@ document.getElementById("credits")!.innerHTML = [
         `<a href="https://data.gov.hr/otvorena-dozvola">Otvorena dozvola</a>, izmijenjeno`]
       : [`<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`]),
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
+  // painted regions say so (their credits in places.ts carry the label for clips too); Stuttgart is drawn procedurally
+  ...(REGIONS[REGION].credits.some((c) => /painted with ai/i.test(c)) ? ["Painted with AI"] : []),
   // the method to recreate the derived database (ODbL) and the code
   `<a href="https://github.com/krasun/isometricworld">Source</a>`,
   REGION === "stuttgart" // the Stuttgart region was built by Lukas Hermann
