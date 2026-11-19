@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 export const PIPELINE = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const ROOT = join(PIPELINE, "..");
-export const DATA = join(ROOT, "data");
+export const DATA = process.env.DATA_DIR || join(ROOT, "data"); // override: test runs against a scratch copy
 export const RAW = join(DATA, "raw");
 export const DERIVED = join(DATA, "derived");
 /** Built map data waiting to be published (served by the dev server over production); emptied by publish. */

@@ -19,6 +19,8 @@ Isometric city maps from open data, painted with AI. Read `README.md` (pipeline,
    (`pipeline/src/film.ts`) is running: hot reload breaks the capture.
 5. **Never delete `data/derived/`** (renders, height passes and, above all, paintings: hours of image
    generation each) or `data/web-state/` (what is published). `data/web/` is only the unpublished cache.
+   After painting, `npm run archive -- <region>` (README "Archive"); only the user decides to free local space,
+   and only after `npm run archive -- <region> --verify` passes.
 6. **Publishing is outward-facing**: `npm run publish` uploads to the production bucket, `npm run deploy` updates the live site. Run it only when the user
    asked for it; it asks `[y/N]` (`--yes` only with the user's go-ahead). **Working for a contributor** (not a
    maintainer of the production bucket): publish only to their review bucket (`TILES_BUCKET` in `.env`, README
@@ -40,6 +42,10 @@ Isometric city maps from open data, painted with AI. Read `README.md` (pipeline,
   export downloads when it's missing locally) and empties the cache. A contributor who publishes a region to
   their own bucket must include `state.json`. Tiles are AVIF only: don't build a WebP
   fallback for a new region (Tel Aviv's old WebP pyramid is legacy).
+- **Archive** (`pipeline/src/archive.ts`, README "Archive"): every file under `data/derived/` and `data/raw/` in
+  the private bucket `isometricworld-archive`, content-addressed. `npm run pull -- <region> shared --near <lat>,<lon>`
+  brings a patch to repaint; `npm run export -- <region> --partial` then rebuilds only the tiles whose sources are
+  here, and `npm run archive -- <region>` uploads only what changed.
 - **Area** (`AREAS` in `pipeline/src/areas.ts`): a bbox the pipeline fetches, renders and paints. Belongs
   to one region; CLIs call `openArea(name)`, which switches the camera to that region.
 

@@ -18,6 +18,8 @@
     "build": "npm -w web run build",
     "typecheck": "npm -w pipeline run typecheck && npm -w web run astro -- check",
     "publish": "npm -w pipeline run publish --",
+    "archive": "npm -w pipeline run archive --",
+    "pull": "npm -w pipeline run pull --",
     "deploy": "npm run build && npm -w pipeline exec tsx src/deploy.ts"
   },
   "allowScripts": {
