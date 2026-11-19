@@ -2,7 +2,7 @@
  * Social clip: a smooth, deterministic camera flight over the live viewer, rendered frame by frame
  * (no screen recording, so no dropped frames) and encoded with ffmpeg.
  *
- *   npx tsx src/film.ts [url] [out.mp4] [--city tel-aviv-yafo] [--fps 60] [--size 1080 | WxH] [--seconds 14] [--blur 1] [--grain 5] [--preview]
+ *   npx tsx src/film.ts [url] [out.mp4] [--city tel-aviv-yafo] [--film <FILMS key, default: the city>] [--fps 60] [--size 1080 | WxH] [--seconds 14] [--blur 1] [--grain 5] [--preview]
  *
  * - --city picks the shot list (FILMS) and the title; the clip opens /<city> on the site. --film <name> picks
  *   another shot list of that city (e.g. --city zagreb --film zagreb-readme).
@@ -102,6 +102,13 @@ const FILMS: Record<string, Film> = {
     { at: [49.9836, 20.0550], scale: 0.7, hold: 1.3, note: "Szyb Daniłowicza, the mine's entrance, coaches in their parks" },
     { at: [49.98445, 20.0521], scale: 0.7, hold: 1.2, note: "the graduation tower (tężnia) and its lookout" },
     { at: [49.9825, 20.0585], scale: 0.12, hold: 2.4, out: 0, title: true, note: "the town on its hills (title)" },
+  ] },
+  // before/after: the same path rendered from production and from the dev cache (--city stuttgart --film stuttgart-before-after)
+  "stuttgart-before-after": { shots: [
+    { at: [48.7792, 9.1812], scale: 0.62, hold: 5.0, note: "Schlossplatz: Neues Schloss, Königsbau, Kunstgebäude, Landtag, Staatstheater" },
+    { at: [2040, 0], px: true, scale: 0.62, hold: 5.0, note: "Hauptbahnhof: the Bonatz building, the tracks, the S21 site" },
+    { at: [48.7950, 9.1960], scale: 0.3, note: "wide: through the Schlossgarten and Rosensteinpark" },
+    { at: [48.8050, 9.2045], scale: 0.55, hold: 5.0, note: "the Wilhelma (title)" },
   ] },
 };
 const FILM_NAME = (() => { const i = args.indexOf("--film"); return i >= 0 ? args[i + 1] : SLUG; })();

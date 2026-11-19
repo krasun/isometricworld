@@ -81,6 +81,12 @@ export interface StylePreset {
    *  (sheet metal) ones with standing seams down the slope, brick chimneys on homes' pitched roofs; false: plain tile
    *  courses, no chimneys. */
   roofDetail: boolean;
+  /** Lessons from AI repaints of the render (Stuttgart): the ground in the painted house style (green gardens and
+   *  parks, one dark asphalt with an ink kerb line, kerb shadows, bold markings, rounded inside corners; ponds with a
+   *  shore path; runways with markings and lights, mown grass strips; tracks on shared gravel beds with bold rails,
+   *  rail yards, platforms; page/ground.ts), bigger two-casement windows with stone surrounds and storey cornices,
+   *  darker bark and (without `trunks`) crowns stretched into ovals over a short trunk (page/renderer.ts). */
+  repaint: boolean;
   /** The post pass's ink: outlines darken a pixel by up to `strength` where the depth creases by `from` m (none) to `to`
    *  m (full) over 2 px; ambient occlusion darkens a fully occluded corner by `ao`. */
   ink: { strength: number; from: number; to: number; ao: number };
@@ -96,7 +102,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: false, roofDetail: false, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -129,6 +135,7 @@ export const STYLES = {
     streetFurniture: true,
     closedLines: true,
     roofDetail: true,
+    repaint: false,
     // crisper: lines from smaller creases and darker, deeper corners
     ink: { strength: 0.9, from: 0.2, to: 0.75, ao: 0.55 },
   },

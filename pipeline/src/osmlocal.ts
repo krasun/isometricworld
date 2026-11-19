@@ -111,7 +111,7 @@ export const FILTERS = {
   /** what the styled look takes from OSM: buildings (and parts) with roof/wall colour or material, min_height or a
    *  tower, and the landmarks of landmarks.ts by name */
   looks: ((type, t) => (type !== "node" && !!(t.building || t["building:part"])
-    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (type === "way" && (t.name ?? "") in TOWERS)
+    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (t.name ?? "") in TOWERS
     || (type !== "node" && STRUCTURES.some((s) => s.match(t)))) as OsmFilter,
   /** fountains: a surface model reads their sculptures as tree crowns */
   fountains: ((_type, t) => t.amenity === "fountain") as OsmFilter,
@@ -154,6 +154,7 @@ export const FILTERS = {
     (type === "way" && !!t.highway && !/yes|building_passage/.test(t.tunnel ?? ""))
     || (type === "way" && !!t["area:highway"])
     || (type === "way" && /^(rail|light_rail|tram)$/.test(t.railway ?? "") && t.tunnel !== "yes")
+    || (type === "way" && t.railway === "platform")
     || !!t.landuse || LEISURE.test(t.leisure ?? "") || NATURAL.test(t.natural ?? "") || !!t.water
     || t.waterway === "riverbank" || /^(parking|school|university|college|hospital|grave_yard)$/.test(t.amenity ?? "")
     || /^(pier|breakwater|groyne|bridge)$/.test(t.man_made ?? "") || t.place === "square"

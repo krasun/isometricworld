@@ -63,18 +63,20 @@ export function carried(l: P2[], i: 0 | 1, d: number): P2 {
  * weighted by 1 / path distance along the bridge ways, so a chain of ways is one straight deck instead of
  * sagging to the water at every joint. Rails and roads are solved on their own; footpath bridges after
  * them, pinned to a road deck where they meet one (a stair down to the river bank must not pull the road
- * down). ground.ts computes this once (ground/bridge-ends.json); the renderer, export and scene read it.
+ * down). `portals`: tunnel end nodes; a deck that runs straight into a tunnel ends at the terrain right there
+ * (the look-ahead of endHeight would climb the hill above the tunnel and leave the deck in mid-air).
+ * ground.ts computes this once (ground/bridge-ends.json); the renderer, export and scene read it.
  */
-export function bridgeEnds(ways: GraphWay[], ground: Ground) {
+export function bridgeEnds(ways: GraphWay[], ground: Ground, portals = new Set<number>()) {
   const out = new Map<number, number[]>();
-  solve(ways, ground, ["rail"], ["rail"], new Map(), out);
-  const road = solve(ways, ground, ["road"], ["road"], new Map(), out);
-  solve(ways, ground, ["path"], ["road", "path"], road, out);
+  solve(ways, ground, ["rail"], ["rail"], new Map(), out, portals);
+  const road = solve(ways, ground, ["road"], ["road"], new Map(), out, portals);
+  solve(ways, ground, ["path"], ["road", "path"], road, out, portals);
   return out;
 }
 
 /** deck heights of the bridge ways of `kinds` into `out`; returns the height at each bridge way end node */
-function solve(ways: GraphWay[], ground: Ground, kinds: GraphWay["kind"][], groundKinds: GraphWay["kind"][], pinned: Map<number, number>, out: Map<number, number[]>) {
+function solve(ways: GraphWay[], ground: Ground, kinds: GraphWay["kind"][], groundKinds: GraphWay["kind"][], pinned: Map<number, number>, out: Map<number, number[]>, portals: Set<number>) {
   const fixed = new Set<number>(), uses = new Map<number, number>(), adj = new Map<number, Array<[number, number]>>();
   const bridges = ways.filter((w) => w.bridge && kinds.includes(w.kind) && w.nodes.length >= 2 && w.nodes.length === w.l.length);
   for (const w of ways) if (!w.bridge && groundKinds.includes(w.kind)) for (const n of w.nodes) fixed.add(n);
@@ -87,9 +89,14 @@ function solve(ways: GraphWay[], ground: Ground, kinds: GraphWay["kind"][], grou
       adj.get(a)!.push([b, d]); adj.get(b)!.push([a, d]);
     }
   }
-  const own = (w: GraphWay, i: 0 | 1) => !w.ext ? (i ? endHeight(w.l.at(-1)!, w.l.at(-2)!, ground) : endHeight(w.l[0], w.l[1], ground))
-    : endHeight(carried(w.l, i, w.ext[i]), i ? w.l.at(-2)! : w.l[1], ground); // at the abutment it runs on to
   const endNode = (w: GraphWay, i: 0 | 1) => (i ? w.nodes.at(-1)! : w.nodes[0]);
+  const own = (w: GraphWay, i: 0 | 1) => {
+    const p = i ? w.l.at(-1)! : w.l[0];
+    const g = portals.has(endNode(w, i)) ? ground(p[0], p[1]) : null;
+    if (g !== null && Number.isFinite(g)) return g;
+    return w.ext ? endHeight(carried(w.l, i, w.ext[i]), i ? w.l.at(-2)! : w.l[1], ground) // at the abutment it runs on to
+      : i ? endHeight(p, w.l.at(-2)!, ground) : endHeight(p, w.l[1], ground);
+  };
   // abutments: a deck of another kind it meets, else the highest terrain any way ending there finds
   const abut = new Map<number, number>();
   for (const w of bridges) for (const i of [0, 1] as const) {

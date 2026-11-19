@@ -5,6 +5,7 @@
  *   npm run render -- tlv-core            # all tiles of an area
  *   npm run render -- tlv-core --only 0,5 # a single tile ("0,5;1,5" for several)
  *   npm run render -- tlv-core --parts    # the tiles under the buildings `scene --parts` swapped
+ *   npm run render -- tlv-core --box=31,12,39,15 # the area's tiles in a box x0,y0,x1,y1 (inclusive)
  *   npm run render -- tlv-core -j 4       # parallel browser pages
  *
  * Output: data/derived/<area>/render/<tx>_<ty>.png  (1024² colour)
@@ -32,9 +33,11 @@ const { values: args, positionals } = parseArgs({
     j: { type: "string", default: "3" },
     only: { type: "string" },
     parts: { type: "boolean", default: false }, // re-render the tiles under the buildings scene.ts swapped (osm-parts.json)
+    box: { type: "string" },
     force: { type: "boolean", default: false },
     ss: { type: "string", default: "2" },
     markers: { type: "string", default: "" },
+    tex: { type: "boolean", default: false }, // AI roof tile sheet on clay roofs (style/textures, being tested)
   },
 });
 const areaName = positionals[0] ?? "rothschild";
@@ -43,11 +46,14 @@ const area = openArea(areaName);
 const COPERNICUS = "Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA";
 /** Sources of the render manifest, per region data source (places.ts `sources`). */
 const SOURCE: Record<string, string> = {
+  tlv: "Tel Aviv-Yafo Municipality open data",
   lgl: "Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (LoD2, DGM1, nDOM1; verändert)",
   zg3d: "Grad Zagreb, ZG3D 2022, data.zagreb.hr (Otvorena dozvola; izmijenjeno)",
   gugik: "Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK: modele 3D budynków LoD1/LoD2, BDOT10k, NMT, NMPT, ortofotomapa)",
 };
-export const ATTRIBUTIONS = ["© OpenStreetMap contributors (ODbL)", SOURCE[REGIONS[area.region].sources ?? ""] ?? "Tel Aviv-Yafo Municipality open data", COPERNICUS];
+// a region without its own source (OSM only) credits OSM and the terrain
+const SOURCE_CREDIT = SOURCE[REGIONS[area.region].sources ?? ""];
+export const ATTRIBUTIONS = ["© OpenStreetMap contributors (ODbL)", ...(SOURCE_CREDIT ? [SOURCE_CREDIT] : []), COPERNICUS];
 
 const T = CAMERA.tile;
 
@@ -72,14 +78,15 @@ async function openPage(browser: Awaited<ReturnType<typeof chromium.launch>>, di
   const groundDir = join(DERIVED, areaName, "ground");
   await page.route("http://iso.local/**", (route) => {
     const p = new URL(route.request().url()).pathname;
-    const file = p.startsWith("/ground/") ? join(groundDir, p.slice(8)) : join(dist, p === "/" ? "index.html" : p.slice(1));
+    const file = p.startsWith("/ground/") ? join(groundDir, p.slice(8))
+      : p.startsWith("/textures/") ? join(PIPELINE, "style", p.slice(1)) : join(dist, p === "/" ? "index.html" : p.slice(1));
     const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".json") ? "application/json" : file.endsWith(".bin") ? "application/octet-stream"
       : file.endsWith(".jpg") ? "image/jpeg" : file.endsWith(".png") ? "image/png" : "text/html";
     if (!existsSync(file)) return route.fulfill({ status: 404 });
     return route.fulfill({ body: readFileSync(file), contentType: type });
   });
   page.on("pageerror", (e) => console.error("  [page]", e.message));
-  await page.goto(`http://iso.local/?region=${area.region}&ss=${args.ss}&markers=${encodeURIComponent(args.markers!)}${area.mine ? `&mine=${area.mine}` : ""}`);
+  await page.goto(`http://iso.local/?region=${area.region}&ss=${args.ss}&markers=${encodeURIComponent(args.markers!)}${area.mine ? `&mine=${area.mine}` : ""}${args.tex ? "&tex=1" : ""}`);
   await page.waitForFunction(() => window.ready === true, null, { timeout: 30_000 });
   return page;
 }
@@ -169,6 +176,10 @@ async function main() {
   if (args.parts) {
     const boxes: number[][] = JSON.parse(readFileSync(join(outDir, "osm-parts.json"), "utf8")).map((p: { px: number[] }) => p.px);
     tiles = all.filter(([x, y]) => boxes.some(([a, b, c, d]) => x * T < c + 8 && (x + 1) * T > a - 8 && y * T < d + 8 && (y + 1) * T > b - 8));
+  }
+  if (args.box) {
+    const [bx0, by0, bx1, by1] = args.box.split(",").map(Number);
+    tiles = tiles.filter(([x, y]) => x >= bx0 && x <= bx1 && y >= by0 && y <= by1);
   }
   const todo = tiles.filter(([x, y]) => args.force || args.parts || !existsSync(join(outDir, "render", `${x}_${y}.png`)));
   console.log(`${areaName}: ${all.length} tiles, ${todo.length} to render`);

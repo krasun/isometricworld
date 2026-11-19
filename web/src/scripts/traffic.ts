@@ -29,6 +29,8 @@ export interface Road {
   s: number[];      // [e, n, u, visible] × samples (≈ 6 m apart)
 }
 
+import { ink } from "./ink.ts";
+
 type Vec3 = [number, number, number];
 /** a tram car's footprint in ENU: centre, unit heading, length, width; `soon`: where it will be in a few seconds */
 export interface Footprint { x: number; y: number; dx: number; dy: number; len: number; wid: number; soon?: boolean }
@@ -81,12 +83,18 @@ interface Park { node: number; ways: number[]; dist: Map<number, number>; parked
 export class Traffic {
   private ways: Way[] = [];
   private out = new Map<number, Array<{ w: number; dir: 1 | -1 }>>();
+  /** ways arriving at a node */
+  private into = new Map<number, number[]>();
   private vehicles: Vehicle[] = [];
   /** junction node -> approach (way) that has green, vehicles inside, when the green started */
   private nodeHold = new Map<number, { way: number; inside: number; start: number; last: number }>();
   /** ways meeting at a node: 2 = plain split of one road (no junction) */
   private degree = new Map<number, number>();
+  /** nodes where a way other than a one-way motorway/trunk (or its ramp) meets: the rest are merges/splits */
+  private street = new Set<number>();
   private lanes = new Map<string, Vehicle[]>(); // `${way}:${dir}:${lane}` -> sorted by s
+  /** merges: lane entered -> the last vehicle cleared into it that hasn't reached the node yet (zipper) */
+  private claims = new Map<string, Vehicle>();
   /** junction box radius per node: half the widest road meeting there + margin */
   private nodeR = new Map<number, number>();
   private t = 0;
@@ -127,11 +135,12 @@ export class Traffic {
       for (const n of [r.a, r.b]) {
         this.nodeR.set(n, Math.max(this.nodeR.get(n) ?? 0, R));
         this.degree.set(n, (this.degree.get(n) ?? 0) + 1);
+        if (r.c > 0 || r.o === 0) this.street.add(n);
       }
-      if (r.o >= 0) this.link(r.a, { w, dir: 1 });
-      if (r.o <= 0) this.link(r.b, { w, dir: -1 });
+      if (r.o >= 0) { this.link(r.a, { w, dir: 1 }); this.arrive(r.b, w); }
+      if (r.o <= 0) { this.link(r.b, { w, dir: -1 }); this.arrive(r.a, w); }
     }
-    for (const [n, d] of this.degree) if (d <= 2) this.nodeR.set(n, 0); // not a junction: no box, no stop line
+    for (const n of this.degree.keys()) if (!this.isJunction(n)) this.nodeR.set(n, 0); // no box, no stop line
     this.weight = this.ways.map((w) => w.len * CLASS_WEIGHT[w.r.c]);
     const M = this.enu2px;
     this.box2 = new Float32Array(this.ways.length * 4);
@@ -272,7 +281,7 @@ export class Traffic {
     }
     this.zoneE = this.zone.length ? [e0, n0, e1, n1] : null;
     const before = this.vehicles.length;
-    this.vehicles = this.vehicles.filter((v) => { if (this.inZone[v.w]) return true; this.release(v); return false; });
+    this.vehicles = this.vehicles.filter((v) => { if (this.inZone[v.w]) return true; this.release(v); v.next = null; return false; });
     if (this.vehicles.length !== before) this.regroup();
     const count = Math.round(Math.min(2500, (total / 55) * this.density));
     if (this.vehicles.length >= count) { if (this.parks.length) this.coachTick(); return; }
@@ -370,6 +379,29 @@ export class Traffic {
     this.out.get(node)!.push(e);
   }
 
+  private arrive(node: number, w: number) {
+    if (!this.into.has(node)) this.into.set(node, []);
+    this.into.get(node)!.push(w);
+  }
+
+  /**
+   * Lane on `next` (0 = rightmost). Through a street junction the lane number carries over. Elsewhere (motorway
+   * merges and splits, lane changes along one road) lanes line up from the left: a lane added on the right
+   * (acceleration or exit lane) shifts the through lanes over and a dropped one ends on the right; at a merge the
+   * approach with fewer lanes (the ramp) keeps the rightmost lanes.
+   */
+  private enterLane(v: Vehicle, next: { w: number; dir: 1 | -1 }) {
+    const to = this.ways[next.w].r.l;
+    if (v.bus || to <= 1) return 0;
+    const node = this.endNode(v), from = this.ways[v.w];
+    if (this.isJunction(node)) return Math.min(v.lane, to - 1);
+    const minor = (this.into.get(node) ?? []).some((u) => {
+      const o = this.ways[u];
+      return u !== v.w && (o.r.l > from.r.l || (o.r.l === from.r.l && o.w > from.w));
+    });
+    return Math.max(0, Math.min(to - 1, minor ? v.lane : v.lane + to - from.r.l));
+  }
+
   private regroup() {
     this.lanes.clear();
     for (const v of this.vehicles) {
@@ -411,11 +443,31 @@ export class Traffic {
     return from[k];
   }
 
-  /** Free space beyond the junction box at the start of `next`, in the lane we would enter. */
+  private laneKey(v: Vehicle, next: { w: number; dir: 1 | -1 }) {
+    return `${next.w}:${next.dir}:${this.enterLane(v, next)}`;
+  }
+  /** The lane group the vehicle enters on `next`. */
+  private nextLane(v: Vehicle, next: { w: number; dir: 1 | -1 }) { return this.lanes.get(this.laneKey(v, next)); }
+  /** Centre to the node at the end of its way (m). */
+  private toNode(v: Vehicle) { return this.ways[v.w].len - v.s; }
+
+  /** A vehicle from another approach cleared into the lane `v` would enter at a merge and still before the node. */
+  private rival(v: Vehicle) {
+    if (!v.next || (this.degree.get(this.endNode(v)) ?? 0) <= 2) return undefined;
+    const c = this.claims.get(this.laneKey(v, v.next));
+    if (!c || c === v || c.w === v.w || !c.through || !c.next || this.laneKey(c, c.next) !== this.laneKey(v, v.next)) return undefined;
+    return c;
+  }
+
+  /**
+   * Free space beyond the junction box at the start of `next`, in the lane we would enter. A plain split of one
+   * road (two ways meet) needs none: there is no other stream, and car following sees across it.
+   */
   private entryClear(v: Vehicle, next: { w: number; dir: 1 | -1 }) {
-    const lane = v.bus ? 0 : Math.min(v.lane, this.ways[next.w].r.l - 1);
-    const g = this.lanes.get(`${next.w}:${next.dir}:${lane}`);
-    return !g?.length || g[0].s - g[0].len / 2 > (this.nodeR.get(this.endNode(v)) ?? 4) + v.len + GAP;
+    const node = this.endNode(v);
+    if ((this.degree.get(node) ?? 0) <= 2) return true;
+    const g = this.nextLane(v, next);
+    return !g?.length || g[0].s - g[0].len / 2 > (this.nodeR.get(node) ?? 4) + v.len + GAP;
   }
 
   /** Distance from the vehicle's front to the stop line before the junction box ahead. */
@@ -423,7 +475,11 @@ export class Traffic {
     return this.ways[v.w].len - v.s - v.len / 2 - (this.nodeR.get(this.endNode(v)) ?? 4);
   }
 
-  private isJunction(node: number) { return (this.degree.get(node) ?? 0) > 2; }
+  /**
+   * A crossing with a box and green phases. Motorway merges and splits are not: cars flow through them
+   * at speed and only wait (gap acceptance) when the lane they enter is full.
+   */
+  private isJunction(node: number) { return (this.degree.get(node) ?? 0) > 2 && this.street.has(node); }
 
   /**
    * May the vehicle enter the junction ahead now? Vehicles from the same approach go together
@@ -432,7 +488,14 @@ export class Traffic {
   private grant(v: Vehicle) {
     if (!v.next || !this.entryClear(v, v.next)) return false;
     const node = this.endNode(v);
-    if (!this.isJunction(node)) { v.through = true; return true; }
+    if (!this.isJunction(node)) {
+      if ((this.degree.get(node) ?? 0) > 2) { // merge: zip in behind the other approach's last car, or claim the lane first
+        const c = this.rival(v);
+        if (c && Math.abs(this.toNode(v) - this.toNode(c)) < (c.len + v.len) / 2 + GAP) return false;
+        this.claims.set(this.laneKey(v, v.next), v);
+      }
+      v.through = true; return true;
+    }
     let hold = this.nodeHold.get(node);
     if (hold && hold.inside <= 0 && this.t - hold.last > 0.8) { this.nodeHold.delete(node); hold = undefined; }
     if (hold && this.t - hold.last > 10) { this.nodeHold.delete(node); hold = undefined; } // lost vehicle: reset
@@ -473,12 +536,21 @@ export class Traffic {
         let target = this.limit(v);
         if (v.stuck > 25) { this.respawn(v); continue; } // gridlock escape
         if (v.goal !== undefined && !v.leaving && !v.next) target = Math.min(target, Math.max(0, way.len - v.s - v.len / 2 - 1) * 0.6); // easing into the park
-        // car following: stay a safe gap behind the vehicle ahead in this lane
+        // car following: stay a safe gap behind the vehicle ahead in this lane, or (none left on this way) the
+        // last one that entered our lane of the next way, so traffic flows across way ends without stopping
         const lead = g[k + 1];
-        if (lead) {
-          const gap = lead.s - lead.len / 2 - (v.s + v.len / 2) - GAP;
-          target = Math.min(target, Math.max(0, gap / HEADWAY), lead.v + Math.max(0, gap) * 0.5);
+        let ahead: Vehicle | undefined = lead, gap = Infinity;
+        if (lead) gap = lead.s - lead.len / 2 - (v.s + v.len / 2) - GAP;
+        else if (v.next && (v.through || !this.isJunction(this.endNode(v)))) {
+          ahead = this.nextLane(v, v.next)?.[0];
+          if (ahead) gap = way.len - v.s - v.len / 2 + ahead.s - ahead.len / 2 - GAP;
+          const c = this.rival(v); // at a merge, the other approach's car that goes before us
+          if (c && this.toNode(c) < this.toNode(v)) {
+            const g2 = this.toNode(v) - this.toNode(c) - (c.len + v.len) / 2 - GAP;
+            if (g2 < gap) { ahead = c; gap = g2; }
+          }
         }
+        if (ahead) target = Math.min(target, Math.max(0, gap / HEADWAY), ahead.v + Math.max(0, gap) * 0.5);
         // a tram in the lane ahead (sharing the street, or crossing): stay behind it
         if (this.trams) {
           const room = this.tramGap(v, GAP + v.v * HEADWAY + (v.v * v.v) / (2 * BRAKE) + 3);
@@ -515,10 +587,11 @@ export class Traffic {
       }
       // hand over when the centre (the drawn position) crosses the node: the car moves on continuously
       if (v.s < way.len) continue;
-      const over = v.s - way.len;
+      const over = v.s - way.len, key = this.laneKey(v, v.next);
+      if (this.claims.get(key) === v) this.claims.delete(key);
+      v.lane = this.enterLane(v, v.next);
       v.w = v.next.w; v.dir = v.next.dir; v.next = null; v.through = false;
       way = this.ways[v.w];
-      v.lane = v.bus ? 0 : Math.min(v.lane, way.r.l - 1);
       v.s = Math.min(way.len, over);
       v.phase += 0.7;
     }
@@ -708,17 +781,20 @@ export class Traffic {
     const base = [corner(hl, hw, 0.25), corner(hl, -hw, 0.25), corner(-hl, -hw, 0.25), corner(-hl, hw, 0.25)];
     const top = base.map((p) => [p[0], p[1], p[2] + v.hei] as Vec3);
     const [R, G, B] = v.color;
-    const fill = (pts: Vec3[], k: number) => {
+    const p0 = proj(c), pe = proj([c[0] + 1, c[1], c[2]]), pn = proj([c[0], c[1] + 1, c[2]]);
+    const pxPerM = (Math.hypot(pe[0] - p0[0], pe[1] - p0[1]) + Math.hypot(pn[0] - p0[0], pn[1] - p0[1])) / 2;
+    const fill = (pts: Vec3[], k: number, outline = true) => {
       ctx.fillStyle = `rgb(${R * k | 0},${G * k | 0},${B * k | 0})`;
       ctx.beginPath();
       pts.forEach((p, i) => { const [x, y] = proj(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
       ctx.closePath();
       ctx.fill();
+      if (outline) ink(ctx, pxPerM);
     };
     // soft contact shadow
     const a = v.alpha;
     ctx.globalAlpha = 0.25 * a;
-    fill(base.map((p) => [p[0] + 0.4, p[1] - 0.4, p[2] - 0.25] as Vec3), 0);
+    fill(base.map((p) => [p[0] + 0.4, p[1] - 0.4, p[2] - 0.25] as Vec3), 0, false);
     ctx.globalAlpha = a;
     // sides facing the camera (outward normal · camera forward < 0), then roof
     for (let i = 0; i < 4; i++) {

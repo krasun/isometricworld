@@ -42,8 +42,9 @@ const R_EARTH = 6371000;
  * w: line width (m), o: one-way, n: lanes, y: layer (bridges above)
  */
 /** p: the street's pavements (bit 1 left, 2 right of its direction; unset both), u: the surface (surfaceOf), both
- *  only with the preset's `streetDetail`; s: a track line's surface kind (trackKind) */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: number[]; s?: string; p?: number; u?: string }
+ *  only with the preset's `streetDetail`; s: a track line's surface kind (trackKind); ref: a runway's designators;
+ *  sh: a sheltered platform */
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: number[]; s?: string; p?: number; u?: string; ref?: string; sh?: 1 }
 
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
@@ -61,6 +62,8 @@ const LAWNS = STYLED && styleOf(region.style).lawns && region.sources === "gugik
 const WATER_DETAIL = STYLED && styleOf(region.style).waterDetail;
 /** Preset `closedLines`: closed roads and paths (one-way roundabouts, loops) simplified as rings, not collapsed. */
 const CLOSED_LINES = STYLED && styleOf(region.style).closedLines;
+/** preset repaint: rail yards and platforms beside open-air track (page/ground.ts draws them) */
+const REPAINT = STYLED && styleOf(region.style).repaint;
 /** Preset `parkedCars`: the stall lines of the parking lots (parking.ts; the cars: scene.ts). */
 const PARKED = STYLED && styleOf(region.style).parkedCars;
 /** Preset `playgrounds`: rubber safety pads and sandpits of the playgrounds (playgrounds.ts). */
@@ -246,7 +249,8 @@ function areaKind(t: Record<string, string>): string | null {
     return /^(fine_gravel|gravel|compacted|pebblestone)$/.test(t.surface ?? "") ? "gravel" : "paving";
   if (["school", "university", "college", "hospital"].includes(am)) return "campus";
   if (t.aeroway === "aerodrome") return "park"; // a small airfield's grass (EDTQ Pattonville is also tagged landuse=military)
-  if (["industrial", "railway", "port", "military", "depot", "garages"].includes(lu)) return "industrial";
+  if (REPAINT && lu === "railway") return "railyard"; // preset repaint: light gravel under the darker track beds
+  if (["industrial", "port", "military", "depot", "garages"].includes(lu)) return "industrial";
   if (["commercial", "retail"].includes(lu)) return "commercial";
   if (lu === "residential") return "residential";
   return null;
@@ -269,9 +273,16 @@ const geom = (g: Array<{ lat: number; lon: number }>) => g.map((q) => toEnu(q.lo
 const graph: GraphWay[] = [];
 const deckFeatures = new Map<number, Feature>();
 
+/** railway=platform ways, kept below only where an open-air track runs beside them (underground stations share the tag) */
+const platforms: Array<{ g: P2[]; w: number; sh: boolean }> = [];
 for (const el of osm.elements) {
   const t: Record<string, string> = el.tags ?? {};
   if (t.natural === "coastline" && el.geometry) { coast.push(geom(el.geometry)); continue; }
+  if (t.railway === "platform") {
+    if (el.type === "way" && el.geometry && t.tunnel !== "yes" && t.location !== "underground" && t.indoor !== "yes")
+      platforms.push({ g: geom(el.geometry), w: Number(String(t.width).replace(",", ".")) || 3, sh: t.shelter === "yes" || t.covered === "yes" });
+    continue;
+  }
   let rings: P2[][] | null = null;
   if (el.type === "way" && el.geometry) {
     const g = geom(el.geometry);
@@ -285,7 +296,7 @@ for (const el of osm.elements) {
       if (trackLine) { features.push({ k: "trackline", l, w: r1(Number(String(t.width).replace(",", "."))), s: trackKind(t) }); continue; }
       if (t.aeroway) { // runway / taxiway centre lines at their width (OSM width, else 30 m / 10 m)
         const w = Number(String(t.width).replace(",", ".")) || (t.aeroway === "runway" ? 30 : 10);
-        features.push({ k: GRASS.test(t.surface ?? "") ? "grassway" : t.aeroway, l, w: r1(w) });
+        features.push({ k: GRASS.test(t.surface ?? "") ? "grassway" : t.aeroway, l, w: r1(w), ...(t.ref ? { ref: t.ref } : {}) });
         continue;
       }
       const layer = Number(t.layer) || (t.bridge && t.bridge !== "no" ? 1 : 0);
@@ -339,6 +350,23 @@ for (const el of osm.elements) {
   if (!r.length) continue;
   features.push(k === "farm" || k === "meadow" ? { k, r, v: fieldShade(t, el.id) } : { k, r });
   if (k === "water" || k === "wastewater") water.push({ r, river: /^(river|canal|stream|rapids)$/.test(t.water ?? "") || t.waterway === "riverbank" });
+}
+
+if (REPAINT) {
+  const segs = features.filter((f) => f.k === "rail" && !f.y).flatMap((f) => f.l!.slice(1).map((q, i) => [f.l![i], q] as const));
+  const near = (p: P2) => segs.some(([a, b]) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
+    const u = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+    return Math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy) < 6;
+  });
+  let kept = 0;
+  for (const p of platforms) {
+    if (!p.g.some(near)) continue;
+    const sh = p.sh ? { sh: 1 as const } : {};
+    if (closed(p.g)) { const r = simplifyRing(p.g.slice(0, -1), 0.2); if (r.length >= 3) { features.push({ k: "platform", r: [r], ...sh }); kept++; } }
+    else { features.push({ k: "platform", l: simplifyLine(p.g, 0.2), w: r1(p.w), ...sh }); kept++; }
+  }
+  console.log(`  platforms: ${kept} of ${platforms.length} beside open-air track`);
 }
 
 /** junction entry: [x, y, radius (half width + 3 m), layer, kind of the widest road, (streetDetail) 1 if a street
@@ -559,6 +587,63 @@ if (region.sources === "gugik") {
   console.log(`  tunnels: ${tunnels} with their cutting under them filled crest to crest (${cells} cells)`);
 }
 
+// track beds (LGL): on the 3 m grid, nodes beside a track in a cutting sit on the cutting wall, so the draped
+// track zig-zags up and down. Every open-air track on the ground gets a smooth long profile (lowest DGM1 point
+// across the bed every metre, running median 15 m, then mean 20 m); nodes within the bed + one grid step take it,
+// blending back to the terrain over the next 4 m; the nearest track wins where beds run side by side
+if (region.sources === "lgl") {
+  const at = (x: number, y: number) => {
+    const fx = Math.max(0, Math.min(grid.nx - 1.001, (x - grid.x0) / STEP)), fy = Math.max(0, Math.min(grid.ny - 1.001, (y - grid.y0) / STEP));
+    const ix = Math.floor(fx), iy = Math.floor(fy), ax = fx - ix, ay = fy - iy, v = (a: number, b: number) => h[b * grid.nx + a];
+    return (v(ix, iy) * (1 - ax) + v(ix + 1, iy) * ax) * (1 - ay) + (v(ix, iy + 1) * (1 - ax) + v(ix + 1, iy + 1) * ax) * ay;
+  };
+  const FLAT = 2.7 + STEP, BLEND = 4;
+  const best = new Float32Array(n).fill(Infinity), target = new Float32Array(n);
+  let tracks = 0;
+  for (const f of features) {
+    if (f.k !== "rail" || f.y || f.b || !f.l || f.l.length < 2) continue;
+    // resample every metre: position, direction, profile
+    const pts: P2[] = [], cum: number[] = [];
+    for (let i = 1; i < f.l.length; i++) {
+      const a = f.l[i - 1], b = f.l[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      for (let s = 0; s < L; s += 1) { pts.push([a[0] + ((b[0] - a[0]) * s) / L, a[1] + ((b[1] - a[1]) * s) / L]); cum.push((cum.at(-1) ?? -1) + 1); }
+    }
+    pts.push(f.l.at(-1)!);
+    if (pts.length < 4) continue;
+    const raw = pts.map((p, k) => {
+      const q = pts[Math.min(pts.length - 1, k + 1)], o = pts[Math.max(0, k - 1)], dx = q[0] - o[0], dy = q[1] - o[1], L = Math.hypot(dx, dy) || 1;
+      return Math.min(...[-1.5, 0, 1.5].map((c) => at(p[0] - (dy / L) * c, p[1] + (dx / L) * c)));
+    });
+    const win = (r: number, fn: (v: number[]) => number, src: number[]) =>
+      src.map((_, k) => fn(src.slice(Math.max(0, k - r), Math.min(src.length, k + r + 1))));
+    const med = win(7, (v) => [...v].sort((a, b) => a - b)[v.length >> 1], raw);
+    const prof = win(10, (v) => v.reduce((a, b) => a + b, 0) / v.length, med);
+    tracks++;
+    // nodes near each 1 m piece take the profile there
+    const R = FLAT + BLEND;
+    for (let k = 1; k < pts.length; k++) {
+      const a = pts[k - 1], b = pts[k], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
+      const gx0 = Math.max(0, Math.floor((Math.min(a[0], b[0]) - R - grid.x0) / STEP)), gx1 = Math.min(grid.nx - 1, Math.ceil((Math.max(a[0], b[0]) + R - grid.x0) / STEP));
+      const gy0 = Math.max(0, Math.floor((Math.min(a[1], b[1]) - R - grid.y0) / STEP)), gy1 = Math.min(grid.ny - 1, Math.ceil((Math.max(a[1], b[1]) + R - grid.y0) / STEP));
+      for (let iy = gy0; iy <= gy1; iy++) for (let ix = gx0; ix <= gx1; ix++) {
+        const x = grid.x0 + ix * STEP, y = grid.y0 + iy * STEP, i = iy * grid.nx + ix;
+        if (isWater[i]) continue;
+        const u = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2)), d = Math.hypot(x - a[0] - u * dx, y - a[1] - u * dy);
+        if (d < R && d < best[i]) { best[i] = d; target[i] = prof[k - 1] + (prof[k] - prof[k - 1]) * u; }
+      }
+    }
+  }
+  let moved = 0;
+  for (let i = 0; i < n; i++) {
+    if (best[i] === Infinity) continue;
+    const t = best[i] <= FLAT ? 1 : 1 - (best[i] - FLAT) / BLEND, s = t * t * (3 - 2 * t);
+    const v = h[i] + (target[i] - h[i]) * s;
+    if (Math.abs(v - h[i]) > 0.05) moved++;
+    h[i] = v;
+  }
+  console.log(`  track beds: ${tracks} open-air track(s) levelled, ${moved} grid nodes moved`);
+}
+
 // orthometric -> ellipsoid -> ENU up (Earth curvature drops the ellipsoid below the tangent plane)
 for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
   const x = grid.x0 + ix * STEP, y = grid.y0 + iy * STEP, i = iy * grid.nx + ix;
@@ -568,8 +653,10 @@ for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
 writeFileSync(join(out, "height.bin"), Buffer.from(h.buffer));
 writeFileSync(join(out, "meta.json"), JSON.stringify({ ...grid, step: STEP }));
 // bridge decks: heights at both ends, joints between bridge ways interpolated (bridges.ts)
+// off the grid: unknown (clamping to the edge gave decks the height of a hillside kilometres away)
 const sample = (x: number, y: number) => {
-  const fx = Math.min(grid.nx - 1.001, Math.max(0, (x - grid.x0) / STEP)), fy = Math.min(grid.ny - 1.001, Math.max(0, (y - grid.y0) / STEP));
+  const fx = (x - grid.x0) / STEP, fy = (y - grid.y0) / STEP;
+  if (fx < 0 || fy < 0 || fx > grid.nx - 1.001 || fy > grid.ny - 1.001) return null;
   const ix = Math.floor(fx), iy = Math.floor(fy), ax = fx - ix, ay = fy - iy, i = iy * grid.nx + ix;
   return (h[i] * (1 - ax) + h[i + 1] * ax) * (1 - ay) + (h[i + grid.nx] * (1 - ax) + h[i + grid.nx + 1] * ax) * ay;
 };
@@ -585,15 +672,22 @@ if (BRIDGE_DETAIL) {
     if (!w.bridge || w.l.length < 2 || w.nodes.length !== w.l.length) continue;
     w.ext = ([0, 1] as const).map((i) => {
       if ((endUse.get(i ? w.nodes.at(-1)! : w.nodes[0]) ?? 0) > 1) return 0;
-      const prof = Array.from({ length: 16 }, (_, s) => { const p = carried(w.l, i, s); return sample(p[0], p[1]); });
-      const top = Math.max(...prof), s0 = prof.findIndex((v) => v >= top - 0.3);
+      const prof = Array.from({ length: 16 }, (_, s) => { const p = carried(w.l, i, s); return sample(p[0], p[1]) ?? NaN; }); // NaN: off the grid
+      if (!prof.some(Number.isFinite)) return 0;
+      const top = Math.max(...prof.filter(Number.isFinite)), s0 = prof.findIndex((v) => v >= top - 0.3);
       n++; total += s0;
       return Math.max(1, s0 + 0.5);
     }) as [number, number];
   }
   console.log(`  bridge ends carried to their abutments: ${n}, ${(total / Math.max(1, n)).toFixed(1)} m on average`);
 }
-const ends = bridgeEnds(graph, sample);
+// tunnel ends (ground.json has no tunnels; the raw roads/rails files do): decks running into a tunnel
+const portals = new Set<number>();
+for (const f of ["roads.json", "rails.json"]) {
+  if (!existsSync(join(RAW, name, f))) continue;
+  for (const e of readJson(join(RAW, name, f)).elements) if (e.tags?.tunnel === "yes" && e.nodes?.length) portals.add(e.nodes[0]).add(e.nodes.at(-1));
+}
+const ends = bridgeEnds(graph, sample, portals);
 for (const [id, e] of ends) { const f = deckFeatures.get(id); if (f) f.e = e; }
 writeFileSync(join(out, "bridge-ends.json"), JSON.stringify(Object.fromEntries(ends)));
 // watercourses: rivers, streams, canals, ditches and drains above ground, at their OSM width or the usual one

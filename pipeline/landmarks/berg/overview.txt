@@ -1,0 +1,7 @@
+Paint image 1 as a clean, SIMPLE isometric illustration in EXACTLY the style of image 3 and of image 1 itself: flat-shaded 3D blocks with a thin dark outline along every edge, each surface one flat colour, low-poly faceted tree crowns with a dark outline, soft even daylight.
+
+The subject is the Mineralbad Berg in Stuttgart (1950s, renovated 2021): the L-shaped building around the outdoor pool in the middle of image 1. In image 1 it is only a plain massing model. Repaint it as it really is, footprint and size exactly as in images 1, 2 and 4 (image 4 is the real view from above, true shapes), using the photos (images 5–8; image 5 is the current state after the renovation, 6–8 the same building before it):
+- Building: two storeys, white walls with a blue band and long ribbon windows, an open gallery along the upper floor facing the pool, a glazed entrance bay; low hipped roofs in grey. No lettering, no banners.
+- Pool: one large outdoor pool, footprint exactly as in image 4, clear turquoise mineral water with a small round fountain in the middle, light stone deck and stepped edges around it, a few white sunbeds.
+- Grounds inside the bath: lawns with sunbeds, trimmed hedges along the paths, the existing trees.
+Everything else (the Schlosspark, the paths, the railway, the lakes, the streets and the houses) stays EXACTLY as in image 1, pixel for pixel; do not move or restyle anything there. Same camera and scale as image 1. No text, lettering, logos or signs anywhere.

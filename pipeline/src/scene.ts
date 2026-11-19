@@ -32,6 +32,7 @@ import { type Road, roofsOnPosts, streetFurniture, streetLamps } from "./props.t
 import { roadWidth } from "./roadspec.ts";
 import { greenery, osmTreeCrown } from "./greenery.ts";
 import { ARCADES, arcade, LOOKS, type MeshRef, PAINT, PLACED, type Piece, REBUILDS, type Rings, STRUCTURES, type Structure, TOPS, TOWERS, UMBRELLAS, umbrellas } from "./landmarks.ts";
+import { frame } from "./frame.ts";
 import { groupEnds, portal, tunnelEnds } from "./portals.ts";
 import { BRIDGES } from "./bridgemodels.ts";
 import { deckHeight } from "./bridges.ts";
@@ -117,8 +118,9 @@ function style(height: number, kind: string, id: number, year?: number | null) {
 
 /**
  * LoD2 building -> [facade style, roof kinds] from its ALKIS building function (31001_<code>), AdV roof type
- * and height. Facade styles: 0 old plaster, 1 post-war plaster, 2 public/sandstone, 3 tower, 4 shed, 5 office.
- * Roof kinds: 0 red tile, 1 brown tile, 2 slate, 3 gravel, 4 copper, 5 dark membrane, 6 green roof;
+ * and height. Facade styles: 0 old plaster, 1 post-war plaster, 2 public/sandstone, 3 tower, 4 shed, 5 office,
+ * 12 multi-storey car park (11 is masonry, portals.ts; 6–10 are Zagreb's, renderer.ts).
+ * Roof kinds: 0 red tile, 1 brown tile, 2 slate, 3 gravel, 4 copper, 5 dark membrane, 6 green roof, 7 parking deck;
  * encoded pitched * 10 + flat, since roofs of mixed form (AdV 5000) have both and the renderer picks per plane.
  */
 /** Muted roof colours for OSM roof:colour names and roof:material (the house palette, not CSS red). */
@@ -185,6 +187,8 @@ function lod2StyleOf(b: Lod2Building): [number, number] {
   const flat = r2 < 0.55 ? 3 : r2 < 0.85 || b.roofRgb ? 5 : 6; // no made-up green roof where the roof's colour is measured
   const k = (pitched: number, f: number) => pitched * 10 + f;
   if (kind === "structure") return [4, k(2, 5)];                                 // canopies, other structures
+  const code = b.fn.split("_")[1] ?? "";
+  if (code === "2461" || code === "2462") return [12, k(2, 7)];                  // ALKIS Parkhaus / Parkdeck: open decks, parking roof
   if (kind === "small" || b.height < 3.5) return [4, k(tile, 5)];
   if (kind === "church") return [2, k(r < 0.3 ? 4 : 2, 3)];                     // churches: slate, some copper
   if (b.height >= 45) return [3, k(2, 5)];
@@ -294,6 +298,9 @@ const LOD2 = region.sources === "lgl" || region.sources === "gugik";
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height. */
 const GEOID = region.geoidM;
 const raw = join(RAW, name);
+/** OSM buildings become meshes with roofs (osmMesh): the ones ZG3D lacks, or every one in a styled region with no 3D
+ *  source (OSM only); trees and crowns from OSM there too. */
+const OSM_MESH = region.sources === "zg3d" || (!region.sources && STYLED);
 if (!existsSync(join(DERIVED, name, "ground", "meta.json"))) throw new Error(`run: npm run ground -- ${name}`);
 // terrain from ground.ts: objects are binned by where they really stand
 const gmeta = readJson(join(DERIVED, name, "ground", "meta.json"));
@@ -512,12 +519,22 @@ if (LOD2) {
     over.push({ r: rings, b: [Math.min(...all.map((q) => q[0])), Math.min(...all.map((q) => q[1])), Math.max(...all.map((q) => q[0])), Math.max(...all.map((q) => q[1]))] });
   }
   const overWater = (p: P2) => over.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && r.filter((q) => inside(p, q)).length % 2 === 1);
-  let masked = 0, bridged = 0, bare = 0;
+  // Tall buildings: where the surface model and the LoD2 walls disagree by a metre or two, the wall's top
+  // edge reads as a tall, slim crown beside it (the Bonatzbau tower grew a row of 55 m "trees"). LGL nDOM1 only.
+  const tall = region.sources !== "lgl" ? [] : meshes.filter((b) => b.height > 25).flatMap((b) => b.xy.map((r) => {
+    const xs = r.map((q) => q[0]), ys = r.map((q) => q[1]);
+    return { r, h: b.height, box: [Math.min(...xs) - 4, Math.min(...ys) - 4, Math.max(...xs) + 4, Math.max(...ys) + 4] };
+  }));
+  const wallEdge = (c: { e: number; n: number; h: number }) => tall.some(({ r, h, box }) => c.h > 0.6 * h &&
+    c.e >= box[0] && c.e <= box[2] && c.n >= box[1] && c.n <= box[3] && (inside([c.e, c.n], r) || r.some((q, i) => segDist([c.e, c.n], r[(i + r.length - 1) % r.length], q) < 4)));
+  let masked = 0, bridged = 0, bare = 0, edges = 0;
   for (const [i, c] of cs.entries()) {
     if (foliage && !foliage[i]) { bare++; continue; }
     const [lat, lon] = fromXy(c.e, c.n), p = toEnu(lon, lat);
     if (onDeck([p[0], p[1]]) || overWater([p[0], p[1]])) { bridged++; continue; }
-    if ((c.r < 4 || c.h < 8) && noTrees.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && inside([p[0], p[1]], r))) { masked++; continue; }
+    if (wallEdge(c)) { edges++; continue; }
+    // there, cranes and masts are tall and slim: a tree is wide for its height and under ~25 m
+    if ((c.r < 4 || c.h < 8 || (region.sources === "lgl" && (c.h > 25 || c.h > 6 * c.r))) && noTrees.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && inside([p[0], p[1]], r))) { masked++; continue; }
     trees.push([p[0], p[1], c.r, Math.max(c.r * 0.6 + 1, c.h - c.r * 0.85)]);
   }
   // preset bushes: the low surface model where the photo is green, off buildings and crowns (gugik.ts bushes)
@@ -529,7 +546,7 @@ if (LOD2) {
     }
     console.log(`  bushes and hedges: ${shrubs.length}`);
   }
-  console.log(`  ${region.sources === "lgl" ? "ndom1" : "nmpt − nmt"} tree crowns: ${cs.length - masked - bridged - bare} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water${foliage ? `, ${bare} with no foliage on the orthophoto` : ""})`);
+  console.log(`  ${region.sources === "lgl" ? "ndom1" : "nmpt − nmt"} tree crowns: ${cs.length - masked - bridged - bare - edges} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water${foliage ? `, ${bare} with no foliage on the orthophoto` : ""}${edges ? `, ${edges} tall-building edges` : ""})`);
 }
 
 // 1c. ZG3D LoD2 buildings. Their heights are surveyed but the terrain is Copernicus (30 m): each building is
@@ -643,34 +660,35 @@ for (const el of osm.elements) {
   if (el.type === "node" && t.natural === "tree") {
     if (LOD2) continue; // the surface model's crowns include them
     const p = toEnu(el.lon, el.lat);
-    if (region.sources === "zg3d") { trees.push(osmTreeCrown(t, p[0], p[1])); mappedTrees.push([p[0], p[1]]); continue; } // size, species from tags
+    if (OSM_MESH) { trees.push(osmTreeCrown(t, p[0], p[1])); mappedTrees.push([p[0], p[1]]); continue; } // size, species from tags
     trees.push([p[0], p[1], 3, 6]); continue;
   }
   const monument = STYLED && !t.building && !t["building:part"] && el.type === "way" && (t.name ?? "") in TOWERS; // Jubiläumssäule
   const styledLook = STYLED && (!!(t.building || t["building:part"]) || monument);
   if (!styledLook && (!t.building || t.building === "roof" || t.location === "underground")) continue;
   const coords = el.type === "way" ? el.geometry?.map((q: any) => [q.lon, q.lat])
-    : el.members?.find((m: any) => m.role === "outer" && m.geometry)?.geometry.map((q: any) => [q.lon, q.lat]);
+    : el.members?.find((m: any) => (m.role === "outer" || m.role === "outline") && m.geometry)?.geometry.map((q: any) => [q.lon, q.lat]); // outline: type=building relations
   if (!coords || coords.length < 4) continue;
   const ring = ringFromLonLat(coords);
   if (!ring) continue;
   if (styledLook) {
     const h = parseFloat(t.height);
     if (monument) { tallTowers.push({ ring, h, name: t.name }); continue; }
-    if (/^(tower|communications_tower)$/.test(t.man_made ?? "") && h >= 60) tallTowers.push({ ring, h, name: t.name });
+    if ((/^(tower|communications_tower)$/.test(t.man_made ?? "") && h >= 60) || (t.building && (t.name ?? "") in TOWERS)) tallTowers.push({ ring, h, name: t.name });
     if (t.name && t.name in TOPS) tops.push({ ring, name: t.name });
     if (t.name && t.name in ARCADES && t.building) arcades.push({ ring, name: t.name });
     if (t.wikidata && t.wikidata in REBUILDS && t.building) rebuilds.push({ ring, key: t.wikidata });
     if (t["building:part"] && h) parts.push({ ring, h, min: parseFloat(t.min_height) || 0, t });
     const kind = t.building === "yes" && t["building:levels"] ? "housing" : t.building ?? "";
-    const use = region.sources === "zg3d" && (OFFICE.test(kind) || FLATS.test(kind) || HALL.test(kind)) ? kind : undefined;
+    const use = OSM_MESH && (OFFICE.test(kind) || FLATS.test(kind) || HALL.test(kind)) ? kind : undefined;
     const paint = PAINT[t.name] ?? {}; // Zagreb landmarks: colours as rendered
     const w = wallLook(t);
-    const look = { ring, area: Math.abs(area2(ring)), roof: paint.roof ?? roofRgb(t, region.sources !== "zg3d"), style: paint.style ?? w.style, wall: paint.wall ?? w.wall, bare: t.name in LOOKS || t.name in PAINT, use }; // landmarks: no solar panels etc.
+    const look = { ring, area: Math.abs(area2(ring)), roof: paint.roof ?? roofRgb(t, !OSM_MESH), style: paint.style ?? w.style, wall: paint.wall ?? w.wall, bare: t.name in LOOKS || t.name in PAINT, use }; // landmarks: no solar panels etc.
     if (look.roof || look.wall || look.style !== null || look.bare || look.use) looks.push(look);
-    // ZG3D (2008/2019–22 surveys) misses newer buildings: OSM ones not on a ZG3D footprint are extruded below
-    // (not open structures: Dolac's upper market is building=marketplace over the stalls ZG3D does have)
-    if (region.sources === "zg3d" && (!t.building || /^(roof|marketplace|carport|construction|ruins)$/.test(t.building) || t.location === "underground")) continue;
+    // ZG3D (2008/2019–22 surveys) misses newer buildings: OSM ones not on a ZG3D footprint are built below, and
+    // without a 3D source every OSM building is (not open structures: Dolac's upper market is building=marketplace
+    // over the stalls ZG3D does have)
+    if (OSM_MESH && (!t.building || /^(roof|marketplace|carport|construction|ruins)$/.test(t.building) || t.location === "underground")) continue;
   }
   if (LOD2) continue; // the buildings are LoD2 meshes: OSM footprints only carry their looks
   const c: P2 = [ring.reduce((a, p) => a + p[0], 0) / ring.length, ring.reduce((a, p) => a + p[1], 0) / ring.length];
@@ -689,7 +707,7 @@ for (const el of osm.elements) {
   const levels = parseFloat(t["building:levels"]);
   let h = parseFloat(t.height) || (levels ? levels * FLOOR + 1 : 0);
   if (!h) h = Math.abs(area2(ring)) > 1500 ? 14 : ["house", "garage", "shed", "kiosk"].includes(t.building) ? 5 : 13;
-  if (region.sources === "zg3d") {
+  if (OSM_MESH) {
     meshes.push(osmMesh(ring, h, t, !t.height));
     osmCount++;
     continue;
@@ -774,9 +792,9 @@ for (const f of can.features) {
         }
   }
 }
-// 3c. Zagreb: no canopy layer, so crowns for woods, parks, cemeteries, scrub, orchards and tree rows come from
-// OSM land cover (greenery.ts), clear of buildings, roads, water and the trees OSM maps one by one.
-if (region.sources === "zg3d") {
+// 3c. No canopy layer (Zagreb, OSM-only regions): crowns for woods, parks, cemeteries, scrub, orchards and tree
+// rows come from OSM land cover (greenery.ts), clear of buildings, roads, water and the trees OSM maps one by one.
+if (OSM_MESH) {
   // natural=tree_row is in neither osm.json nor ground.json: cut once from the region's extract
   const rowsFile = join(DERIVED, name, "tree-rows.json");
   if (!existsSync(rowsFile) && region.osmExtract) {
@@ -861,8 +879,11 @@ for (const tw of tallTowers.filter((tw) => !rebuilt(tw.ring))) {
   const model = tw.name ? TOWERS[tw.name] : undefined;
   if (model) {
     meshes.push(...model(centre(tw.ring), base).map(fromPiece));
-    const tc = centre(tw.ring); // nDOM reads a slender column as a tree crown
-    for (let i = trees.length - 1; i >= 0; i--) if (Math.hypot(trees[i][0] - tc[0], trees[i][1] - tc[1]) < 6) trees.splice(i, 1);
+    const tc = centre(tw.ring); // nDOM reads a slender column (or a drum's rim) as a tree crown
+    for (let i = trees.length - 1; i >= 0; i--) {
+      const p: P2 = [trees[i][0], trees[i][1]];
+      if (Math.hypot(p[0] - tc[0], p[1] - tc[1]) < 6 || near(p) || tw.ring.some((q) => Math.hypot(q[0] - p[0], q[1] - p[1]) < 2.5)) trees.splice(i, 1);
+    }
     console.log(`  landmark ${tw.name}: ${stump.length} LoD2 part(s) -> model`);
     continue;
   }
@@ -902,14 +923,81 @@ for (const ac of arcades) {
   });
   for (let i = trees.length - 1; i >= 0; i--) if (near([trees[i][0], trees[i][1]])) trees.splice(i, 1);
 }
+// platform shelters (ground.ts platforms with shelter=yes): glass-roofed units on teal posts along the platform's
+// middle, like the SSB Stadtbahn stops (Pragsattel photos in ATTRIBUTION.md); hip roofs, so every slope is a wall
+{
+  const fp = join(DERIVED, name, "ground", "features.json");
+  const allPlats = existsSync(fp) ? (readJson(fp) as Array<{ k: string; r?: P2[][]; l?: P2[]; w?: number; sh?: 1 }>).filter((f) => f.k === "platform") : [];
+  const plats = allPlats.filter((f) => f.sh);
+  // nDOM reads shelters, lamps and signs on platforms as tree crowns: no crowns on platforms
+  const onPlat = (p: P2) => allPlats.some((f) => f.r ? inside(p, f.r[0]) : f.l!.slice(1).some((b, i) => {
+    const a = f.l![i], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
+    const u = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+    return Math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy) < f.w! / 2;
+  }));
+  const nt = trees.length;
+  if (allPlats.length) for (let i = trees.length - 1; i >= 0; i--) if (onPlat([trees[i][0], trees[i][1]])) trees.splice(i, 1);
+  if (allPlats.length) console.log(`  platforms: ${nt - trees.length} crown(s) on them dropped`);
+  const TEAL = [0.2, 0.58, 0.58], GLASS_ROOF = [0.52, 0.64, 0.72];
+  let units = 0, roofed = 0;
+  // LoD2 already has the big station roofs and canopies: no shelter where a building covers the spot (50 m grid)
+  const cover = new Map<string, P2[][]>();
+  for (const b of meshes) {
+    const xs = b.footprint.map((p) => p[0]), ys = b.footprint.map((p) => p[1]);
+    for (let gx = Math.floor(Math.min(...xs) / 50); gx <= Math.floor(Math.max(...xs) / 50); gx++)
+      for (let gy = Math.floor(Math.min(...ys) / 50); gy <= Math.floor(Math.max(...ys) / 50); gy++) {
+        const k = `${gx}_${gy}`; if (!cover.has(k)) cover.set(k, []); cover.get(k)!.push(b.footprint);
+      }
+  }
+  const covered = (p: P2) => (cover.get(`${Math.floor(p[0] / 50)}_${Math.floor(p[1] / 50)}`) ?? []).some((r) => inside(p, r));
+  for (const f of plats) {
+    // long axis: the ring's or line's principal direction; width across it
+    const pts = f.r ? f.r[0] : f.l!, c = centre(pts);
+    let sxx = 0, syy = 0, sxy = 0;
+    for (const [x, y] of pts) { sxx += (x - c[0]) ** 2; syy += (y - c[1]) ** 2; sxy += (x - c[0]) * (y - c[1]); }
+    const th = 0.5 * Math.atan2(2 * sxy, sxx - syy), ux = Math.cos(th), uy = Math.sin(th), nx = -uy, ny = ux;
+    const along = pts.map(([x, y]) => (x - c[0]) * ux + (y - c[1]) * uy), across = pts.map(([x, y]) => (x - c[0]) * nx + (y - c[1]) * ny);
+    const s0 = Math.min(...along), s1 = Math.max(...along), L = s1 - s0;
+    const W = f.r ? Math.max(...across) - Math.min(...across) : f.w ?? 3, o = f.r ? (Math.max(...across) + Math.min(...across)) / 2 : 0;
+    if (L < 12 || W < 2) continue;
+    const n = Math.max(1, Math.min(4, Math.floor((L * 0.6) / 9))), len = 6.5, half = Math.min(W * 0.42, 1.7);
+    for (let k = 0; k < n; k++) {
+      const sm = s0 + L / 2 + (k - (n - 1) / 2) * 9;
+      const at = (s: number, q: number): P2 => [c[0] + ux * s + nx * (o + q), c[1] + uy * s + ny * (o + q)];
+      const m = at(sm, 0), base = groundAt(m[0], m[1]);
+      if (covered(m)) { roofed++; continue; }
+      const look = { roof: GLASS_ROOF, wall: GLASS_ROOF, style: 4, bare: 3 as const };
+      const roof: Piece = { roof: [], wall: [], footprint: [at(sm - len / 2, -half), at(sm + len / 2, -half), at(sm + len / 2, half), at(sm - len / 2, half)], height: 3.6, base, look };
+      const frame: Piece = { roof: [], wall: [], footprint: roof.footprint, height: 2.8, base, look: { roof: TEAL, wall: TEAL, style: 4, bare: 3 } };
+      const E = 2.6, F = 2.95, R = 4.1; // eave band bottom/top, ridge
+      const v = (p: P2, z: number, sAl = 0): number[] => [p[0], p[1], base + z, sAl, z];
+      const eave = [at(sm - len / 2, -half), at(sm + len / 2, -half), at(sm + len / 2, half), at(sm - len / 2, half)];
+      // teal eave band all round (counter-clockwise from above if (u, n) is right-handed: it is)
+      for (let i = 0; i < 4; i++) { const A = eave[i], B = eave[(i + 1) % 4]; frame.wall.push(...v(A, E), ...v(B, E), ...v(B, F), ...v(A, E), ...v(B, F), ...v(A, F)); }
+      // hip roof: ridge along the unit, glass slopes
+      const r0 = at(sm - len / 2 + half, 0), r1 = at(sm + len / 2 - half, 0);
+      const tri = (a: number[], b: number[], cc: number[]) => roof.wall.push(...a, ...b, ...cc);
+      tri(v(eave[0], F), v(eave[1], F), v(r1, R)); tri(v(eave[0], F), v(r1, R), v(r0, R));   // side -n
+      tri(v(eave[2], F), v(eave[3], F), v(r0, R)); tri(v(eave[2], F), v(r0, R), v(r1, R));   // side +n
+      tri(v(eave[1], F), v(eave[2], F), v(r1, R)); tri(v(eave[3], F), v(eave[0], F), v(r0, R)); // hips
+      // two posts on the centre line
+      for (const ds of [-len / 4, len / 4]) {
+        const pc = at(sm + ds, 0), r = 0.13;
+        const sq = [[-r, -r], [r, -r], [r, r], [-r, r]].map(([a, b]) => [pc[0] + a, pc[1] + b] as P2);
+        for (let i = 0; i < 4; i++) { const A = sq[i], B = sq[(i + 1) % 4]; frame.wall.push(...v(A, 0), ...v(B, 0), ...v(B, E), ...v(A, 0), ...v(B, E), ...v(A, E)); }
+      }
+      meshes.push(fromPiece(roof), fromPiece(frame));
+      units++;
+    }
+  }
+  if (plats.length) console.log(`  platform shelters: ${units} on ${plats.length} sheltered platform(s), ${roofed} under LoD2 roofs skipped`);
+}
+
 // styled look: tunnel portals where roads and tracks go underground (portals.ts)
 if (STYLED) {
   const ways = ["roads.json", "rails.json", "ground.json"].filter((f) => existsSync(join(raw, f)))
     .flatMap((f) => readJson(join(raw, f)).elements.filter((e: any) => e.type === "way"));
-  const groups = groupEnds(tunnelEnds(ways, (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }));
-  for (const g of groups) meshes.push(...portal(g, groundAt).map(fromPiece));
-  console.log(`  tunnel portals: ${groups.length}`);
-  // named bridges (bridgemodels.ts) on their OSM outline
+  // bridge decks: floor of the tunnel portals they run into, and the deck of the named bridge models
   const ends = existsSync(join(DERIVED, name, "ground", "bridge-ends.json")) ? readJson(join(DERIVED, name, "ground", "bridge-ends.json")) : {};
   const bridgeWays: Array<{ l: P2[]; dh: ReturnType<typeof deckHeight> }> = [];
   for (const e of ways) {
@@ -918,8 +1006,8 @@ if (STYLED) {
     const l = e.geometry.map((q: any) => { const p = toEnu(q.lon, q.lat); return [p[0], p[1]] as P2; });
     bridgeWays.push({ l, dh: deckHeight(l, groundAt, ends[e.id]) });
   }
-  const deckAt = (p: P2) => {
-    let best = 12, z: number | null = null;
+  const deckAt = (p: P2, within = 12) => {
+    let best = within, z: number | null = null;
     for (const { l, dh } of bridgeWays) for (let i = 1; i < l.length; i++) {
       const a = l[i - 1], b = l[i], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
       const f = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2)), dist = Math.hypot(p[0] - a[0] - f * dx, p[1] - a[1] - f * dy);
@@ -927,6 +1015,70 @@ if (STYLED) {
     }
     return z;
   };
+  // tunnel portals (portals.ts); a road coming in on a bridge has the deck as its floor
+  const groups = groupEnds(tunnelEnds(ways, (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }));
+  for (const g of groups) meshes.push(...portal(g, groundAt, (x, y) => deckAt([x, y], 6) ?? groundAt(x, y)).map(fromPiece));
+  console.log(`  tunnel portals: ${groups.length}`);
+  // catenary masts (electrified=contact_line, open air, on the ground): every 50 m, 2.6 m beside the track on the
+  // side without a neighbouring track, an arm over the wire; parallel tracks share them (none within 15 m)
+  {
+    const lines = ways.filter((e: any) => {
+      const t = e.tags ?? {};
+      return /^(rail|light_rail)$/.test(t.railway ?? "") && t.electrified === "contact_line" && !(t.tunnel && t.tunnel !== "no")
+        && !isBridge(t) && !(Number(t.layer) > 0) && t.covered !== "yes" && e.geometry?.length >= 2;
+    }).map((e: any) => e.geometry.map((q: any) => { const p = toEnu(q.lon, q.lat); return [p[0], p[1]] as P2; }) as P2[]);
+    // all open-air track segments on a 20 m grid, to find neighbours
+    const segs = new Map<string, Array<[P2, P2]>>();
+    for (const e of ways) {
+      const t = e.tags ?? {};
+      if (!t.railway || /platform|abandoned|razed|construction|proposed/.test(t.railway) || (t.tunnel && t.tunnel !== "no") || !(e.geometry?.length >= 2)) continue;
+      const l = e.geometry.map((q: any) => { const p = toEnu(q.lon, q.lat); return [p[0], p[1]] as P2; }) as P2[];
+      for (let i = 1; i < l.length; i++) {
+        const k = (x: number, y: number) => `${Math.floor(x / 20)}_${Math.floor(y / 20)}`, ks = new Set<string>();
+        const n = Math.ceil(Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]) / 10);
+        for (let j = 0; j <= n; j++) ks.add(k(l[i - 1][0] + ((l[i][0] - l[i - 1][0]) * j) / n, l[i - 1][1] + ((l[i][1] - l[i - 1][1]) * j) / n));
+        for (const kk of ks) { if (!segs.has(kk)) segs.set(kk, []); segs.get(kk)!.push([l[i - 1], l[i]]); }
+      }
+    }
+    const trackNear = (p: P2, r: number) => {
+      for (let gx = Math.floor((p[0] - r) / 20); gx <= Math.floor((p[0] + r) / 20); gx++)
+        for (let gy = Math.floor((p[1] - r) / 20); gy <= Math.floor((p[1] + r) / 20); gy++)
+          for (const [a, b] of segs.get(`${gx}_${gy}`) ?? []) {
+            const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
+            const u = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+            if (Math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy) < r) return true;
+          }
+      return false;
+    };
+    const roofs = meshes.filter((m) => m.footprint.length >= 3 && (m as any).id !== "landmark").map((m) => m.footprint);
+    const underRoof = (p: P2) => roofs.some((r) => Math.abs(r[0][0] - p[0]) < 400 && Math.abs(r[0][1] - p[1]) < 400 && inside(p, r));
+    const MAST = [0.62, 0.64, 0.67], masts: P2[] = [];
+    for (const l of lines) {
+      let next = 25;
+      for (let i = 1, s = 0; i < l.length; i++) {
+        const a = l[i - 1], b = l[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (L < 1e-6) continue;
+        const u: P2 = [(b[0] - a[0]) / L, (b[1] - a[1]) / L], v: P2 = [-u[1], u[0]];
+        for (; next <= s + L; next += 50) {
+          const p: P2 = [a[0] + u[0] * (next - s), a[1] + u[1] * (next - s)];
+          if (masts.some((m) => Math.hypot(m[0] - p[0], m[1] - p[1]) < 15) || underRoof(p)) continue;
+          const side = [1, -1].find((sd) => !trackNear([p[0] + v[0] * 2.6 * sd, p[1] + v[1] * 2.6 * sd], 2.2));
+          if (!side) continue;
+          const m: P2 = [p[0] + v[0] * 2.6 * side, p[1] + v[1] * 2.6 * side];
+          const { piece, block } = frame(p, u, groundAt(m[0], m[1]));
+          const pc = piece(-0.3, 0.3, Math.min(0, 2.6 * side) - 0.6, Math.max(0, 2.6 * side) + 0.6, 7.2, MAST);
+          block(pc, -0.17, 0.17, 2.6 * side - 0.17, 2.6 * side + 0.17, 0, 7.2);                       // mast
+          block(pc, -0.07, 0.07, Math.min(2.6 * side, -0.5 * side), Math.max(2.6 * side, -0.5 * side), 6.2, 6.4); // arm
+          block(pc, -0.05, 0.05, -0.05, 0.05, 5.6, 6.2);                                                 // dropper
+          meshes.push(fromPiece(pc));
+          masts.push(m);
+        }
+        s += L;
+      }
+    }
+    console.log(`  catenary masts: ${masts.length} on ${lines.length} electrified way(s)`);
+  }
+  // named bridges (bridgemodels.ts) on their OSM outline
   for (const e of ways) {
     const model = BRIDGES[e.tags?.wikidata ?? ""];
     if (!model || e.tags.man_made !== "bridge" || !(e.geometry?.length >= 4)) continue;
@@ -1168,7 +1320,8 @@ for (const b of meshes as Mesh[]) {
     if (s === 4 && FLATS.test(use) && hs >= 6) s = hs > 19 ? 6 : 1;                                       // housing, not a hall
     else if (HALL.test(use) && !OFFICE.test(use) && hs < 14 && Math.abs(area2(b.footprint)) > 800) s = 4; // industry, depots, sports halls
   }
-  const entry: unknown[] = [look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
+  if (s === 6 && b.fn === "zg3d" && region.sources !== "zg3d") s = 1; // OSM-built flats: prefab panels are Zagreb's (renderer.ts #ifdef ZG), post-war blocks elsewhere
+  const entry: unknown[] = [s === 12 ? s : look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
   const bare = ("bare" in look && look.bare) || null, flags = facadeFlags(b);
   if (roof || look.wall || bare || b.storeys || flags) entry.push(roof, look.wall);
   if (bare || b.storeys || flags) entry.push(bare);

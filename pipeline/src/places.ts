@@ -33,7 +33,15 @@ export interface Region {
    * (default 22000 → 7000; negative = past it, on the runway), and optionally braking after touchdown (m/s²;
    * default none: the plane rolls on at approach speed). web/src/scripts/sky.ts.
    */
-  airport?: { lat: number; lon: number; runwayHeadingDeg: number; h?: number; from?: number; to?: number; brake?: number };
+  airport?: {
+    lat: number; lon: number; runwayHeadingDeg: number; h?: number; from?: number; to?: number; brake?: number;
+    /**
+     * Ground traffic (web/src/scripts/airport.ts): bbox [s, w, n, e] of the OSM taxi network that export
+     * writes to data/airport.<hash>.json, and the stand refs jets park at (regex). Then airliners land, taxi
+     * to a stand, push back and take off from the threshold end of the same runway instead of fading out.
+     */
+    ground?: { bbox: [number, number, number, number]; stands: string };
+  };
   /**
    * Local rolling stock for the animated trains (export.ts exportTrains, web/src/scripts/trains.ts). Unset: route=tram
    * lines run as Stadtbahn (kind 0) in Stuttgart's SSB and DB looks. "zet": route=tram lines are street trams
@@ -73,6 +81,10 @@ export interface Region {
     coaches?: Array<{ name: string; at: [number, number]; heading: number; row: number; count: number; step: number }>;
     pigeons?: Array<{ name: string; at: [number, number]; r: number; count: number }>;
   };
+  /** Small airfield with light aircraft taking off, flying its routes and landing (optional). web/src/scripts/sky.ts. */
+  airfield?: Airfield;
+  /** Rotating rooftop signs, drawn in 3D over the map (web/src/scripts/sky.ts `Signs`). */
+  signs?: RoofSign[];
   /** Credit lines (video mode and footer). */
   credits: string[];
   /** Geoid undulation at the origin (EGM2008, m): sea level as ellipsoid height. */
@@ -120,6 +132,30 @@ export interface Region {
     /** Box [s, w, n, e] the relations are cut to (a mountain beyond the height pass's range stays out). */
     clip?: [number, number, number, number];
   };
+}
+
+/** [lat, lon] or [lat, lon, metres above the field (default `agl`)] */
+type Fix = [number, number] | [number, number, number];
+
+/**
+ * A small airfield (Echo-class planes and ultralights), one runway direction. A flight is one of:
+ *   departure  take off, `out`, one of `exits` (fades out)
+ *   arrival    one of `entries` (fades in), `in`, land
+ *   circuit    take off, `out`, `circuit`, `in`, land
+ */
+/** A three-pointed star in a ring on a mast, turning about the vertical (the Bonatzbau tower's). */
+export interface RoofSign {
+  /** foot of the mast: roof centre, ellipsoid height (m) */
+  lat: number; lon: number; h: number;
+  diameterM: number; mastM: number; rpm: number;
+}
+
+export interface Airfield {
+  /** threshold of the landing/take-off direction and the far runway end: [lat, lon, ellipsoid h] */
+  runway: [[number, number, number], [number, number, number]];
+  /** height of the route legs above the threshold (m) */
+  agl: number;
+  out: Fix[]; exits: Fix[][]; circuit: Fix[]; in: Fix[]; entries: Fix[][];
 }
 
 export interface City {
@@ -170,14 +206,41 @@ export const REGIONS: Record<string, Region> = {
       "Korntal-Münchingen", "Kornwestheim", "Remseck am Neckar", "Waiblingen", "Ludwigsburg", "Böblingen",
     ],
     adminLevels: ["6", "8"], // Stuttgart is a city-county (admin_level 6), its neighbours are 8
+    // pigeon flocks (web/src/scripts/sky.ts Pigeons): Schlossplatz, Marktplatz, Karlsplatz (OSM place=square
+    // centroids) and Bad Cannstatt's Wilhelmsplatz (a junction in OSM: at the Wassersäule fountain)
+    pigeons: [[48.7784, 9.17978], [48.7752, 9.17843], [48.77663, 9.1811], [48.80345, 9.21697]],
     credits: [
       "Map data © OpenStreetMap contributors · Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (verändert)",
       "Buildings: LGL LoD2 · Terrain: LGL DGM1, Copernicus DEM © DLR, Airbus DS · Trees: LGL nDOM1",
+      "Luftbilder: Landeshauptstadt Stuttgart, Stadtmessungsamt, CC BY 4.0 (verändert) · Centre painted with AI",
+      // reference photos of the painted landmarks (ATTRIBUTION.md): the CC BY authors are named
+      "Landmarks painted after Wikimedia Commons photos by J. Herzog, A. Praefcke, F. König, Enslin et al. (CC BY; verändert)",
     ],
     // Stuttgart Airport (EDDS) runway 25: threshold and true heading from OSM (way 164016757, node 10710079299),
     // threshold ground 359.9 m NHN from LGL DGM1 (+ geoid 48.4). Planes come in from the east over the faded
     // edge, cross the threshold at 30 m and roll out on the runway (the outline's airport box).
-    airport: { lat: 48.6940216, lon: 9.2438069, runwayHeadingDeg: 254, h: 408.3, from: 6000, to: -2500 },
+    // Ground traffic: exits, taxiways and the stands of apron north (9–75; 1–8 and 100+ are GA, US and cargo).
+    airport: {
+      lat: 48.6940216, lon: 9.2438069, runwayHeadingDeg: 254, h: 408.3, from: 6000, to: -2500,
+      ground: { bbox: [48.676, 9.17, 48.702, 9.252], stands: "^(9|[1-9]\\d)A?$" },
+    },
+    // Pattonville (EDTQ) runway 28: ends from OSM (way 100261665), ground from LGL DGM1 (273.1 / 282.1 m NHN)
+    // + geoid 48.4. No standard circuit (noise abatement): departures fly 305° to the reporting point
+    // AUTOKINO and on to WASSERTURM, arrivals come via OEFFINGEN on 305°; the circuit is the unofficial
+    // loop WASSERTURM → A81/B27 junction → BUND-Teich → OEFFINGEN around Ludwigsburg.
+    airfield: {
+      runway: [[48.8635017, 9.2291335, 321.5], [48.8649051, 9.2202219, 330.5]],
+      agl: 300,
+      out: [[48.8750, 9.1900, 200], [48.8717, 9.1383]], // AUTOKINO 48°52.5' 9°11.4', WASSERTURM 48°52.3' 9°08.3'
+      exits: [[[48.8897, 9.0741, 450]], [[48.8528, 9.1260, 450]]], // west, south
+      circuit: [[48.9029, 9.1549], [48.9200, 9.1567], [48.9279, 9.2323], [48.9233, 9.2767], [48.8836, 9.2933], [48.8612, 9.2842]], // A81/B27 48°55.2' 9°09.4', BUND-Teich 48°55.4' 9°16.6'
+      in: [[48.8483, 9.2683, 250]], // OEFFINGEN 48°50.9' 9°16.1'
+      entries: [[[48.8498, 9.3218, 400]], [[48.8350, 9.2840, 400]]], // from the east, from the south
+    },
+    // the star on the Hauptbahnhof's Bonatzbau tower (since 1952; taken down in 2021 for Stuttgart 21, due back on
+    // the restored tower): tower roof centre and height from LGL LoD2 (56 m tower, roof 346.4 m ellipsoid);
+    // ~5 m across in reality, drawn 8 m so it reads on the map; turning slowly
+    signs: [{ lat: 48.783379, lon: 9.182763, h: 346.4, diameterM: 8, mastM: 1.5, rpm: 6 }],
     osmExtract: "https://download.geofabrik.de/europe/germany/baden-wuerttemberg/stuttgart-regbez-latest.osm.pbf",
     geoidM: 48.4, // EGM2008 at Schlossplatz (GeographicLib GeoidEval: 48.373 m)
     groundH: 300, // Kessel floor ~245 m NHN + geoid

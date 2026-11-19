@@ -1,0 +1,3 @@
+This is a map with the Mercedes-Benz Museum (a silver, rounded-triangle building with twisting silver bands and dark glass ribbons) among roads, car parks and other buildings.
+- KEEP, pixel for pixel exactly as they are: the whole museum building, from its flat roof down to its glazed ground floor, and the paved strip directly at its foot.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: all roads, the overpass, car parks, lawns, trees, sports fields, and every other building, including the blue glass building and the long white building next to it.

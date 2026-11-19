@@ -129,7 +129,7 @@ if (!existsSync(join(dir, "osm.json"))) {
   if (STYLED || sources === "zg3d") parts.push([[
     ...["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)),
     ...Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`),
-    ...Object.keys(TOWERS).map((n) => `way["name"="${n}"]${b};`),
+    ...Object.keys(TOWERS).map((n) => `nwr["name"="${n}"]${b};`),
     ...STRUCTURES.map((s) => `nwr${s.ql}${b};`),
   ].join(" "), FILTERS.looks]);
   // fountains, whose sculptures the surface model reads as tree crowns (data)
@@ -246,7 +246,8 @@ if (!existsSync(join(dir, "ground.json"))) {
   const parts = [
     `way["highway"]["tunnel"!~"yes|building_passage"]${b};
   way["area:highway"]${b};
-  way["railway"~"^(rail|light_rail|tram)$"]["tunnel"!="yes"]${b};`,
+  way["railway"~"^(rail|light_rail|tram)$"]["tunnel"!="yes"]${b};
+  way["railway"="platform"]${b};`,
     `nwr["landuse"]${b};`,
     `nwr["leisure"~"^(park|garden|pitch|playground|stadium|track|golf_course|swimming_pool|dog_park|nature_reserve|recreation_ground|marina|sports_centre)$"]${b};
   nwr["natural"~"^(water|beach|sand|scrub|grassland|wood|wetland|coastline|bare_rock|heath)$"]${b};

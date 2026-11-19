@@ -1,0 +1,3 @@
+This is a map of the Schlossplatz in Stuttgart with the Königsbau (the long sandstone building with a colonnade along the park) and the barrel-vaulted glass roof of the Königsbau-Passagen behind it.
+- KEEP, pixel for pixel exactly as they are: the whole Königsbau (roofs, attic storey, colonnade, porticos, end pavilions, down to its foot) and the glass-roofed Passagen hall behind it with the white office blocks it sits between.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the Schlossplatz park, its paths, column and fountains, all streets and squares, trees, and every other building, including the glass cube of the Kunstmuseum.
