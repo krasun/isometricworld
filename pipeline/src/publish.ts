@@ -12,9 +12,11 @@
  * deleted (--keep: leave it).
  *
  * Rate: the Cloudflare REST API allows ~4 uploads/s, so a full region (~9k files) takes ~40 min the
- * first time; later publishes only carry what changed.
+ * first time; later publishes only carry what changed. The S3 API has no such limit (16 uploads at a time).
  *
- * Auth: CLOUDFLARE_API_TOKEN (R2 write) if set, else the wrangler login (`npx wrangler login`).
+ * Auth: R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY if set (R2's S3 API, r2s3.ts: what a token scoped to one
+ * bucket works with, e.g. a review bucket), else CLOUDFLARE_API_TOKEN (REST API, R2 write), else the wrangler
+ * login (`npx wrangler login`).
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
@@ -23,6 +25,7 @@ import { createInterface } from "node:readline/promises";
 import { HOSTING } from "./hosting.ts";
 import { WEB_CACHE, WEB_STATE } from "./paths.ts";
 import { REGIONS } from "./places.ts";
+import { s3Keys, s3Put } from "./r2s3.ts";
 import { STATE_CACHE, STATE_REL, publishedStateFile, remoteState, stateHash } from "./webstate.ts";
 
 const args = process.argv.slice(2);
@@ -61,14 +64,16 @@ if (!STATE_ONLY) {
   if (!(await confirm())) process.exit(1);
 }
 
+const S3 = s3Keys() !== null;
 let token = process.env.CLOUDFLARE_API_TOKEN ?? "";
 const refresh = () => { // the wrangler OAuth token lasts ~1 h; wrangler refreshes it on demand
   token = execFileSync("npx", ["-y", "wrangler@4", "auth", "token"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().split("\n").at(-1)!;
 };
-if (!token) refresh();
+if (!S3 && !token) refresh();
+console.log(`  upload through ${S3 ? "R2's S3 API (R2_ACCESS_KEY_ID)" : "the Cloudflare REST API"}`);
 
 // The Cloudflare API allows ~1200 requests / 5 min per user: pace uploads at ~3.8/s, back off on 429.
-const RATE = 3.8;
+const RATE = S3 ? Infinity : 3.8;
 let nextSlot = Date.now();
 const slot = async () => { const t = Math.max(Date.now(), nextSlot); nextSlot = t + 1000 / RATE; await new Promise((r) => setTimeout(r, t - Date.now())); };
 
@@ -86,6 +91,7 @@ async function put(rel: string, body: Buffer<ArrayBuffer> = readFileSync(join(di
   for (let attempt = 1; ; attempt++) {
     try {
       await slot();
+      if (S3) { const h = headers(); await s3Put(key, body, h["Content-Type"], h["Cache-Control"]); return; }
       const r = await fetch(api + key, { method: "PUT", headers: headers(), body });
       if (r.status === 429) { nextSlot = Date.now() + 30_000; throw new Error("429 rate limited"); }
       if (r.status === 401 || r.status === 403) { if (!process.env.CLOUDFLARE_API_TOKEN) refresh(); throw new Error(`auth ${r.status}`); }
@@ -117,7 +123,7 @@ const t0 = Date.now();
 let done = 0;
 const tileFiles = files.filter((f) => !f.startsWith("data/")), dataFiles = files.filter((f) => f.startsWith("data/")); // world.json sorts last
 const queue = [...tileFiles];
-await Promise.all(Array.from({ length: 8 }, async () => {
+await Promise.all(Array.from({ length: S3 ? 16 : 8 }, async () => {
   for (let f = queue.shift(); f; f = queue.shift()) {
     await put(f);
     if (++done % 200 === 0) process.stdout.write(`\r  ${done}/${files.length} · ${((Date.now() - t0) / 1000).toFixed(0)} s`);

@@ -115,8 +115,10 @@ R2 isometricworldtiles/regions/<region>/    production (dev and deployed builds 
   publish refuses when R2's state changed since the export started (someone else published): export again.
   A region published before this: `npm run publish -- <region> --state-only` uploads its local state. Without
   any state, the next export rebuilds everything.
-- Publish uses the wrangler login (`npx wrangler login`) or `CLOUDFLARE_API_TOKEN`. The Cloudflare API allows
-  ~4 uploads/s: a whole region (~9k files) takes ~40 min once; later publishes carry only changes.
+- Publish uses R2's S3 API with `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` (the only way a token scoped to one
+  bucket works), else the Cloudflare API with `CLOUDFLARE_API_TOKEN` or the wrangler login (`npx wrangler login`).
+  The Cloudflare API allows ~4 uploads/s: a whole region (~9k files) takes ~40 min once (the S3 API is faster);
+  later publishes carry only changes.
   `--keep` leaves the cache in place, `--yes` skips the question.
 - The bucket is public, read-only (CORS: any origin, GET/HEAD), so a production build works from any host or
   local port. In dev, `/regions/*` goes through the dev server: the local cache first, then proxied from R2.
@@ -139,7 +141,8 @@ bucket for review, and the maintainers copy them into production after merging.
    TILES_JURISDICTION=eu            # only if the bucket was created in a jurisdiction
    TILES_ORIGIN=<its public URL>
    CLOUDFLARE_ACCOUNT_ID=<the bucket's account>
-   CLOUDFLARE_API_TOKEN=<R2 token with Object Read & Write on that bucket>
+   R2_ACCESS_KEY_ID=<access key of an R2 token with Object Read & Write on that bucket>
+   R2_SECRET_ACCESS_KEY=<its secret access key>
    ```
    and run `npm run export -- <areas>` and `npm run publish -- <region>` as usual. Publish uploads
    everything under `regions/<region>/`: tiles, previews, data files, `state.json` (the published state: keep
