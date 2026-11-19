@@ -455,6 +455,25 @@ if (region.sources === "lgl") {
     const all = rings.flat();
     over.push({ r: rings, b: [Math.min(...all.map((q) => q[0])), Math.min(...all.map((q) => q[1])), Math.max(...all.map((q) => q[0])), Math.max(...all.map((q) => q[1]))] });
   }
+  // ... and on the roadway, where slim "crowns" are traffic-light and catenary masts (Berliner Platz had two
+  // 1.6 m wide, 16 m tall "trees" between the tracks): segments of roads and tram lines in a 50 m hash
+  const ROADWAY = /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$/;
+  const lanes = new Map<string, Array<[P2, P2]>>();
+  for (const el of readJson(join(raw, "ground.json")).elements) {
+    const t = el.tags ?? {};
+    if (el.type !== "way" || !(el.geometry?.length >= 2) || /yes|building_passage/.test(t.tunnel ?? "")) continue;
+    if (!ROADWAY.test(t.highway ?? "") && !/^(tram|light_rail)$/.test(t.railway ?? "")) continue;
+    const l = el.geometry.map((q: any) => { const e = toEnu(q.lon, q.lat); return [e[0], e[1]] as P2; });
+    for (let i = 1; i < l.length; i++) {
+      const a = l[i - 1], b = l[i];
+      for (let x = Math.floor(Math.min(a[0], b[0]) / 50); x <= Math.floor(Math.max(a[0], b[0]) / 50); x++)
+        for (let y = Math.floor(Math.min(a[1], b[1]) / 50); y <= Math.floor(Math.max(a[1], b[1]) / 50); y++) {
+          const k = `${x},${y}`; if (!lanes.has(k)) lanes.set(k, []); lanes.get(k)!.push([a, b]);
+        }
+    }
+  }
+  const onRoadway = (p: P2) => (lanes.get(`${Math.floor(p[0] / 50)},${Math.floor(p[1] / 50)}`) ?? []).some(([a, b]) => segDist(p, a, b) < 3);
+  let poles = 0;
   const overWater = (p: P2) => over.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && r.filter((q) => inside(p, q)).length % 2 === 1);
   // Tall buildings: where the surface model and the LoD2 walls disagree by a metre or two, the wall's top
   // edge reads as a tall, slim crown beside it (the Bonatzbau tower grew a row of 55 m "trees").
@@ -469,11 +488,12 @@ if (region.sources === "lgl") {
     const [lat, lon] = fromUtm(c.e, c.n), p = toEnu(lon, lat);
     if (onDeck([p[0], p[1]]) || overWater([p[0], p[1]])) { bridged++; continue; }
     if (wallEdge(c)) { edges++; continue; }
+    if ((c.r < 2.5 || c.h > 5 * c.r) && onRoadway([p[0], p[1]])) { poles++; continue; }
     // there, cranes and masts are tall and slim: a tree is wide for its height and under ~25 m
     if ((c.r < 4 || c.h < 8 || c.h > 25 || c.h > 6 * c.r) && noTrees.some(({ r, b }) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3] && inside([p[0], p[1]], r))) { masked++; continue; }
     trees.push([p[0], p[1], c.r, Math.max(c.r * 0.6 + 1, c.h - c.r * 0.85)]);
   }
-  console.log(`  ndom1 tree crowns: ${cs.length - masked - bridged - edges} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water, ${edges} tall-building edges)`);
+  console.log(`  ndom1 tree crowns: ${cs.length - masked - bridged - edges} (${masked} dropped on rail land / building sites, ${bridged} on bridges or water, ${edges} tall-building edges, ${poles} masts on the roadway)`);
 }
 
 // 1c. ZG3D LoD2 buildings. Their heights are surveyed but the terrain is Copernicus (30 m): each building is
@@ -842,16 +862,17 @@ for (const ac of arcades) {
   const allPlats = existsSync(fp) ? (readJson(fp) as Array<{ k: string; r?: P2[][]; l?: P2[]; w?: number; sh?: 1 }>).filter((f) => f.k === "platform") : [];
   const plats = allPlats.filter((f) => f.sh);
   // nDOM reads shelters, lamps and signs on platforms as tree crowns: no crowns on platforms
-  const onPlat = (p: P2) => allPlats.some((f) => f.r ? inside(p, f.r[0]) : f.l!.slice(1).some((b, i) => {
+  const onThis = (f: (typeof allPlats)[number], p: P2) => f.r ? inside(p, f.r[0]) : f.l!.slice(1).some((b, i) => {
     const a = f.l![i], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
     const u = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
     return Math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy) < f.w! / 2;
-  }));
+  });
+  const onPlat = (p: P2) => allPlats.some((f) => onThis(f, p));
   const nt = trees.length;
   if (allPlats.length) for (let i = trees.length - 1; i >= 0; i--) if (onPlat([trees[i][0], trees[i][1]])) trees.splice(i, 1);
   if (allPlats.length) console.log(`  platforms: ${nt - trees.length} crown(s) on them dropped`);
   const TEAL = [0.2, 0.58, 0.58], GLASS_ROOF = [0.52, 0.64, 0.72];
-  let units = 0, roofed = 0;
+  let units = 0, roofed = 0, off = 0;
   // LoD2 already has the big station roofs and canopies: no shelter where a building covers the spot (50 m grid)
   const cover = new Map<string, P2[][]>();
   for (const b of meshes) {
@@ -878,6 +899,8 @@ for (const ac of arcades) {
       const at = (s: number, q: number): P2 => [c[0] + ux * s + nx * (o + q), c[1] + uy * s + ny * (o + q)];
       const m = at(sm, 0), base = groundAt(m[0], m[1]);
       if (covered(m)) { roofed++; continue; }
+      // a curved platform leaves its straight axis: units only where the whole unit stands on the platform
+      if (![m, at(sm - len / 2, 0), at(sm + len / 2, 0)].every((p) => onThis(f, p))) { off++; continue; }
       const look = { roof: GLASS_ROOF, wall: GLASS_ROOF, style: 4, bare: 3 as const };
       const roof: Piece = { roof: [], wall: [], footprint: [at(sm - len / 2, -half), at(sm + len / 2, -half), at(sm + len / 2, half), at(sm - len / 2, half)], height: 3.6, base, look };
       const frame: Piece = { roof: [], wall: [], footprint: roof.footprint, height: 2.8, base, look: { roof: TEAL, wall: TEAL, style: 4, bare: 3 } };
@@ -902,7 +925,7 @@ for (const ac of arcades) {
       units++;
     }
   }
-  if (plats.length) console.log(`  platform shelters: ${units} on ${plats.length} sheltered platform(s), ${roofed} under LoD2 roofs skipped`);
+  if (plats.length) console.log(`  platform shelters: ${units} on ${plats.length} sheltered platform(s), ${roofed} under LoD2 roofs and ${off} off a curved platform skipped`);
 }
 
 // tunnel portals where roads and tracks go underground (portals.ts)
@@ -962,6 +985,33 @@ if (LOD2) {
           }
       return false;
     };
+    // no masts on a road: where track crosses or runs in the street (Berliner Platz), the mast would stand in a lane.
+    // Roads at their drawn width (ground.ts features), so wide streets count to their kerbs
+    const roads = new Map<string, Array<[P2, P2, number]>>();
+    const gf = join(DERIVED, name, "ground", "features.json");
+    const disks: number[][] = []; // junction disks, drawn at radius r - 3 (page/ground.ts)
+    for (const f of existsSync(gf) ? readJson(gf) as Array<{ k: string; l?: P2[]; w?: number; y?: number; j?: number[][] }> : []) {
+      if (f.k === "junctions") for (const j of f.j ?? []) if ((j[3] ?? 0) === 0) disks.push(j);
+      if (!/^(street|highway|lane)$/.test(f.k) || (f.y ?? 0) !== 0 || !f.l || !f.w) continue;
+      const l = f.l, hw = f.w / 2;
+      for (let i = 1; i < l.length; i++) {
+        const n = Math.ceil(Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]) / 10), ks = new Set<string>();
+        for (let j = 0; j <= n; j++) ks.add(`${Math.floor((l[i - 1][0] + ((l[i][0] - l[i - 1][0]) * j) / n) / 20)}_${Math.floor((l[i - 1][1] + ((l[i][1] - l[i - 1][1]) * j) / n) / 20)}`);
+        for (const k of ks) { if (!roads.has(k)) roads.set(k, []); roads.get(k)!.push([l[i - 1], l[i], hw]); }
+      }
+    }
+    const onRoad = (p: P2, clear: number) => { // within `clear` m of the asphalt
+      if (disks.some(([x, y, rj]) => Math.abs(x - p[0]) < 40 && Math.abs(y - p[1]) < 40 && Math.hypot(x - p[0], y - p[1]) < rj - 3 + clear)) return true;
+      const r = 15 + clear;
+      for (let gx = Math.floor((p[0] - r) / 20); gx <= Math.floor((p[0] + r) / 20); gx++)
+        for (let gy = Math.floor((p[1] - r) / 20); gy <= Math.floor((p[1] + r) / 20); gy++)
+          for (const [a, b, hw] of roads.get(`${gx}_${gy}`) ?? []) {
+            const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
+            const u = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
+            if (Math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy) < hw + clear) return true;
+          }
+      return false;
+    };
     const roofs = meshes.filter((m) => m.footprint.length >= 3 && (m as any).id !== "landmark").map((m) => m.footprint);
     const underRoof = (p: P2) => roofs.some((r) => Math.abs(r[0][0] - p[0]) < 400 && Math.abs(r[0][1] - p[1]) < 400 && inside(p, r));
     const MAST = [0.62, 0.64, 0.67], masts: P2[] = [];
@@ -974,7 +1024,9 @@ if (LOD2) {
         for (; next <= s + L; next += 50) {
           const p: P2 = [a[0] + u[0] * (next - s), a[1] + u[1] * (next - s)];
           if (masts.some((m) => Math.hypot(m[0] - p[0], m[1] - p[1]) < 15) || underRoof(p)) continue;
-          const side = [1, -1].find((sd) => !trackNear([p[0] + v[0] * 2.6 * sd, p[1] + v[1] * 2.6 * sd], 2.2));
+          if (onRoad(p, 0)) continue;
+          // 1.5 m clear of the drawn road: its corners are rounded out beyond the centre-line widths
+          const side = [1, -1].find((sd) => { const q: P2 = [p[0] + v[0] * 2.6 * sd, p[1] + v[1] * 2.6 * sd]; return !trackNear(q, 2.2) && !onRoad(q, 1.5); });
           if (!side) continue;
           const m: P2 = [p[0] + v[0] * 2.6 * side, p[1] + v[1] * 2.6 * side];
           const { piece, block } = frame(p, u, groundAt(m[0], m[1]));

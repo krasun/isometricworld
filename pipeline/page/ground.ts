@@ -343,6 +343,7 @@ export function drawGround(
     filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + kerb + 2 * g, KERB_); disks(streetJs, kerb / 2 + g, KERB_); });
     filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + 5.4 + 2 * g, SIDEWALK_); disks(streetJs, 2.7 + g, SIDEWALK_); });
     let shadow: HTMLCanvasElement | null = null;
+    let roadShape: HTMLCanvasElement | null = null; // this layer's asphalt as pixels (styled, ground level)
     if (styled && ra) {
       // styled, ground level: all asphalt in ONE filleted pass (per-class passes leave slivers between classes),
       // then everything derived from that exact shape
@@ -361,6 +362,7 @@ export function drawGround(
       sh.drawImage(canvases.asphalt, (SHADOW_DIR[0] * KERB_SHADOW.d) / mpt, (-SHADOW_DIR[1] * KERB_SHADOW.d) / mpt);
       sh.filter = "none"; sh.globalCompositeOperation = "destination-in"; sh.drawImage(canvases.asphalt, 0, 0);
       shadow = canvases.shadow;
+      roadShape = canvases.asphalt;
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(canvases.ink, 0, 0); ctx.drawImage(canvases.asphalt, 0, 0); ctx.restore();
     } else if (ra) for (const k of CLASS) filleted(ra, (g) => {
       for (const f of rs) if (f.k === k) stroke(f.l!, f.w! + 2 * g, ASPHALT_[k]);
@@ -409,13 +411,22 @@ export function drawGround(
       // styled (learned from AI repaints): each pass over all tracks of the layer, so parallel tracks share one
       // gravel bed with a dark edge only outside, and crossings stay clean; few, bold sleepers; rails as a dark
       // line under a white top, which reads zoomed in and out
+      // where track crosses or runs in a road, only the rails show on the asphalt: bed and sleepers go on a
+      // scratch canvas with the road shape cut out
+      const bed = roadShape && rl.length ? scratch("railbed") : null;
+      if (bed) { bed.setTransform(ctx.getTransform()); bed.lineCap = "round"; dc = bed; }
       if (layer > 0) for (const f of rl) { stroke(f.l!, 6, "#55565c"); stroke(f.l!, 5.4, "#cfcac0"); }
       for (const f of rl) stroke(f.l!, 5.3, "#706c65");
       const gravel = gravelPattern(mpt);
       for (const f of rl) { line(f.l!); dc.lineWidth = 4.7; dc.strokeStyle = gravel; dc.setLineDash([]); dc.stroke(); }
-      ctx.lineCap = "butt";
+      dc.lineCap = "butt";
       for (const f of rl) stroke(f.l!, 3.1, "#57504a", [0.45, 0.75]);
-      ctx.setLineDash([]);
+      dc.setLineDash([]);
+      if (bed && roadShape) {
+        bed.setTransform(1, 0, 0, 1, 0, 0); bed.globalCompositeOperation = "destination-out"; bed.drawImage(roadShape, 0, 0);
+        dc = ctx; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(canvases.railbed, 0, 0); ctx.restore();
+      }
+      ctx.lineCap = "butt";
       // rails at 0.25 m/px: a ~2 px bright top on a dark body showing ~1 px each side (like the ink round houses)
       for (const f of rl) for (const s of [-0.85, 0.85]) stroke(offset(f.l!, s), 0.95, "#26272b");
       for (const f of rl) for (const s of [-0.85, 0.85]) stroke(offset(f.l!, s), 0.45, "#ffffff");
