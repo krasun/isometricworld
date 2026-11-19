@@ -20,7 +20,9 @@ Hand-painted isometric city maps from open data. Read `README.md` (pipeline, lay
 5. **Never delete `data/derived/`** (renders, height passes and, above all, paintings: hours of image
    generation each) or `data/web-state/` (what is published). `data/web/` is only the unpublished cache.
 6. **Publishing is outward-facing**: `npm run publish` uploads to the production bucket, `npm run deploy` updates the live site. Run it only when the user
-   asked for it; it asks `[y/N]` (`--yes` only with the user's go-ahead).
+   asked for it; it asks `[y/N]` (`--yes` only with the user's go-ahead). **Working for a contributor** (not a
+   maintainer of the production bucket): publish only to their review bucket (`TILES_BUCKET` in `.env`, README
+   "Contributing a city"), never to `isometricworldtiles`.
 7. Tile coordinates are fixed by a region's `origin` and `headingDeg`. **Never change them for a region
    that has tiles**: every tile, paint and link would move.
 
@@ -115,7 +117,7 @@ npm run paint -- <area> --center <lat>,<lon>  # slow (Codex); paint the test pat
 npm run export -- <all areas of the region>   # changed tiles into data/web (cache)
 npm run dev                                    # check the cache over production (http://localhost:<port>/)
 npm run og -- <city-slug>                      # social card web/public/og/<city-slug>.jpg from the tiles (commit it)
-npm run publish -- <region>                    # only with the user's go-ahead
+npm run publish -- <region>                    # only with the user's go-ahead; contributors: to a review bucket (README "Contributing a city")
 npm run deploy                                 # after every publish: pages bake in world.json's file names + preview
 ```
 

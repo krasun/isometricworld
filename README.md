@@ -121,6 +121,38 @@ R2 isometricworldtiles/regions/<region>/    production (dev and deployed builds 
 - The bucket is public, read-only (CORS: any origin, GET/HEAD), so a production build works from any host or
   local port. In dev, `/regions/*` goes through the dev server: the local cache first, then proxied from R2.
 
+### Contributing a city
+
+Contributors never publish to the production bucket. The code goes in as a pull request; the tiles go to a
+bucket for review, and the maintainers copy them into production after merging.
+
+1. **Pull request** with the code (`places.ts`, `areas.ts`, sources, `ATTRIBUTION.md`, credits), as in
+   AGENTS.md "Adding a city". A new region gets a new `regions/<region>/` name; never publish to an existing one.
+2. **Publish the region to a review bucket**, either:
+   - **your own R2 bucket** (public access on, through r2.dev or a custom domain), or
+   - **a temporary bucket from us**: ask in the pull request. You get the bucket name, its public URL, the
+     account ID and an R2 token that can only write to that bucket and expires.
+
+   Then, in your `.env`:
+   ```sh
+   TILES_BUCKET=<bucket>            # never isometricworldtiles
+   TILES_JURISDICTION=eu            # only if the bucket was created in a jurisdiction
+   TILES_ORIGIN=<its public URL>
+   CLOUDFLARE_ACCOUNT_ID=<the bucket's account>
+   CLOUDFLARE_API_TOKEN=<R2 token with Object Read & Write on that bucket>
+   ```
+   and run `npm run export -- <areas>` and `npm run publish -- <region>` as usual. Publish uploads
+   everything under `regions/<region>/`: tiles, previews, data files, `state.json` (the published state: keep
+   it, it lets anyone continue from your export) and `world.json` last. Nothing else goes in the bucket.
+3. **Tell us in the pull request**: the bucket, its public URL, the file count and size, and (your own bucket)
+   a read-only R2 token for it (Object Read on that bucket), for the copy.
+4. **Review** (maintainers): `TILES_ORIGIN=<review URL> npm run dev` shows the region from the review bucket;
+   check the city page, borders, traffic, credits, no console errors.
+5. **Merge and copy** (maintainers): merge the pull request, then copy `regions/<region>/` into production
+   (Cloudflare R2 → Data Migration, or rclone) so the keys stay `regions/<region>/…` and the content type and
+   cache headers are kept, `world.json` last. Check every file `world.json` names against its content hash,
+   that `state.json` arrived, then `npm run deploy`. Delete the temporary bucket and its token afterwards.
+
 ## Pipeline
 
 ```sh
