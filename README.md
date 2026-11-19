@@ -23,7 +23,7 @@ districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted 
 
 ## The idea
 
-Real cities as a hand-painted isometric illustration you can pan and zoom like a map, with every building,
+Real cities as an isometric illustration, painted with AI, that you can pan and zoom like a map, with every building,
 street and tree where it really is, and a little life on top (cars, buses, cats, parakeets, an airliner).
 
 1. **Geometry from open data**: buildings and trees (municipal GIS, OpenStreetMap), streets, parks,

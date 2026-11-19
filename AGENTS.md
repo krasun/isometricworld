@@ -1,6 +1,6 @@
 # Isometric World: guide for agents
 
-Hand-painted isometric city maps from open data. Read `README.md` (pipeline, layout) and
+Isometric city maps from open data, painted with AI. Read `README.md` (pipeline, layout) and
 `ATTRIBUTION.md` (sources, licences) first. Everything is TypeScript; the site is Astro + OpenSeadragon.
 
 ## Hard rules
