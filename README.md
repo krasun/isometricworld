@@ -243,8 +243,8 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
     mush; painted AVIF tiles are ~1.9× the bytes of rendered ones (z8: 43 KB vs 23 KB).
   - Windows are colour-matched before assembly (one RGB offset per window, least squares over the overlap
     strips), then joined along a seam cut: per neighbour pair, the cheapest path (least colour difference)
-    through the overlap band, feathered over 8 px. Outside Tel Aviv only (Tel Aviv keeps the 128 px cross-fade,
-    which ghosted streets and trees where two windows disagreed). The cut does not fix a seam inside a window
+    through the overlap band, feathered over 8 px. In every region (the old fixed cross-fade ghosted streets and
+    trees where two windows disagreed; tiles assembled before keep it until re-assembled). The cut does not fix a seam inside a window
     where a pasted neighbour strip ends and the model painted a different material.
   - Map mask: `aerial.ts` also writes `mask/<tx>_<ty>.png` (white = keep the render): streets (+ kerbs),
     rails, squares, paving, water and bridge decks from `ground/features.json`, rasterised at 0.25 m and
@@ -305,7 +305,9 @@ Areas of one region share its camera and grid, so they line up.
 
 **Add a city:** in the same region, add it to `CITIES` in `places.ts` (centre + width) and render its areas.
 Far away: add a region (origin, heading, municipalities, credits), run `npm -w pipeline run boundaries -- <region>`, then areas and cities as above.
-Tel Aviv-specific sources (municipal buildings and canopy in `fetch.ts`/`scene.ts`) need an OSM fallback elsewhere.
+Without a 3D building source a region renders from OSM alone in the styled look: footprints built as meshes with
+roofs from their tags, tree crowns from land cover (`greenery.ts`, `species.ts`), as Zagreb fills its model's gaps.
+Only Tel Aviv keeps the plain render.
 
 ## Licence
 
