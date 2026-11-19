@@ -5,7 +5,7 @@ Isometric maps of real cities, built from open data. Everything is TypeScript.
 ![Tel Aviv-Yafo](video/tel-aviv-yafo.gif)
 
 First city: **Tel Aviv-Yafo** (`/tel-aviv-yafo` on the dev server), from Jaffa to Yarkon Park and
-Ramat Gan, including the sea. Full-quality clip: [`video/tel-aviv-yafo.mp4`](video/tel-aviv-yafo.mp4).
+Ramat Gan, including the sea, painted with AI (OpenAI's image model through the Codex CLI). Full-quality clip: [`video/tel-aviv-yafo.mp4`](video/tel-aviv-yafo.mp4).
 
 ![Stuttgart](video/stuttgart.gif)
 
@@ -16,7 +16,7 @@ around it from LGL Baden-Württemberg open data, drawn procedurally instead of p
 ![Zagreb](video/zagreb.gif)
 
 Third city: **Zagreb** (`/zagreb`), by [Andrej Šimunaj](https://zeropointstudio.io): the whole city (its 17
-districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted through fal.ai. Live at
+districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted with AI (OpenAI's and Google's image models through fal.ai). Live at
 [isometricworld.dmytrokrasun.com/zagreb](https://isometricworld.dmytrokrasun.com/zagreb) and on Andrej's site,
 [zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io). Full-quality clip:
 [`video/zagreb.mp4`](video/zagreb.mp4).
