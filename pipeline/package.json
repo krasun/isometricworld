@@ -12,6 +12,8 @@
     "scene": "tsx src/scene.ts",
     "ground": "tsx src/ground.ts",
     "publish": "tsx src/publish.ts",
+    "archive": "tsx src/archive.ts",
+    "pull": "tsx src/archive.ts pull",
     "og": "tsx src/og.ts"
   },
   "dependencies": {
