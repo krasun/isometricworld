@@ -2,28 +2,27 @@
 
 Isometric maps of real cities, built from open data. Everything is TypeScript.
 
-![Tel Aviv-Yafo](video/tel-aviv-yafo.gif)
+[![Tel Aviv-Yafo](video/tel-aviv-yafo.gif)](https://isometricworld.dmytrokrasun.com/tel-aviv-yafo)
 
-First city: **Tel Aviv-Yafo** (`/tel-aviv-yafo` on the dev server), from Jaffa to Yarkon Park and
+First city: **[Tel Aviv-Yafo](https://isometricworld.dmytrokrasun.com/tel-aviv-yafo)** (`/tel-aviv-yafo` on the dev server), from Jaffa to Yarkon Park and
 Ramat Gan, including the sea, painted with AI (OpenAI's image model through the Codex CLI). Full-quality clip: [`video/tel-aviv-yafo.mp4`](video/tel-aviv-yafo.mp4).
 
-![Stuttgart](video/stuttgart.gif)
+[![Stuttgart](video/stuttgart.gif)](https://isometricworld.dmytrokrasun.com/stuttgart)
 
-Second city: **Stuttgart** (`/stuttgart`), by [Lukas Hermann](https://lukashermann.dev/): the city and the towns
+Second city: **[Stuttgart](https://isometricworld.dmytrokrasun.com/stuttgart)** (`/stuttgart`), by [Lukas Hermann](https://lukashermann.dev/): the city and the towns
 around it from LGL Baden-Württemberg open data, drawn procedurally instead of painted. Full-quality clip:
 [`video/stuttgart.mp4`](video/stuttgart.mp4).
 
-![Zagreb](video/zagreb.gif)
+[![Zagreb](video/zagreb.gif)](https://isometricworld.dmytrokrasun.com/zagreb)
 
-Third city: **Zagreb** (`/zagreb`), by [Andrej Šimunaj](https://zeropointstudio.io): the whole city (its 17
-districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted with AI (OpenAI's and Google's image models through fal.ai). Live at
-[isometricworld.dmytrokrasun.com/zagreb](https://isometricworld.dmytrokrasun.com/zagreb) and on Andrej's site,
-[zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io). Full-quality clip:
+Third city: **[Zagreb](https://isometricworld.dmytrokrasun.com/zagreb)** (`/zagreb`), by [Andrej Šimunaj](https://zeropointstudio.io): the whole city (its 17
+districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted with AI (OpenAI's and Google's image models through fal.ai). Also on Andrej's
+site, [zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io). Full-quality clip:
 [`video/zagreb.mp4`](video/zagreb.mp4).
 
-![Wieliczka](video/wieliczka.gif)
+[![Wieliczka](video/wieliczka.gif)](https://isometricworld.dmytrokrasun.com/wieliczka)
 
-Fourth city: **Wieliczka** (`/wieliczka`), by [Maciek Chmura](https://maciek.cloud/): the town near Kraków from
+Fourth city: **[Wieliczka](https://isometricworld.dmytrokrasun.com/wieliczka)** (`/wieliczka`), by [Maciek Chmura](https://maciek.cloud/): the town near Kraków from
 GUGiK, Poland's national open geodata, drawn procedurally instead of painted, with its salt mine's levels under
 the town and a biplane to fly over it. Full-quality clip: [`video/wieliczka.mp4`](video/wieliczka.mp4).
 Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i
