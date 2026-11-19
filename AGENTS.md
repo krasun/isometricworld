@@ -34,7 +34,8 @@ Hand-painted isometric city maps from open data. Read `README.md` (pipeline, lay
 - **Hosting** (`pipeline/src/hosting.ts`, README "Hosting"): tiles and region data live only on R2
   (`isometricworldtiles`, `regions/<region>/` under `TILES_ORIGIN` from `.env`), never in git or
   `web/public`. `export` writes changed files to the cache `data/web/regions/<region>/`, `npm run dev` shows
-  the cache over production, `publish` uploads and empties the cache.
+  the cache over production, `publish` uploads and empties the cache. Tiles are AVIF only: don't build a WebP
+  fallback for a new region (Tel Aviv's old WebP pyramid is legacy).
 - **Area** (`AREAS` in `pipeline/src/areas.ts`): a bbox the pipeline fetches, renders and paints. Belongs
   to one region; CLIs call `openArea(name)`, which switches the camera to that region.
 
