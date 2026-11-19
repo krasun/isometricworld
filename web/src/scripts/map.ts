@@ -466,7 +466,7 @@ document.getElementById("credits")!.innerHTML = [
     : REGION === "zagreb" // the Zagreb region was built by Andrej Šimunaj (ZeroPointStudio)
       ? `Made by <a href="https://zeropointstudio.io">Andrej Šimunaj</a>`
       : REGION === "wieliczka" // the Wieliczka region was built by Maciek Chmura
-        ? `Made by <a href="https://x.com/maciekChmura">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
+        ? `Made by <a href="https://maciek.cloud/">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
         : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
 // each credit stays on one line; the separator rides at the end of the previous one so no line starts with "·"
 ].map((c, i, all) => `<span class="credit">${c}${i < all.length - 1 ? " ·" : ""}</span>`).join(" ");

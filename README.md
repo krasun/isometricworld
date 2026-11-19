@@ -228,6 +228,33 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
 - Areas: the city (`stuttgart-*`) and the towns around it (`metro-*`) are split into overlapping areas. Where
   they overlap, export takes each tile from the area it lies deepest inside.
 
+**Wieliczka** (region `wieliczka`, `sources: "gugik"`, `look: "styled"`, `style: "poland"`) differs again:
+
+- Data: GUGiK, Poland's national open geodata (CC BY 4.0; the 3D models CC0), read per powiat (`teryt`) in
+  PUWG 1992 (`gugik.ts`, built on Piotr Kulpiński's Kraków branch): the 3D building models (LoD2 with roofs from
+  the 2017 airborne LiDAR, LoD1 2024 for newer buildings), BDOT10k for what each building is used for (it picks
+  the look and the façade's storeys, shops and doors), the buildings the models lack from BDOT10k and OSM
+  outlines with roofs fitted to the surface model (`fitroof.ts`), NMT 1 m terrain (Copernicus outside its
+  sheets), tree crowns from NMPT − NMT, and the orthophoto (WMS, 0.25 m) read for each roof's roofing, the
+  lawns and gardens (`lawns.ts`) and which crowns have foliage. No pixel of the photo is shown.
+- OSM from the Geofabrik Małopolska extract via osmium, as in Stuttgart.
+- Look: styled, preset "poland" (`styles.ts`; the features above).
+- Shape: the gmina and Kraków (`outline`), cut further by the areas: the town and the A4 stay clear of the
+  faded edge.
+- Viewer (`effects`, `life`): tilt-shift, a biplane to fly (F; its shadow laid over roofs from the exported
+  height pass), cloud shadows, a search box (export writes the index), detailed vehicles, coaches to the salt
+  mine's coach parks, pigeons on Rynek Górny, and a foreground layer so vehicles pass under trees and behind houses.
+- Areas: `wieliczka-rynek` (a test patch: the Rynek, the castle, the shafts), `wieliczka-town` (the town and a
+  ~650 m ring) and the mine's levels below.
+
+```sh
+npm -w pipeline run boundaries -- wieliczka
+npm run fetch -- wieliczka-town               # GUGiK models, BDOT10k, NMT/NMPT sheets, orthophoto; OSM from the extract
+npm run ground -- wieliczka-town && npm run scene -- wieliczka-town
+npm run render -- wieliczka-town -j 2         # ~35 min
+npm run export -- wieliczka-town
+```
+
 **Wieliczka's salt mine** (`mine.ts`, `minedata.ts`, `page/mine.ts`; web `mine.ts`): a lift panel, opened by the
 round button in the corner column (or `?level=III`), goes down the mine's levels I–IX, each its own transparent tile
 layer (`tiles/mine-<level>/`) over the dimmed town, drawn as a cutaway (the rock cut 3 m above the floor) and draped

@@ -23,6 +23,7 @@ const PEOPLE: Record<string, Link[]> = {
   "israel-center": [{ text: "Dmytro Krasun", href: "https://dmytrokrasun.com" }],
   stuttgart: [{ text: "Lukas Hermann", href: "https://lukashermann.dev/" }],
   zagreb: [{ text: "Andrej Šimunaj", href: "https://zeropointstudio.io" }],
+  wieliczka: [{ text: "Maciek Chmura", href: "https://maciek.cloud/" }],
 };
 const OSM: Link = { text: "© OpenStreetMap contributors", href: "https://www.openstreetmap.org/copyright" };
 const DEM: Link = { text: "Copernicus DEM © DLR, Airbus DS" };
@@ -30,8 +31,11 @@ const SOURCES: Record<string, Link[]> = {
   "israel-center": [OSM, { text: "Tel Aviv-Yafo Municipality", href: "https://opendatasource.tel-aviv.gov.il/" }, DEM],
   stuttgart: [OSM, { text: "LGL Baden-Württemberg, dl-de/by-2-0 (verändert)", href: "https://www.lgl-bw.de" }, DEM],
   zagreb: [OSM, { text: "Grad Zagreb, ZG3D 2022 (7. 5. 2025., Otvorena dozvola, izmijenjeno)", href: "https://data.zagreb.hr/dataset/zg3d-2022-3d-model-gz" }, DEM],
+  // GUGiK (PZGiK material, CC BY 4.0) requires its notice wherever the map is published
+  wieliczka: [OSM, { text: "Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK, CC BY 4.0)", href: "https://www.geoportal.gov.pl/" }, DEM,
+    { text: "Salt mine: plan by W. Hondius, 1645 (public domain)", href: "https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg" }],
 };
-const PAINTED: Record<string, boolean> = { "israel-center": true, stuttgart: false, zagreb: true };
+const PAINTED: Record<string, boolean> = { "israel-center": true, stuttgart: false, zagreb: true, wieliczka: false };
 
 const worlds = Object.fromEntries(await Promise.all(
   [...new Set(Object.values(CITIES).map((c) => c.region))].map(async (r) => [r, await loadWorld(r)] as const)));
