@@ -84,7 +84,7 @@ Map data is not in git or `web/public`. It lives in the R2 bucket `isometricworl
 see `.env.example`; read by `pipeline/src/hosting.ts`).
 
 ```
-data/derived/<area>/{render,paint,height}   sources (local only; expensive: back them up)
+data/derived/<area>/{render,paint,height}   sources (local; archived in isometricworld-archive, see Archive)
         │ npm run export -- <areas>          only tiles whose source changed (state: data/web-state/<region>.json)
         ▼
 data/web/regions/<region>/                  local cache = unpublished changes
@@ -122,6 +122,41 @@ R2 isometricworldtiles/regions/<region>/    production (dev and deployed builds 
   `--keep` leaves the cache in place, `--yes` skips the question.
 - The bucket is public, read-only (CORS: any origin, GET/HEAD), so a production build works from any host or
   local port. In dev, `/regions/*` goes through the dev server: the local cache first, then proxied from R2.
+
+### Archive (R2)
+
+The pipeline's own files (`data/derived/`: renders, height passes, painted windows and tiles; `data/raw/`:
+fetched sources) are archived in a second, private bucket, `isometricworld-archive` (Infrequent Access,
+`pipeline/src/archive.ts`). No machine is then the only copy of the paintings, and a later repaint downloads
+and uploads only the part it touches.
+
+```sh
+npm run archive -- <region>          # upload what is new or changed (all areas of the region); `shared`: the rest of data/raw
+npm run archive -- <region> --verify # every entry is in the bucket with its size; 40 random files downloaded and hashed
+npm run pull -- <region> shared      # the small files: manifests, ground, height passes, scene, raw sources, paint.json…
+npm run pull -- <region> --near <lat>,<lon> --radius 1   # + renders, paintings and windows of a patch
+npm run pull -- <region> --all       # everything (--history adds windows-replaced/, paint-withdrawn/, work/)
+npm run archive -- --tar <url> --sha256 <hex>   # stream a contributor's tar of data/… into the archive, no local copy
+```
+
+- Content-addressed: `objects/<sha256>` holds each distinct file once (windows shared between areas, hard links),
+  `manifests/<region>.json` maps every path under `data/` to `[sha256, size, mtime]`, and each upload leaves a
+  dated copy in `manifests/<region>/`. Nothing is overwritten or deleted: a repainted window is a new object.
+- `pull` hash-checks every file, restores mtimes (paint and export compare them), links identical files instead
+  of downloading them twice, and never replaces a local file that differs from the archive (`--force` does).
+- **Repainting a few buildings** on a machine without the region:
+  ```sh
+  npm run pull -- zagreb shared --near 45.81,15.977 --radius 1   # the patch: the windows paint --near repaints, their neighbours, every window under their tiles
+  npm run paint -- zagreb-core --near 45.81,15.977 --radius 1
+  npm run export -- zagreb --partial    # re-encodes only the tiles whose render/painting is here; the rest stays as published
+  npm run publish -- zagreb             # only the changed tiles
+  npm run archive -- zagreb             # only the new windows and paintings
+  ```
+  `--partial` still builds roads, trains and bridge decks for the whole region, from the small files `pull`
+  brings (`raw/<area>/roads.json`, `ground/`, `height/`). A region with only tiles in the archive (Zagreb's
+  backup had no `raw/` and `ground/`) needs `npm run fetch` and `npm run ground` for each area first.
+- Same auth as publish; with an R2 access key (`R2_ACCESS_KEY_ID`) it runs 16 at a time instead of ~4 files/s.
+  `ARCHIVE_BUCKET` points it elsewhere.
 
 ### Contributing a city
 
