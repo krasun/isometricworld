@@ -13,8 +13,11 @@ import { ZG_SPECIES } from "../src/species.ts";
 const params = new URLSearchParams(location.search);
 const REGION = params.get("region") ?? "israel-center";
 useRegion(REGION); // before any projection below
-/** LGL regions (Baden-Württemberg) get the finished procedural look (no paint step): LoD2 roofs, hillshade, outlines. */
-const STYLED = REGIONS[REGION].sources === "lgl" || REGIONS[REGION].sources === "zg3d"; // LoD2 regions: drawn, not painted
+/**
+ * The styled look (materials, hillshade, outlines, paper grain): every region but Tel Aviv, whose painted map was
+ * made from the plain render. Painted regions keep it wherever a window isn't painted.
+ */
+const STYLED = REGIONS[REGION].sources !== "tlv";
 /** Zagreb: its own plaster and tile palette, Austro-Hungarian façades, prefab slabs and the landmark styles 6–10 (shader `ZG`). */
 const ZG = REGIONS[REGION].sources === "zg3d";
 /** Ellipsoid height the height pass counts from (heights.ts). */
@@ -641,7 +644,8 @@ const SPECIES_STR: typeof SPECIES = [
 ];
 if (STYLED) SPECIES.splice(0, SPECIES.length, ...SPECIES_STR);
 /** Zagreb: scene.ts names every crown's species (wood, park, street, riverbank… see greenery.ts). */
-const NAMED: typeof SPECIES | null = REGIONS[REGION].sources === "zg3d" ? ZG_SPECIES.map(([n, c, xy, z, cone]) => [n, 1, c, xy, z, cone]) : null;
+// crowns from OSM (Zagreb, OSM-only regions) carry a species index into species.ts
+const NAMED: typeof SPECIES | null = REGIONS[REGION].sources === "zg3d" || !REGIONS[REGION].sources ? ZG_SPECIES.map(([n, c, xy, z, cone]) => [n, 1, c, xy, z, cone]) : null;
 const SPECIES_TOTAL = SPECIES.reduce((t, s) => t + s[1], 0);
 const rand = (x: number, y: number) => Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
 /** Mostly one species per ~40 m patch (streets are planted in runs), every 4th tree a random one. */

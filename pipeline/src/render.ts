@@ -46,7 +46,9 @@ export const ATTRIBUTIONS = SOURCES === "lgl"
   ? ["© OpenStreetMap contributors (ODbL)", "Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (LoD2, DGM1, nDOM1; verändert)", COPERNICUS]
   : SOURCES === "zg3d"
   ? ["© OpenStreetMap contributors (ODbL)", "Grad Zagreb, ZG3D 2022, data.zagreb.hr (Otvorena dozvola; izmijenjeno)", COPERNICUS]
-  : ["© OpenStreetMap contributors (ODbL)", "Tel Aviv-Yafo Municipality open data", COPERNICUS];
+  : SOURCES === "tlv"
+  ? ["© OpenStreetMap contributors (ODbL)", "Tel Aviv-Yafo Municipality open data", COPERNICUS]
+  : ["© OpenStreetMap contributors (ODbL)", COPERNICUS];
 
 const T = CAMERA.tile;
 

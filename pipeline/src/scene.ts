@@ -250,8 +250,13 @@ const region = REGIONS[area.region];
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height. */
 const GEOID = region.geoidM;
 const raw = join(RAW, name);
-/** LoD2 meshes for buildings (OSM only adds looks, towers and landmarks to them). */
-const LOD2 = region.sources === "lgl" || region.sources === "zg3d";
+/**
+ * Buildings as meshes with roofs (the styled look): LoD2 models where a region has them, OSM footprints built as
+ * meshes (osmMesh) where it doesn't. Only Tel Aviv keeps plain extrusions (its painted map was made from them).
+ */
+const LOD2 = region.sources !== "tlv";
+/** OSM buildings become meshes: every one (no 3D source) or the ones ZG3D lacks; trees and crowns from OSM. */
+const OSM_MESH = region.sources === "zg3d" || !region.sources;
 if (!existsSync(join(DERIVED, name, "ground", "meta.json"))) throw new Error(`run: npm run ground -- ${name}`);
 // terrain from ground.ts: objects are binned by where they really stand
 const gmeta = readJson(join(DERIVED, name, "ground", "meta.json"));
@@ -574,7 +579,7 @@ for (const el of osm.elements) {
   if (el.type === "node" && t.natural === "tree") {
     if (region.sources === "lgl") continue; // the nDOM crowns include them
     const p = toEnu(el.lon, el.lat);
-    if (region.sources === "zg3d") { trees.push(osmTreeCrown(t, p[0], p[1])); mappedTrees.push([p[0], p[1]]); continue; } // size, species from tags
+    if (OSM_MESH) { trees.push(osmTreeCrown(t, p[0], p[1])); mappedTrees.push([p[0], p[1]]); continue; } // size, species from tags
     trees.push([p[0], p[1], 3, 6]); continue;
   }
   const monument = LOD2 && !t.building && !t["building:part"] && el.type === "way" && (t.name ?? "") in TOWERS; // Jubiläumssäule
@@ -595,14 +600,15 @@ for (const el of osm.elements) {
     if (t.wikidata && t.wikidata in REBUILDS && t.building) rebuilds.push({ ring, key: t.wikidata });
     if (t["building:part"] && h) parts.push({ ring, h, min: parseFloat(t.min_height) || 0, t });
     const kind = t.building === "yes" && t["building:levels"] ? "housing" : t.building ?? "";
-    const use = region.sources === "zg3d" && (OFFICE.test(kind) || FLATS.test(kind) || HALL.test(kind)) ? kind : undefined;
+    const use = OSM_MESH && (OFFICE.test(kind) || FLATS.test(kind) || HALL.test(kind)) ? kind : undefined;
     const paint = PAINT[t.name] ?? {}; // Zagreb landmarks: colours as rendered
     const w = wallLook(t);
-    const look = { ring, area: Math.abs(area2(ring)), roof: paint.roof ?? roofRgb(t, region.sources !== "zg3d"), style: paint.style ?? w.style, wall: paint.wall ?? w.wall, bare: t.name in LOOKS || t.name in PAINT, use }; // landmarks: no solar panels etc.
+    const look = { ring, area: Math.abs(area2(ring)), roof: paint.roof ?? roofRgb(t, !OSM_MESH), style: paint.style ?? w.style, wall: paint.wall ?? w.wall, bare: t.name in LOOKS || t.name in PAINT, use }; // landmarks: no solar panels etc.
     if (look.roof || look.wall || look.style !== null || look.bare || look.use) looks.push(look);
-    // ZG3D (2008/2019–22 surveys) misses newer buildings: OSM ones not on a ZG3D footprint are extruded below
-    // (not open structures: Dolac's upper market is building=marketplace over the stalls ZG3D does have)
-    if (region.sources !== "zg3d" || !t.building || /^(roof|marketplace|carport|construction|ruins)$/.test(t.building) || t.location === "underground") continue;
+    // ZG3D (2008/2019–22 surveys) misses newer buildings: OSM ones not on a ZG3D footprint are built below, and
+    // without a 3D source every OSM building is (not open structures: Dolac's upper market is
+    // building=marketplace over the stalls ZG3D does have)
+    if (!OSM_MESH || !t.building || /^(roof|marketplace|carport|construction|ruins)$/.test(t.building) || t.location === "underground") continue;
   }
   const c: P2 = [ring.reduce((a, p) => a + p[0], 0) / ring.length, ring.reduce((a, p) => a + p[1], 0) / ring.length];
   if (covered(c)) continue;
@@ -620,7 +626,7 @@ for (const el of osm.elements) {
   const levels = parseFloat(t["building:levels"]);
   let h = parseFloat(t.height) || (levels ? levels * FLOOR + 1 : 0);
   if (!h) h = Math.abs(area2(ring)) > 1500 ? 14 : ["house", "garage", "shed", "kiosk"].includes(t.building) ? 5 : 13;
-  if (region.sources === "zg3d") {
+  if (OSM_MESH) {
     meshes.push(osmMesh(ring, h, t, !t.height));
     osmCount++;
     continue;
@@ -705,9 +711,9 @@ for (const f of can.features) {
         }
   }
 }
-// 3c. Zagreb: no canopy layer, so crowns for woods, parks, cemeteries, scrub, orchards and tree rows come from
-// OSM land cover (greenery.ts), clear of buildings, roads, water and the trees OSM maps one by one.
-if (region.sources === "zg3d") {
+// 3c. No canopy layer (Zagreb, OSM-only regions): crowns for woods, parks, cemeteries, scrub, orchards and tree
+// rows come from OSM land cover (greenery.ts), clear of buildings, roads, water and the trees OSM maps one by one.
+if (OSM_MESH) {
   // natural=tree_row is in neither osm.json nor ground.json: cut once from the region's extract
   const rowsFile = join(DERIVED, name, "tree-rows.json");
   if (!existsSync(rowsFile) && region.osmExtract) {
@@ -1023,6 +1029,7 @@ for (const b of meshes as Mesh[]) {
     if (s === 4 && FLATS.test(use) && hs >= 6) s = hs > 19 ? 6 : 1;                                       // housing, not a hall
     else if (HALL.test(use) && !OFFICE.test(use) && hs < 14 && Math.abs(area2(b.footprint)) > 800) s = 4; // industry, depots, sports halls
   }
+  if (s === 6 && region.sources !== "zg3d") s = 1; // prefab panels are Zagreb's (renderer.ts #ifdef ZG): post-war blocks
   const entry: unknown[] = [s === 12 ? s : look.style ?? s, roofKind, b.roof.map(c2), b.wall.map(c2), b.footprint.map(([x, y]) => [c2(x), c2(y)]), Math.round(b.height * 10) / 10, Math.floor(hash(b.base * 1000 + b.roof.length) * 1000)];
   if (look.roof || look.wall || ("bare" in look && look.bare)) entry.push(look.roof, look.wall);
   if ("bare" in look && look.bare) entry.push(look.bare);
