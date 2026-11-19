@@ -128,6 +128,7 @@ npm -w pipeline exec tsx src/tour.ts   http://localhost:<port>/ tour   # screens
 npm -w pipeline exec tsx src/traffictest.ts http://localhost:<port>/ 5     # 5 sim-minutes: overlaps, speeds, jams
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/tel-aviv-yafo.mp4  # 14 s 1080² 60 fps clip for X (--preview: quick 6 fps check; --blur 8: motion blur)
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/stuttgart.mp4 --city stuttgart --seconds 4.5  # shots per city: FILMS in film.ts
+npm -w pipeline exec tsx src/beforeafter.ts before.mp4 after.mp4 ../video/stuttgart-before-after.mp4 --holds 0,7.35,19  # wipe: production vs dev cache (--film stuttgart-before-after; steps in beforeafter.ts)
 ```
 
 | Step | File | What it does |

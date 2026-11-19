@@ -2,7 +2,7 @@
  * Social clip: a smooth, deterministic camera flight over the live viewer, rendered frame by frame
  * (no screen recording, so no dropped frames) and encoded with ffmpeg.
  *
- *   npx tsx src/film.ts [url] [out.mp4] [--city tel-aviv-yafo] [--fps 60] [--size 1080 | WxH] [--seconds 14] [--blur 1] [--grain 5] [--preview]
+ *   npx tsx src/film.ts [url] [out.mp4] [--city tel-aviv-yafo] [--film <FILMS key, default: the city>] [--fps 60] [--size 1080 | WxH] [--seconds 14] [--blur 1] [--grain 5] [--preview]
  *
  * - --city picks the shot list (FILMS) and the title; the clip opens /<city> on the site.
  *
@@ -25,7 +25,7 @@ import { CITIES, DEFAULT_CITY, REGIONS } from "./places.ts";
 const args = process.argv.slice(2);
 const flag = (name: string, def: number) => { const i = args.indexOf(`--${name}`); return i >= 0 ? Number(args[i + 1]) : def; };
 const preview = args.includes("--preview");
-const VALUED = ["--fps", "--size", "--seconds", "--blur", "--grain", "--city"];
+const VALUED = ["--fps", "--size", "--seconds", "--blur", "--grain", "--city", "--film"];
 const pos = args.filter((a, i) => !a.startsWith("--") && !VALUED.includes(args[i - 1]));
 const SLUG = (() => { const i = args.indexOf("--city"); return i >= 0 ? args[i + 1] : DEFAULT_CITY; })(), CITY = CITIES[SLUG];
 if (!CITY) throw new Error(`unknown city ${SLUG}`);
@@ -64,9 +64,16 @@ const FILMS: Record<string, { shots: Shot[]; planeShot?: number }> = {
     { at: [48.7965, 9.2230], scale: 0.3, note: "wide: up the river to Bad Cannstatt" },
     { at: [48.7922, 9.2320], scale: 0.6, hold: 2.0, note: "the Neckarpark: the stadium and its pitches (title)" },
   ] },
+  // before/after: the same path rendered from production and from the dev cache (--city stuttgart --film stuttgart-before-after)
+  "stuttgart-before-after": { shots: [
+    { at: [48.7792, 9.1812], scale: 0.62, hold: 5.0, note: "Schlossplatz: Neues Schloss, Königsbau, Kunstgebäude, Landtag, Staatstheater" },
+    { at: [2040, 0], px: true, scale: 0.62, hold: 5.0, note: "Hauptbahnhof: the Bonatz building, the tracks, the S21 site" },
+    { at: [48.7950, 9.1960], scale: 0.3, note: "wide: through the Schlossgarten and Rosensteinpark" },
+    { at: [48.8050, 9.2045], scale: 0.55, hold: 5.0, note: "the Wilhelma (title)" },
+  ] },
 };
-const FILM = FILMS[SLUG];
-if (!FILM) throw new Error(`no shots for ${SLUG} (FILMS in film.ts)`);
+const FILM_KEY = (() => { const i = args.indexOf("--film"); return i >= 0 ? args[i + 1] : SLUG; })(), FILM = FILMS[FILM_KEY];
+if (!FILM) throw new Error(`no shots for ${FILM_KEY} (FILMS in film.ts)`);
 const SHOTS = FILM.shots;
 const HOLD_ZOOM = 0.035;  // ln-scale drift during each hold (a slow push in, so poses never freeze)
 const PLANE_SHOT = FILM.planeShot; // the airliner crosses the frame centre during this shot's hold
