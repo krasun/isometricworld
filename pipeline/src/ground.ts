@@ -175,12 +175,12 @@ function areaKind(t: Record<string, string>): string | null {
   if (na === "wood" || lu === "forest") return "wood";
   if (["scrub", "grassland", "heath", "wetland", "bare_rock"].includes(na)) return "scrub";
   if (lu === "cemetery" || am === "grave_yard") return "cemetery";
-  if (LGL && lu === "meadow") return "meadow";
+  if (lu === "meadow") return "meadow";
   if (lu === "flowerbed") return "flowerbed";
   if (["park", "garden", "dog_park", "golf_course", "recreation_ground", "nature_reserve"].includes(le)
     || ["grass", "meadow", "village_green", "recreation_ground"].includes(lu)) return "park";
-  if (LGL && ["vineyard", "allotments", "orchard"].includes(lu)) return lu; // the Kessel's slopes: own colours and rows
-  if (["farmland", "orchard", "allotments", "plant_nursery", "greenhouse_horticulture", "vineyard"].includes(lu)) return "farm";
+  if (["vineyard", "allotments", "orchard"].includes(lu)) return lu; // own colours and rows (vines, hedged plots)
+  if (["farmland", "plant_nursery", "greenhouse_horticulture"].includes(lu)) return "farm";
   if (["construction", "brownfield", "greenfield", "landfill"].includes(lu)) return "dirt";
   if (am === "parking") return "parking";
   if (t["area:highway"] || t.place === "square" || (t.highway === "pedestrian" && t.area === "yes")
@@ -188,8 +188,8 @@ function areaKind(t: Record<string, string>): string | null {
     return /^(fine_gravel|gravel|compacted|pebblestone)$/.test(t.surface ?? "") ? "gravel" : "paving";
   if (["school", "university", "college", "hospital"].includes(am)) return "campus";
   if (t.aeroway === "aerodrome") return "park"; // a small airfield's grass (EDTQ Pattonville is also tagged landuse=military)
-  if (LGL && lu === "railway") return "railyard"; // styled: light gravel under the darker track beds
-  if (["industrial", "railway", "port", "military", "depot", "garages"].includes(lu)) return "industrial";
+  if (lu === "railway") return "railyard"; // styled: light gravel under the darker track beds (else as industrial)
+  if (["industrial", "port", "military", "depot", "garages"].includes(lu)) return "industrial";
   if (["commercial", "retail"].includes(lu)) return "commercial";
   if (lu === "residential") return "residential";
   return null;
