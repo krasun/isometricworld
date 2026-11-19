@@ -81,6 +81,17 @@ function tileSource(layer: string, have: Index) {
   };
 }
 
+/**
+ * Tiles kept decoded. The canvas drawer keeps each tile as a canvas of its own, 1 MB for a 512 px tile, so a fixed 600
+ * could hold 630 MB of canvases (iOS Safari caps a page's canvas memory well below that). Measured, one layer draws at
+ * most ~8 tiles per megapixel of the screen + 12 in a frame, and a salt mine's levels (surface dimmed, levels fading)
+ * up to ~3× that: keep four screens' worth, at least 150. The physical screen, so a window made larger still fits.
+ */
+function cacheTiles() {
+  const dpr = window.devicePixelRatio || 1, mpx = (screen.width * dpr * screen.height * dpr) / 1e6;
+  return Math.max(150, Math.round(4 * (8 * mpx + 12)));
+}
+
 const viewer = OpenSeadragon({
   element: document.getElementById("map")!,
   tileSources: tileSource("map", mapIndex) as unknown as OpenSeadragon.TileSourceOptions,
@@ -94,7 +105,7 @@ const viewer = OpenSeadragon({
   immediateRender: false,
   imageLoaderLimit: 8,
   minPixelRatio: 0.8,     // fetch the finer level only once it is really needed (~40% fewer bytes)
-  maxImageCacheCount: 600,
+  maxImageCacheCount: cacheTiles(),
   minZoomImageRatio: 0.01, // real limit is set on open: the whole metro
   maxZoomPixelRatio: 2.5,
   visibilityRatio: 0.4,
