@@ -3,11 +3,11 @@
  * out along its own painted outline with a chroma key. Fixes what window-by-window painting can't: each window invents
  * its own fair (five Ferris wheels, hard seams), and LoD2 massing gets painted literally (a stadium as an office ring).
  *
- *   npm -w pipeline exec tsx src/landmark.ts <area> <name> overview --frame x,y,w,h [--base paint|render] [--aerial]
+ *   npm -w pipeline exec tsx src/landmark.ts <area> <name> overview --frame x,y,w,h [--base paint|render] [--aerial [--aerial-source lgl|city]]
  *       [--style reference-simple.png] [--ref data/raw/photos/<dir>/<file>]…
- *       → landmark-<name>/art.png: frame (global art px, 3:2) painted at 1536×1024 from pipeline/landmarks/<name>/overview.txt.
+ *       → landmark-<name>/art.png: frame (global art px, 3:2 or 2:3) painted at 1536×1024 (1024×1536) from pipeline/landmarks/<name>/overview.txt.
  *         --base paint: edit the area's existing painting (outside the landmark stays pixel-identical); render: paint the
- *         3D render. --aerial adds the draped orthophoto (true shape). --ref: open-licence photos (PD/CC0/CC BY only).
+ *         3D render. --aerial adds the draped orthophoto (true shape; aerial.ts --source, city is sharper). --ref: open-licence photos (PD/CC0/CC BY only).
  *   … <area> <name> edit <prompt.txt> [--box x0,y0,x1,y1]
  *       → Codex edits art.png. Codex redraws the WHOLE image (it dropped a footbridge once), so --box pastes only that
  *         box (art px of the 1536×1024 image, 8 px feather) into art.png. The previous art is kept as art-<n>.png.
@@ -34,19 +34,22 @@ import { register } from "./register.ts";
 const { values: args, positionals } = parseArgs({
   allowPositionals: true,
   options: {
-    frame: { type: "string" }, base: { type: "string", default: "paint" }, aerial: { type: "boolean", default: false },
+    frame: { type: "string" }, base: { type: "string", default: "paint" }, aerial: { type: "boolean", default: false }, "aerial-source": { type: "string", default: "lgl" },
     style: { type: "string", default: "reference.png" }, ref: { type: "string", multiple: true, default: [] }, box: { type: "string" },
   },
 });
 const [areaName, name, cmd, promptArg] = positionals;
 if (!areaName || !name || !["overview", "edit", "key"].includes(cmd)) throw new Error("usage: landmark.ts <area> <name> overview|edit|key …");
 openArea(areaName);
-const OW = 1536, OH = 1024, T = CAMERA.tile;
+const T = CAMERA.tile;
 const base = join(DERIVED, areaName), dir = join(base, `landmark-${name}`), prompts = join(PIPELINE, "landmarks", name);
 const metaFile = join(dir, "landmark.json");
 interface Meta { frame: [number, number, number, number]; base: "paint" | "render"; aerial: boolean; refs: string[] }
+// the image model paints 1536×1024 or 1024×1536: a portrait frame (2:3) for tall landmarks (the Wilhelma)
+const frameWH = args.frame ? args.frame.split(",").slice(2).map(Number) : existsSync(metaFile) ? readJson<Meta>(metaFile).frame.slice(2) : [3, 2];
+const PORTRAIT = frameWH[1] > frameWH[0], OW = PORTRAIT ? 1024 : 1536, OH = PORTRAIT ? 1536 : 1024;
 const art = join(dir, "art.png");
-const output = (file: string) => `Output: one ${OW}x${OH} landscape image, same framing and scale as image 1, no text, no border, no vignette. \
+const output = (file: string) => `Output: one ${OW}x${OH} ${PORTRAIT ? "portrait" : "landscape"} image, same framing and scale as image 1, no text, no border, no vignette. \
 When done, copy the final PNG to ${file} and reply only with that path.\n`;
 
 /** Codex run in dir; the result file must appear (else the log tail is thrown) */
@@ -67,7 +70,7 @@ const fill = (f: string) => sharp(f).resize(OW, OH, { fit: "fill", kernel: "lanc
 
 if (cmd === "overview") {
   const frame = args.frame?.split(",").map(Number) as Meta["frame"];
-  if (frame?.length !== 4 || Math.abs(frame[2] / frame[3] - 1.5) > 0.01) throw new Error("--frame x,y,w,h (global art px, 3:2)");
+  if (frame?.length !== 4 || Math.abs(frame[2] / frame[3] - OW / OH) > 0.01) throw new Error("--frame x,y,w,h (global art px, 3:2 or 2:3)");
   if (args.base !== "paint" && args.base !== "render") throw new Error("--base paint|render");
   mkdirSync(dir, { recursive: true });
   const [x0, y0, w, h] = frame, scale = OW / w;
@@ -110,7 +113,7 @@ if (cmd === "overview") {
   }, "height.png");
   const images = ["input.png", "height.png", "style.png"];
   copyFileSync(join(PIPELINE, "style", args.style!), join(dir, "style.png"));
-  if (args.aerial) { await mosaic(tile("aerial-lgl"), "aerial.png"); images.push("aerial.png"); }
+  if (args.aerial) { await mosaic(tile(`aerial-${args["aerial-source"]}`), "aerial.png"); images.push("aerial.png"); }
   for (const [k, f] of args.ref!.entries()) {
     await sharp(f).resize(1024, 1024, { fit: "inside" }).png().toFile(join(dir, `ref${k + 1}.png`));
     images.push(`ref${k + 1}.png`);

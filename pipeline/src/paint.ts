@@ -767,7 +767,10 @@ async function assemble(all = false) {
       const ox = i * STRIDE - tx * T, oy = j * STRIDE - ty * T;
       for (let y = Math.max(0, oy); y < Math.min(T, oy + WIN); y++)
         for (let x = Math.max(0, ox); x < Math.min(T, ox + WIN); x++) {
-          const wx = x - ox, wy = y - oy, w = ww[wy * WIN + wx], s = (wy * WIN + wx) * 3, d = y * T + x;
+          // the tiny ramp floor fills corners no seam claims: where four windows meet, the two vertical (and the two
+          // horizontal) cuts can disagree and leave a patch with weight 0 in all of them (a black hole at the Wilhelma)
+          const wx = x - ox, wy = y - oy, s = (wy * WIN + wx) * 3, d = y * T + x;
+          const w = Math.max(ww[wy * WIN + wx], 1e-4 * ramp[wx] * ramp[wy]);
           if (w <= 0) continue;
           acc[d * 3] += px[s] * w; acc[d * 3 + 1] += px[s + 1] * w; acc[d * 3 + 2] += px[s + 2] * w;
           wsum[d] += w;
