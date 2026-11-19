@@ -16,11 +16,11 @@
  * available to the logged-in ChatGPT account; negative window or centre values need the `=` form)
  */
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, linkSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import sharp, { type OverlayOptions } from "sharp";
-import { openArea } from "./areas.ts";
+import { AREAS, openArea } from "./areas.ts";
 import { CAMERA, llhToPixel } from "./camera.ts";
 import { DERIVED, PIPELINE, readJson, writeAtomic } from "./paths.ts";
 import { seaH, readHeights } from "./heights.ts";
@@ -68,7 +68,15 @@ rails or lane markings across a bridge deck.
 When done, copy the final PNG to {out} and reply only with that path.
 `;
 /** What differs per region in the prompt (and the tree species sheet). */
-interface Local { ground: string; country: string; render: string; treesOf: string; treeHint: string; materials: string; trees: string }
+interface Local {
+  ground: string; country: string; render: string; treesOf: string; treeHint: string; materials: string; trees: string;
+  /**
+   * Refuse paintings with invented roofs or far busier than the render (inventedRoofs, inventedStructure), and
+   * leave the window unpainted after 3 tries. Thresholds tuned on Zagreb's render; other regions opt in after
+   * checking them on their own paintings.
+   */
+  inventionChecks?: boolean;
+}
 const LOCAL: Record<string, Local> = {
   "israel-center": {
     ground: "Streets, squares, parks, beach and sea",
@@ -103,6 +111,26 @@ Gründerzeit and post-war blocks, red and brown clay-tile pitched roofs, grey sl
 palaces, glass and concrete offices, dormers, chimneys, real window grids, solar panels where the render shows them. \
 Tall towers stay tall.`,
     trees: join(PIPELINE, "style", "trees-stuttgart.png"),
+  },
+  zagreb: {
+    ground: "Streets, squares, the market, parks and tram tracks",
+    country: "Croatia",
+    render: `The layout and every roof shape are exact (real \
+pitched, hipped and flat roofs from the city's 3D building data); the colours and window patterns are a stylised draft \
+of the real ones (ochre, yellow, cream and pastel plaster, red-brown tile, green copper). Grey = asphalt, pale = \
+pavement/plaza, green = grass/park, brown lines = tram tracks, the rows of red discs = the red market umbrellas of Dolac. \
+Tree crowns are round deciduous crowns.`,
+    treesOf: "Zagreb",
+    treeHint: " (broad rounded deciduous crowns: plane trees, horse chestnuts, limes, in summer green)",
+    materials: `Draw believable Zagreb \
+materials: Austro-Hungarian blocks in ochre, Maria-Theresa yellow, cream, salmon and pastel plaster with cornices and \
+tall windows, red and brown clay-tile roofs with dormers and chimneys, green copper on churches and public buildings. \
+Keep every building's colour from image 1, and draw a church, tower or market only where image 1 shows one. Woods, \
+parks, fields and water stay exactly that: never add buildings, streets or squares where image 1 shows trees, grass or \
+water. Tall towers stay tall. Draw no trains, trams or buses anywhere (they are animated on top of the map): leave rail \
+and tram tracks empty.`,
+    trees: join(PIPELINE, "style", "trees-stuttgart.png"),
+    inventionChecks: true,
   },
   wieliczka: {
     ground: "Streets, squares, parks, fields, rail and streams",
@@ -160,7 +188,14 @@ const tileSet = new Set<string>(manifest.tiles.map((t: any) => `${t.x}_${t.y}`))
 const winDir = join(base, "windows");
 mkdirSync(winDir, { recursive: true });
 
-const renderFile = (tx: number, ty: number) => join(base, "render", `${tx}_${ty}.png`);
+/** A render or height tile of this area, else of any other area of the region (all share the region's grid). */
+const SIBLINGS = Object.entries(AREAS).filter(([n, a]) => a.region === AREA.region && n !== areaName).map(([n]) => join(DERIVED, n));
+function regionFile(kind: "render" | "height", tx: number, ty: number) {
+  const own = join(base, kind, `${tx}_${ty}.png`);
+  if (existsSync(own)) return own;
+  return SIBLINGS.map((d) => join(d, kind, `${tx}_${ty}.png`)).find((f) => existsSync(f)) ?? own;
+}
+const renderFile = (tx: number, ty: number) => regionFile("render", tx, ty);
 const winFile = (i: number, j: number) => join(winDir, `${i}_${j}.png`);
 
 /** Crop a global-pixel box out of tiles produced by `load(tx, ty)` (1024² PNG buffers or null). */
@@ -182,7 +217,7 @@ async function cropGlobal(x: number, y: number, w: number, h: number,
 
 /** Height pass as a grayscale structure image: black = ground, white = 60 m above `ground`. */
 async function heightTile(tx: number, ty: number, ground: number): Promise<Buffer | null> {
-  const f = join(base, "height", `${tx}_${ty}.png`);
+  const f = regionFile("height", tx, ty);
   if (!existsSync(f)) return null;
   const h = await readHeights(f);
   const g = Buffer.alloc(h.length);
@@ -195,7 +230,7 @@ async function windowGround(x: number, y: number) {
   const all: number[] = [];
   for (let ty = Math.floor(y / T); ty <= Math.floor((y + WIN - 1) / T); ty++)
     for (let tx = Math.floor(x / T); tx <= Math.floor((x + WIN - 1) / T); tx++) {
-      const f = join(base, "height", `${tx}_${ty}.png`);
+      const f = regionFile("height", tx, ty);
       if (existsSync(f)) for (const v of await readHeights(f)) if (!Number.isNaN(v) && v > seaH() - 0.5) all.push(v);
     }
   all.sort((a, b) => a - b);
@@ -259,10 +294,103 @@ function limitWait(log: string) {
   return backoff * 60_000;
 }
 
+/**
+ * Painter: the Codex CLI (ChatGPT plan, the default) or an image model through fal.ai (PAINT_BACKEND=fal: pay per
+ * call, many windows at once). The bake-off on Zagreb (Nov 2026) picked openai/gpt-image-2.6/sunburst/edit at "high".
+ * google/nano-banana-2.1/edit changes the layout least (a retouched render more than a painting, ~$0.03): Zagreb's
+ * last windows, where gpt-image kept inventing buildings on fields and woods, were filled with it.
+ * Every fal call's billed cost (x-fal-billable-units, USD) goes to paint-spend.jsonl; PAINT_BUDGET_USD stops new calls.
+ */
+const BACKEND = process.env.PAINT_BACKEND ?? "codex";
+const FAL_ENDPOINT = process.env.PAINT_FAL_ENDPOINT ?? "openai/gpt-image-2.6/sunburst/edit";
+const FAL_QUALITY = process.env.PAINT_QUALITY ?? "high";
+/** Google's image models on fal (Nano Banana) take an aspect ratio and a resolution, not a size and a quality */
+const GOOGLE = /nano-banana|gemini/.test(FAL_ENDPOINT);
+const BUDGET = Number(process.env.PAINT_BUDGET_USD) || Infinity;
+const SPEND = join(base, "paint-spend.jsonl");
+const spendLog: Array<{ usd?: number }> = existsSync(SPEND) ? readFileSync(SPEND, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+let spent = spendLog.reduce((a, l) => a + (l.usd || 0), 0);
+/** cost held back for calls in flight (-j workers call at once): the most one call has cost so far, $0.20 before any */
+let reserved = 0, perCall = Math.max(0.2, ...spendLog.map((l) => l.usd || 0));
+const overBudget = () => BACKEND === "fal" && spent + reserved + perCall > BUDGET;
+
+/**
+ * USD per billable unit of the endpoint (fal's pricing API): gpt-image-2.6 and Nano Banana 2.1 bill in dollar units,
+ * Nano Banana Pro per image ($0.15). Unknown: 1 (the units are logged too, so the ledger can be corrected).
+ */
+let price: Promise<number> | undefined;
+function unitPrice(): Promise<number> {
+  price ??= fetch(`https://api.fal.ai/v1/models/pricing?endpoint_id=${encodeURIComponent(FAL_ENDPOINT)}`,
+    { headers: { Authorization: `Key ${process.env.FAL_KEY}` }, signal: AbortSignal.timeout(30_000) })
+    .then((r) => r.json()).then((j: any) => Number(j.prices?.[0]?.unit_price) || 1).catch(() => 1);
+  return price;
+}
+
+async function falPaint(cwd: string, prompt: string, id: string): Promise<void> {
+  const log = join(cwd, "codex.log");
+  if (overBudget()) { writeFileSync(log, `budget of $${BUDGET} reached`); return; }
+  // the API gets the images directly: drop the Codex-only instructions (use the tool, copy the file)
+  let text = prompt.replace(/^Use your image generation tool\. /, "").replace(/\s*When done, copy[\s\S]*$/, "").trim();
+  // Google's models keep the render's own look unless told otherwise: paint like the painted edge strips
+  if (GOOGLE && text.includes("ALREADY-PAINTED")) text += "\nRepaint ALL of image 1 in the exact style of its already-painted edge strips: the same small, "
+    + "finely drawn tree crowns, the same light ground showing between them, the same colours and brightness. No part of the "
+    + "result may keep the flat, chunky look of the 3D render: it must be impossible to tell where the strips end.";
+  const uri = (f: string) => `data:image/png;base64,${readFileSync(join(cwd, f)).toString("base64")}`;
+  let r: Response | undefined, j: any = {}, usd = 0;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    if (overBudget()) { writeFileSync(log, `budget of $${BUDGET} reached`); return; }
+    const hold = perCall;
+    reserved += hold;
+    try {
+      r = await fetch(`https://fal.run/${FAL_ENDPOINT}`, {
+        method: "POST", headers: { Authorization: `Key ${process.env.FAL_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: text, image_urls: ["input.png", "height.png", "style.png", "trees.png"].map(uri),
+          num_images: 1, output_format: "png",
+          ...(GOOGLE ? { aspect_ratio: "1:1", resolution: "1K", ...(process.env.PAINT_THINKING ? { thinking_level: process.env.PAINT_THINKING } : {}) } : { image_size: { width: WIN, height: WIN }, quality: FAL_QUALITY }) }),
+        signal: AbortSignal.timeout(600_000),
+      });
+      const units = Number(r.headers.get("x-fal-billable-units") ?? 0);
+      usd = units * (await unitPrice());
+      spent += usd;
+      perCall = Math.max(perCall, usd);
+      appendFileSync(SPEND, JSON.stringify({ window: id, usd, units, status: r.status, request: r.headers.get("x-fal-request-id"), at: new Date().toISOString() }) + "\n");
+      j = await r.json().catch(() => ({}));
+    } catch (err) { // no response: nothing billed, call again
+      writeFileSync(log, String(err));
+      r = undefined;
+      await sleep(10_000 * attempt);
+      continue;
+    } finally {
+      reserved -= hold;
+    }
+    if (r.status === 429 || r.status >= 500) { writeFileSync(log, JSON.stringify(j)); await sleep(20_000 * attempt); continue; }
+    break;
+  }
+  if (!r || !r.ok || !j.images?.[0]?.url) { if (r) writeFileSync(log, JSON.stringify(j)); return; }
+  // the image is paid for: retry only its download, never the generation
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const d = await fetch(j.images[0].url, { signal: AbortSignal.timeout(120_000) });
+      if (!d.ok) throw new Error(`HTTP ${d.status}`);
+      const img = Buffer.from(await d.arrayBuffer());
+      // Google's models pick their own pixel size for 1:1 at 1K: back to the window's
+      const meta = await sharp(img).metadata();
+      writeFileSync(join(cwd, "out.png"), meta.width === WIN && meta.height === WIN ? img : await sharp(img).resize(WIN, WIN, { fit: "fill" }).png().toBuffer());
+      writeFileSync(log, `fal ${FAL_ENDPOINT} ${FAL_QUALITY} $${usd} request ${r.headers.get("x-fal-request-id")}`);
+      return;
+    } catch (err) {
+      writeFileSync(log, `paid image ${j.images[0].url} not downloaded: ${String(err)}`);
+      await sleep(5_000 * attempt);
+    }
+  }
+}
+
 function codex(cwd: string, prompt: string): Promise<void> {
   return new Promise((resolve) => {
     const log = openSync(join(cwd, "codex.log"), "w");
-    const model = [...(args.model ? ["-m", args.model] : []), ...(args.effort ? ["-c", `model_reasoning_effort="${args.effort}"`] : [])];
+    // the Codex model: --model, else CODEX_MODEL, else ~/.codex/config.toml's; --effort its reasoning effort
+    const codexModel = args.model ?? process.env.CODEX_MODEL;
+    const model = [...(codexModel ? ["-m", codexModel] : []), ...(args.effort ? ["-c", `model_reasoning_effort="${args.effort}"`] : [])];
     const p = spawn("codex", ["exec", "--skip-git-repo-check", "-s", "workspace-write", ...model, "-C", cwd, "-i", "input.png", "-i", "height.png", "-i", "style.png", "-i", "trees.png", "-"],
       { stdio: ["pipe", log, log] });
     const timer = setTimeout(() => p.kill("SIGTERM"), 900_000);
@@ -276,7 +404,7 @@ async function seaFraction(i: number, j: number) {
   let wet = 0, n = 0;
   for (let y = j * STRIDE; y < j * STRIDE + WIN; y += 32)
     for (let x = i * STRIDE; x < i * STRIDE + WIN; x += 32) {
-      const tx = Math.floor(x / T), ty = Math.floor(y / T), f = join(base, "height", `${tx}_${ty}.png`);
+      const tx = Math.floor(x / T), ty = Math.floor(y / T), f = regionFile("height", tx, ty);
       if (!existsSync(f)) continue;
       const h = (await readHeights(f))[Math.floor((y - ty * T) / 4) * 256 + Math.floor((x - tx * T) / 4)];
       n++;
@@ -289,6 +417,45 @@ async function seaFraction(i: number, j: number) {
 async function cells(file: string | Buffer) {
   const d = await sharp(file).removeAlpha().resize(8, 8, { fit: "fill" }).raw().toBuffer();
   return Array.from({ length: 64 }, (_, k) => (d[k * 3] + d[k * 3 + 1] + d[k * 3 + 2]) / 3);
+}
+
+/**
+ * Share of a painting's area that is roof tile (red/orange, saturated) with no roof in the render within ~16 m:
+ * buildings the model invented. Normal paintings stay under ~3 %; invented towns in woods reach 10–16 %.
+ */
+async function inventedRoofs(out: string, input: string) {
+  const mask = async (f: string) => {
+    const d = await sharp(f).removeAlpha().resize(128, 128, { fit: "fill" }).raw().toBuffer(), m = new Uint8Array(128 * 128);
+    for (let k = 0; k < m.length; k++) { const r = d[k * 3], g = d[k * 3 + 1], b = d[k * 3 + 2]; m[k] = r > 120 && r > g * 1.35 && r > b * 1.6 ? 1 : 0; }
+    return m;
+  };
+  const [pm, rm] = [await mask(out), await mask(input)];
+  let invented = 0;
+  for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) {
+    if (!pm[y * 128 + x]) continue;
+    let near = false;
+    for (let dy = -3; dy <= 3 && !near; dy++) for (let dx = -3; dx <= 3 && !near; dx++) {
+      const yy = y + dy, xx = x + dx;
+      near = yy >= 0 && xx >= 0 && yy < 128 && xx < 128 && rm[yy * 128 + xx] === 1;
+    }
+    if (!near) invented++;
+  }
+  return invented / (128 * 128);
+}
+const MAX_INVENTED = 0.04;
+
+/** Share of pixels with a strong edge (256 px greyscale): good paintings stay within ~1.0–1.4× their render's. */
+async function edgeDensity(f: string) {
+  const N = 256, g = await sharp(f).removeAlpha().greyscale().resize(N, N, { fit: "fill" }).raw().toBuffer();
+  let e = 0;
+  for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++)
+    if (Math.hypot(g[y * N + x + 1] - g[y * N + x - 1], g[(y + 1) * N + x] - g[(y - 1) * N + x]) > 40) e++;
+  return e / ((N - 2) * (N - 2));
+}
+/** Structure invented on a nearly blank render (fields, tracks, squares): much busier painting than render. */
+async function inventedStructure(out: string, input: string) {
+  const [p, r] = [await edgeDensity(out), await edgeDensity(input)];
+  return p - r > 0.15 && p > 2 * r;
 }
 
 /** Codex sometimes returns black bands or near-black images: any cell much darker than the render. */
@@ -336,9 +503,11 @@ async function paintWindow(i: number, j: number) {
     .replace("{continuation}", edges.length ? CONTINUATION.replace("{edges}", edges.join(" and ")) : "");
   for (let attempt = 1; attempt <= 3; attempt++) {
     while (Date.now() < resumeAt) await sleep(Math.min(60_000, resumeAt - Date.now()));
+    if (overBudget()) { console.warn(`  ${i}_${j}: paint budget of $${BUDGET} reached ($${spent.toFixed(2)} spent), skipped`); return; }
     rmSync(join(work, "out.png"), { force: true });
     const t0 = Date.now();
-    await codex(work, prompt);
+    if (BACKEND === "fal") await falPaint(work, prompt, `${i}_${j}`);
+    else await codex(work, prompt);
     if (!existsSync(join(work, "out.png"))) {
       const log = readFileSync(join(work, "codex.log"), "utf8").slice(-4000);
       if (LIMIT.test(log)) {
@@ -356,6 +525,18 @@ async function paintWindow(i: number, j: number) {
       if ((await hasDarkPatch(join(work, "out.png"), join(work, "input.png"))) && attempt < 3) {
         console.warn(`  ${i}_${j}: black band or patch in the paint, repainting`);
         continue;
+      }
+      if (local.inventionChecks) {
+        const invented = await inventedRoofs(join(work, "out.png"), join(work, "input.png"));
+        if (invented > MAX_INVENTED && attempt < 3) {
+          console.warn(`  ${i}_${j}: ${(invented * 100).toFixed(1)} % invented roofs (buildings the render doesn't have), repainting`);
+          continue;
+        }
+        if (invented > MAX_INVENTED) { console.warn(`  ${i}_${j}: still inventing buildings after 3 attempts, left unpainted`); return; }
+        if (await inventedStructure(join(work, "out.png"), join(work, "input.png"))) {
+          if (attempt < 3) { console.warn(`  ${i}_${j}: painting far busier than its render (invented structure), repainting`); continue; }
+          console.warn(`  ${i}_${j}: still inventing structure after 3 attempts, left unpainted`); return;
+        }
       }
       const structured = r.texture >= MIN_TEXTURE; // open sea / empty land: correlation is meaningless
       if (structured && r.score < MIN_MATCH && attempt < 3) {
@@ -384,7 +565,7 @@ const heightCache = new Map<string, Float32Array | null>();
 async function heightAt(x: number, y: number) {
   const tx = Math.floor(x / T), ty = Math.floor(y / T), k = `${tx}_${ty}`;
   if (!heightCache.has(k)) {
-    const f = join(base, "height", `${k}.png`);
+    const f = regionFile("height", tx, ty);
     heightCache.set(k, existsSync(f) ? await readHeights(f) : null);
   }
   const h = heightCache.get(k);
@@ -459,19 +640,40 @@ async function assemble(all = false, only?: Set<string>) {
   const edge = (k: number) => Math.min(1, Math.max(0, (k + 0.5 - (OVERLAP - FEATHER) / 2) / FEATHER));
   for (let k = 0; k < WIN; k++) ramp[k] = Math.min(edge(k), edge(WIN - 1 - k));
   mkdirSync(join(base, "paint"), { recursive: true });
-  let written = 0;
+  let written = 0, withdrawn: string | undefined;
+  // tile -> the windows a partial tile was assembled from (a full tile uses all that cover it: not listed)
+  const partialFile = join(base, "paint-partial.json");
+  const partialTiles: Record<string, string> = existsSync(partialFile) ? readJson(partialFile) : {};
   for (const k of tileSet) {
     const [tx, ty] = k.split("_").map(Number);
     const covering: Array<[number, number]> = [];
     for (let j = Math.floor((ty * T - WIN) / STRIDE) + 1; j * STRIDE < (ty + 1) * T; j++)
       for (let i = Math.floor((tx * T - WIN) / STRIDE) + 1; i * STRIDE < (tx + 1) * T; i++) covering.push([i, j]);
-    if (!covering.every(([i, j]) => existsSync(winFile(i, j)))) continue;
-    const tile = join(base, "paint", `${tx}_${ty}.png`);
-    // rebuilt when any covering window was repainted since
+    // a tile is painted as soon as one window covers it; where windows are missing the render shows through,
+    // faded in across the window feather (no hard edge between the painted and the unpainted map)
+    // (only): nothing outside the given windows is touched
     if (only && !covering.some(([i, j]) => only.has(`${i}_${j}`))) continue;
-    if (!only && existsSync(tile) && !args.force && !all && covering.every(([i, j]) => mtime(winFile(i, j)) <= mtime(tile))) continue;
+    const have = covering.filter(([i, j]) => existsSync(winFile(i, j)));
+    const tile = join(base, "paint", `${tx}_${ty}.png`);
+    if (!have.length) { // windows withdrawn: back to the render; the old tile moves aside, never deleted
+      if (existsSync(tile)) {
+        withdrawn ??= join(base, "paint-withdrawn", new Date().toISOString().slice(0, 19).replace(/:/g, "-"));
+        mkdirSync(withdrawn, { recursive: true });
+        renameSync(tile, join(withdrawn, `${tx}_${ty}.png`));
+      }
+      delete partialTiles[k];
+      continue;
+    }
+    const partial = have.length < covering.length;
+    // rebuilt when any covering window was (re)painted since, the set of windows changed (one withdrawn or added),
+    // or, for a partial tile, the render showing through was re-rendered
+    const used = have.map(([i, j]) => `${i}_${j}`).join(" ");
+    const usedBefore = partialTiles[k] ?? covering.map(([i, j]) => `${i}_${j}`).join(" ");
+    if (!only && existsSync(tile) && !args.force && !all && used === usedBefore
+      && have.every(([i, j]) => mtime(winFile(i, j)) <= mtime(tile))
+      && !(partial && existsSync(renderFile(tx, ty)) && mtime(renderFile(tx, ty)) > mtime(tile))) continue;
     const acc = new Float32Array(T * T * 3), wsum = new Float32Array(T * T);
-    for (const [i, j] of covering) {
+    for (const [i, j] of have) {
       const px = await sharp(winFile(i, j)).resize(WIN, WIN).removeAlpha().raw().toBuffer();
       const fix = seaFix.get(`${i}_${j}`);
       if (fix) { // bilinear cell weights × colour offset
@@ -496,10 +698,18 @@ async function assemble(all = false, only?: Set<string>) {
         }
     }
     const out = Buffer.alloc(T * T * 3);
-    for (let d = 0; d < T * T; d++) for (let c = 0; c < 3; c++) out[d * 3 + c] = acc[d * 3 + c] / Math.max(wsum[d], 1e-6);
+    const render = partial && existsSync(renderFile(tx, ty)) ? await sharp(renderFile(tx, ty)).removeAlpha().raw().toBuffer() : null;
+    for (let d = 0; d < T * T; d++) {
+      const w = wsum[d];
+      for (let c = 0; c < 3; c++)
+        out[d * 3 + c] = render && w < 1 ? acc[d * 3 + c] + render[d * 3 + c] * (1 - w) : acc[d * 3 + c] / Math.max(w, 1e-6);
+    }
     await writeAtomic(sharp(out, { raw: { width: T, height: T, channels: 3 } }).png(), join(base, "paint", `${tx}_${ty}.png`));
+    if (partial) partialTiles[k] = used; else delete partialTiles[k];
+    writeFileSync(partialFile, JSON.stringify(partialTiles));
     written++;
   }
+  writeFileSync(partialFile, JSON.stringify(partialTiles));
   console.log(`  assembled ${written} art tiles`);
 }
 
@@ -532,6 +742,28 @@ async function main() {
     mkdirSync(keep, { recursive: true });
     for (const [i, j] of wins) if (existsSync(winFile(i, j))) renameSync(winFile(i, j), join(keep, `${i}_${j}.png`));
     console.log(`  ${wins.length} windows over OSM 3D buildings; old paintings in ${keep}`);
+  }
+  if (!args.window && !OLDER && !args.assemble && !args.parts) {
+    // reuse what other areas of the region painted: this area's windows and their neighbours (for continuation).
+    // Each window is considered once (windows-reused.json): one this area has or had is never linked back, so a
+    // window deleted on purpose (a seam fix, a dark window dropped) is repainted, not restored from a sibling.
+    const want = new Set<string>();
+    for (const [i, j] of wins) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) want.add(`${i + di}_${j + dj}`);
+    const ledgerFile = join(base, "windows-reused.json");
+    const ledger = new Set<string>(existsSync(ledgerFile) ? readJson(ledgerFile) : []);
+    let linked = 0;
+    for (const k of want) {
+      if (ledger.has(k)) continue;
+      const own = join(winDir, `${k}.png`);
+      if (existsSync(own)) { ledger.add(k); continue; }
+      const sib = SIBLINGS.map((d) => join(d, "windows", `${k}.png`)).find((f) => existsSync(f));
+      if (!sib) continue; // not painted anywhere yet: a sibling may still paint it
+      try { linkSync(sib, own); } catch { copyFileSync(sib, own); }
+      ledger.add(k);
+      linked++;
+    }
+    writeFileSync(ledgerFile, JSON.stringify([...ledger].sort()));
+    if (linked) console.log(`  reused ${linked} windows painted by other areas of the region`);
   }
   if (args.assemble) {
     const seaRef = await harmoniseSea();

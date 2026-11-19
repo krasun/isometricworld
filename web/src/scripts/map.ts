@@ -3,15 +3,15 @@ import OpenSeadragon from "openseadragon";
 import type { Traffic } from "./traffic.ts";
 import type { Trains } from "./trains.ts";
 import type { Cats } from "./cats.ts";
-import type { Planes, Parrots, Airport } from "./sky.ts";
+import type { Planes, Parrots, Pigeons, Airport } from "./sky.ts";
 import { TiltShift } from "./tiltshift.ts";
-import type { Pigeons } from "./pigeons.ts";
+import type { Pigeons as PeckingPigeons } from "./pigeons.ts";
 import { Foreground, type FgIndex } from "./foreground.ts";
 import type { Mine, MineData } from "./mine.ts";
 import type { Fly } from "./fly.ts";
 import type { Clouds } from "./clouds.ts";
 import type { SearchItem } from "./search.ts";
-import { CAMERA, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
+import { CAMERA, ecefToEnu, llhToEcef, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
 
@@ -140,7 +140,9 @@ const globalToViewport = (x: number, y: number) => base().imageToViewportCoordin
 let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
 let trains: Trains | null = null;
-let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, planes: Planes | null = null, pigeons: Pigeons | null = null;
+let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, pigeons: Pigeons | null = null, planes: Planes | null = null;
+/** pigeons pecking on a square and taking off (life.pigeons; pigeons.ts), apart from the flocks wheeling over squares (sky.ts) */
+let pecking: PeckingPigeons | null = null;
 /** what stands higher than a car, drawn back over the vehicles (life.foreground; AVIF only) */
 let foreground: Foreground | null = null;
 if (modern && files["tiles-fg"]) json<FgIndex>(files["tiles-fg"]).then((index) => {
@@ -208,20 +210,21 @@ function loadAnimations() {
     import("./traffic.ts"), import("./cats.ts"), import("./sky.ts"), import("./roads.ts"), import("./pigeons.ts"),
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
     files.trains ? Promise.all([import("./trains.ts"), fetch(`${BASE}/data/${files.trains}`).then((r) => (r.ok ? r.json() : null))]) : null,
-  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots }, { decodeRoads }, { Pigeons: PigeonFlocks }, data, rail]) => {
+  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, Pigeons }, { decodeRoads }, { Pigeons: Pecking }, data, rail]) => {
     const roads = decodeRoads(data, !files.trains); // no trains: exported before terrain road heights
-    if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)]);
+    if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)], REGIONS[REGION].rail?.stock);
     if (world.airport) planes = new Planes(world.enu2px, world.airport);
     const life = REGIONS[REGION]?.life;
     if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)], 1, { detailed: life?.vehicles === "detailed", coaches: life?.coaches });
     if (roads.length) cats = new Cats(roads, world.enu2px);
+    if (traffic && trains && REGIONS[REGION].rail) traffic.yieldTo(trains); // Zagreb's trams share the streets
     if (roads.length && life?.pigeons?.length) { // the paving's height: the nearest road sample's
       const ground = (x: number, y: number) => {
         let best = Infinity, z = 0;
         for (const r of roads) for (let i = 0; i < r.s.length; i += 4) { const d = Math.hypot(r.s[i] - x, r.s[i + 1] - y); if (d < best) { best = d; z = r.s[i + 2]; } }
         return z;
       };
-      pigeons = new PigeonFlocks(world.enu2px, life.pigeons, ground, [Math.sin(heading), Math.cos(heading)]);
+      pecking = new Pecking(world.enu2px, life.pigeons, ground, [Math.sin(heading), Math.cos(heading)]);
     }
     if (roads.length && REGION === "israel-center") { // Tel Aviv's feral parakeets roam over the streets' extent
       const a = [Infinity, Infinity, -Infinity, -Infinity];
@@ -230,7 +233,19 @@ function loadAnimations() {
       }
       parrots = new Parrots(world.enu2px, a);
     }
-    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __planes: planes, __pigeons: pigeons });
+    // pigeons over the region's squares; their ground height from the nearest street (the squares are on the map's roads)
+    const squares = REGIONS[REGION].pigeons ?? [], roosts: Array<[number, number, number]> = [];
+    for (const [lat, lon] of squares) {
+      const [e, n] = ecefToEnu(llhToEcef(lat, lon, 0));
+      let best = 150 * 150, u = NaN;
+      for (const r of roads) for (let i = 0; i < r.s.length; i += 4) {
+        const d = (r.s[i] - e) ** 2 + (r.s[i + 1] - n) ** 2;
+        if (d < best) { best = d; u = r.s[i + 2]; }
+      }
+      if (Number.isFinite(u)) roosts.push([e, n, u]); // no street near: the square is outside the exported areas
+    }
+    if (roosts.length) pigeons = new Pigeons(world.enu2px, roosts);
+    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __pigeons: pigeons, __pecking: pecking, __planes: planes });
   });
 }
 setTimeout(loadAnimations, 6000); // slow connection: don't wait for every tile forever
@@ -265,7 +280,8 @@ function drawBorders(dpr: number) {
   for (const c of labelOrder) {
     if (!c.label) continue;
     const [px, py] = toScreen(c.label[1], c.label[0]);
-    const label = c.name_en === "Tel-Aviv" ? "Tel Aviv-Yafo" : c.name_en ?? c.name;
+    // Zagreb's districts are tagged "Gradska četvrt Donji grad": the map shows "Donji grad"
+    const label = c.name_en === "Tel-Aviv" ? "Tel Aviv-Yafo" : c.name_en ?? c.name.replace(/^Gradska četvrt /, "");
     const w = ctx.measureText(label).width + 8 * dpr, hh = 16 * dpr;
     const box: [number, number, number, number] = [px - w / 2, py - hh, px + w / 2, py + 4 * dpr];
     if (placed.some((q) => box[0] < q[2] && box[2] > q[0] && box[1] < q[3] && box[3] > q[1])) continue;
@@ -304,13 +320,14 @@ function frame(t: number) {
     cats.step(dt);
     cats.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
-  if (pigeons && above) { // they keep pecking (and taking off) out of sight too: cheap
-    pigeons.step(dt);
-    pigeons.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+  if (pecking && above) { // they keep pecking (and taking off) out of sight too: cheap
+    pecking.step(dt);
+    pecking.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
   if (clouds && !mine?.underground) { clouds.step(dt); clouds.draw(ctx, k, tx, ty, w, hgt, px); } // over the town, under the sky
-  if (above) { // sky above everything: parakeets, then the airliner
+  if (above) { // sky above everything: parakeets or pigeons, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
+    if (pigeons) { pigeons.step(dt); pigeons.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (planes) { planes.step(dt); planes.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
   }
   if (fly?.flying) { // over everything; down into the mine it lands
@@ -431,20 +448,25 @@ viewer.addOnceHandler("open", () => {
 document.getElementById("credits")!.innerHTML = [
   `© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>`,
   // the region's own data sources
-  ({
-    stuttgart: `Datenquelle: <a href="https://www.lgl-bw.de">LGL</a>, <a href="https://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a> (verändert)`,
-    // GUGiK (PZGiK material, CC BY 4.0) requires this notice: "prepared from the national geodetic and cartographic resource"
-    wieliczka: `Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (<a href="https://www.geoportal.gov.pl/">GUGiK</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>)`,
-  } as Record<string, string>)[REGION] ?? `<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`,
+  ...(REGION === "stuttgart"
+    ? [`Datenquelle: <a href="https://www.lgl-bw.de">LGL</a>, <a href="https://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a> (verändert)`]
+    : REGION === "zagreb" // Otvorena dozvola: source, date of its last change, link, change notice
+      ? [`<a href="https://data.zagreb.hr/dataset/zg3d-2022-3d-model-gz">Grad Zagreb, ZG3D 2022</a> (7. 5. 2025.)`,
+        `<a href="https://data.gov.hr/otvorena-dozvola">Otvorena dozvola</a>, izmijenjeno`]
+      : REGION === "wieliczka" // GUGiK (PZGiK material, CC BY 4.0) requires this notice: "prepared from the national geodetic and cartographic resource"
+        ? [`Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (<a href="https://www.geoportal.gov.pl/">GUGiK</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>)`]
+        : [`<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`]),
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
   // the salt mine's levels (mine.ts): Hondius's 1645 plan; the facts' sources are listed in the mine panel
   ...(files.mine ? [`Salt mine: plan by <a href="https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg">W. Hondius, 1645</a> (public domain)`] : []),
   // the method to recreate the derived database (ODbL) and the code
   `<a href="https://github.com/krasun/isometricworld">Source</a>`,
-  // the region's maker: Stuttgart was built by Lukas Hermann, Wieliczka by Maciek Chmura
-  ({
-    stuttgart: `Made by <a href="https://lukashermann.dev/">Lukas Hermann</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
-    wieliczka: `Made by <a href="https://x.com/maciekChmura">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
-  } as Record<string, string>)[REGION] ?? `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
+  REGION === "stuttgart" // the Stuttgart region was built by Lukas Hermann
+    ? `Made by <a href="https://lukashermann.dev/">Lukas Hermann</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
+    : REGION === "zagreb" // the Zagreb region was built by Andrej Šimunaj (ZeroPointStudio)
+      ? `Made by <a href="https://zeropointstudio.io">Andrej Šimunaj</a>`
+      : REGION === "wieliczka" // the Wieliczka region was built by Maciek Chmura
+        ? `Made by <a href="https://x.com/maciekChmura">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
+        : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
 // each credit stays on one line; the separator rides at the end of the previous one so no line starts with "·"
 ].map((c, i, all) => `<span class="credit">${c}${i < all.length - 1 ? " ·" : ""}</span>`).join(" ");

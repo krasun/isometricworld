@@ -10,6 +10,10 @@
  * fixed fleet): twice a second (sim time, so film renders stay deterministic) vehicles that left that zone
  * are dropped and the zone is topped up to a fixed density, new ones preferably just off screen.
  *
+ * Where trams share the street (Zagreb), vehicles yield to them (`yieldTo`): a car whose lane runs into a tram
+ * ahead waits behind it, and one doesn't cross the tracks where a tram is about to pass (trams run on a
+ * timetable, so where they will be in a few seconds is known). Trams never wait for cars.
+ *
  * Regions with `life` (places.ts) can have detailed vehicles (body and cabin, windows, lights, shadows cast like
  * the render's) and coach parks: rows of parked coaches, and coaches that drive to a park (at each junction the
  * way that brings them nearer, by distances found once over the road graph) and from it out to a main road.
@@ -26,6 +30,9 @@ export interface Road {
 }
 
 type Vec3 = [number, number, number];
+/** a tram car's footprint in ENU: centre, unit heading, length, width; `soon`: where it will be in a few seconds */
+export interface Footprint { x: number; y: number; dx: number; dy: number; len: number; wid: number; soon?: boolean }
+interface Trams { footprints(e: number, n: number, r: number, later?: number): Footprint[] }
 
 interface Way { r: Road; n: number; cum: Float32Array; len: number; w: number }
 interface Vehicle {
@@ -89,11 +96,16 @@ export class Traffic {
   private box2: Float32Array;
   private zone: number[] = [];           // ways in or near the view
   private inZone = new Uint8Array(0);    // 1 near the view, 2 on screen
+  private boxE: Float32Array;            // per way: ENU box [e0, n0, e1, n1]
+  private zoneE: number[] | null = null; // ENU box of the zone's ways: only trams near it are looked up
   private nextManage = 0;
   private nextId = 0;
   private lastView: number[] | null = null;
   /** vehicles drawn in the last frame (debug / tests) */
   drawn = 0;
+  /** trams to yield to, and their footprints this step in a 16 m grid */
+  private trams: Trams | null = null;
+  private tramGrid = new Map<string, Footprint[]>();
   /** canvas boxes of the vehicles drawn last ([x0, y0, x1, y1], shadows included): where the foreground goes over them */
   boxes: number[][] = [];
   /** coach parks (life.coaches); the sun's shadow per metre of height, like the styled render's */
@@ -123,14 +135,17 @@ export class Traffic {
     this.weight = this.ways.map((w) => w.len * CLASS_WEIGHT[w.r.c]);
     const M = this.enu2px;
     this.box2 = new Float32Array(this.ways.length * 4);
+    this.boxE = new Float32Array(this.ways.length * 4);
     this.ways.forEach((way, w) => {
-      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, e0 = Infinity, n0 = Infinity, e1 = -Infinity, n1 = -Infinity;
       for (let i = 0; i < way.n; i++) {
         const e = way.r.s[i * 4], n = way.r.s[i * 4 + 1], u = way.r.s[i * 4 + 2];
         const x = M[0][0] * e + M[0][1] * n + M[0][2] * u, y = M[1][0] * e + M[1][1] * n + M[1][2] * u;
         x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+        e0 = Math.min(e0, e); e1 = Math.max(e1, e); n0 = Math.min(n0, n); n1 = Math.max(n1, n);
       }
       this.box2.set([x0, y0, x1, y1], w * 4);
+      this.boxE.set([e0, n0, e1, n1], w * 4);
     });
     this.inZone = new Uint8Array(this.ways.length);
     for (const p of opts.coaches ?? []) this.addPark(p);
@@ -245,14 +260,17 @@ export class Traffic {
   private manage([ax0, ay0, ax1, ay1]: number[]) {
     const mx = (ax1 - ax0) * 0.5, my = (ay1 - ay0) * 0.5, B = this.box2;
     this.zone = [];
-    let total = 0;
+    let total = 0, e0 = Infinity, n0 = Infinity, e1 = -Infinity, n1 = -Infinity;
     for (let w = 0; w < this.ways.length; w++) {
       const x0 = B[w * 4], y0 = B[w * 4 + 1], x1 = B[w * 4 + 2], y1 = B[w * 4 + 3];
       if (x1 < ax0 - mx || x0 > ax1 + mx || y1 < ay0 - my || y0 > ay1 + my) { this.inZone[w] = 0; continue; }
       const vis = x1 >= ax0 && x0 <= ax1 && y1 >= ay0 && y0 <= ay1;
       this.inZone[w] = vis ? 2 : 1;
       this.zone.push(w); total += this.weight[w];
+      const E = this.boxE;
+      e0 = Math.min(e0, E[w * 4]); n0 = Math.min(n0, E[w * 4 + 1]); e1 = Math.max(e1, E[w * 4 + 2]); n1 = Math.max(n1, E[w * 4 + 3]);
     }
+    this.zoneE = this.zone.length ? [e0, n0, e1, n1] : null;
     const before = this.vehicles.length;
     this.vehicles = this.vehicles.filter((v) => { if (this.inZone[v.w]) return true; this.release(v); return false; });
     if (this.vehicles.length !== before) this.regroup();
@@ -307,6 +325,45 @@ export class Traffic {
   }
 
   get count() { return this.vehicles.length; }
+
+  /** yield to these trams (web/src/scripts/trains.ts) from now on */
+  yieldTo(trams: Trams) { this.trams = trams; }
+
+  /** ENU point `ahead` m in front of the vehicle's centre, in its lane, and the heading there */
+  private ahead(v: Vehicle, ahead: number): [number, number, number, number] {
+    const way = this.ways[v.w], S = way.r.s, C = way.cum;
+    const s = Math.max(0, Math.min(way.len, v.dir === 1 ? v.s + ahead : way.len - v.s - ahead));
+    let lo = 0, hi = way.n - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (C[m] < s) lo = m; else hi = m; }
+    const f = (s - C[lo]) / Math.max(1e-3, C[hi] - C[lo]), a = lo * 4, b = hi * 4;
+    let dx = S[b] - S[a], dy = S[b + 1] - S[a + 1];
+    const L = Math.hypot(dx, dy) || 1; dx = (dx / L) * v.dir; dy = (dy / L) * v.dir;
+    return [S[a] + (S[b] - S[a]) * f + dy * v.lat, S[a + 1] + (S[b + 1] - S[a + 1]) * f - dx * v.lat, dx, dy];
+  }
+
+  /**
+   * a tram car covers ENU point p (with `pad` m to spare sideways)? Where trams will `soon` be counts only across
+   * the car's way (a tram coming up behind in the same street would stop it in front of the tram).
+   */
+  private tramAt(p: [number, number, number, number], pad: number, soon: boolean) {
+    for (const f of this.tramGrid.get(`${Math.floor(p[0] / 16)}_${Math.floor(p[1] / 16)}`) ?? []) {
+      if (f.soon && (!soon || Math.abs(f.dx * p[2] + f.dy * p[3]) > 0.7)) continue;
+      const rx = p[0] - f.x, ry = p[1] - f.y;
+      if (Math.abs(rx * f.dx + ry * f.dy) < f.len / 2 + 0.5 && Math.abs(rx * f.dy - ry * f.dx) < f.wid / 2 + pad) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Room (m) ahead of the vehicle's front before a tram, looking `range` m ahead (Infinity: clear). Inside a
+   * junction box a car only minds trams already there: it clears the crossing rather than stopping on it.
+   */
+  private tramGap(v: Vehicle, range: number) {
+    if (!this.tramGrid.size || this.tramAt(this.ahead(v, 0), 0, false)) return Infinity; // already alongside one: drive on out
+    const soon = v.holding < 0;
+    for (let d = 1; d <= range; d += 2.5) if (this.tramAt(this.ahead(v, v.len / 2 + d), v.wid / 2, soon)) return Math.max(0, d - 2.5);
+    return Infinity;
+  }
 
   private link(node: number, e: { w: number; dir: 1 | -1 }) {
     if (!this.out.has(node)) this.out.set(node, []);
@@ -397,6 +454,18 @@ export class Traffic {
     dt = Math.min(dt, 0.1);
     this.t += dt;
     this.regroup();
+    this.tramGrid.clear();
+    // the trams near the zone (vehicles only drive there; 80 m: a car's look-ahead) now and in 2 and 4 s;
+    // each car in every 16 m cell its box touches
+    const Z = this.zoneE, ze = Z ? (Z[0] + Z[2]) / 2 : 0, zn = Z ? (Z[1] + Z[3]) / 2 : 0, zr = Z ? Math.max(Z[2] - Z[0], Z[3] - Z[1]) / 2 + 80 : 0;
+    if (this.trams && Z) for (const f of [0, 2, 4].flatMap((later) => this.trams!.footprints(ze, zn, zr, later).map((f) => (later ? { ...f, soon: true } : f)))) {
+      const r = f.len / 2 + f.wid;
+      for (let x = Math.floor((f.x - r) / 16); x <= Math.floor((f.x + r) / 16); x++)
+        for (let y = Math.floor((f.y - r) / 16); y <= Math.floor((f.y + r) / 16); y++) {
+          const k = `${x}_${y}`, g = this.tramGrid.get(k);
+          if (g) g.push(f); else this.tramGrid.set(k, [f]);
+        }
+    }
     for (const g of this.lanes.values()) {
       for (let k = 0; k < g.length; k++) {
         const v = g[k], way = this.ways[v.w];
@@ -409,6 +478,11 @@ export class Traffic {
         if (lead) {
           const gap = lead.s - lead.len / 2 - (v.s + v.len / 2) - GAP;
           target = Math.min(target, Math.max(0, gap / HEADWAY), lead.v + Math.max(0, gap) * 0.5);
+        }
+        // a tram in the lane ahead (sharing the street, or crossing): stay behind it
+        if (this.trams) {
+          const room = this.tramGap(v, GAP + v.v * HEADWAY + (v.v * v.v) / (2 * BRAKE) + 3);
+          if (room < Infinity) target = Math.min(target, Math.max(0, room - GAP) / HEADWAY);
         }
         // approaching the junction: slow for the turn; at the stop line wait until it's granted
         const toStop = this.toStop(v);

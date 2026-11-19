@@ -40,12 +40,21 @@ function tagsOf(s: string): Tags {
   return t;
 }
 
-/** Every element of the extract inside bbox [s, w, n, e] that passes the filter, as Overpass JSON. */
-export async function localOsm(url: string, [s, w, n, e]: number[], filter: OsmFilter) {
+/**
+ * Every element of the extract inside bbox [s, w, n, e] that passes the filter, as Overpass JSON.
+ * `prefilter` (osmium tags-filter expressions, e.g. "r/boundary=administrative") thins a large box first.
+ * `complete`: the relation types whose members the cut completes beyond the box (osmium's default: multipolygon).
+ */
+export async function localOsm(url: string, [s, w, n, e]: number[], filter: OsmFilter, prefilter?: string[], complete = "multipolygon") {
   const pbf = await downloadExtract(url);
   const cut = join(DIR, `cut-${process.pid}.osm.pbf`);
-  // smart: complete ways and multipolygon members, like Overpass returns them with `geom`
-  execFileSync("osmium", ["extract", "-b", `${w},${s},${e},${n}`, "--strategy", "smart", "-O", "-o", cut, pbf], { stdio: "ignore" });
+  // smart: complete ways and the members of `complete` relations, like Overpass returns them with `geom`
+  execFileSync("osmium", ["extract", "-b", `${w},${s},${e},${n}`, "--strategy", "smart", "-S", `types=${complete}`, "-O", "-o", cut, pbf], { stdio: "ignore" });
+  if (prefilter) {
+    const thin = join(DIR, `thin-${process.pid}.osm.pbf`);
+    execFileSync("osmium", ["tags-filter", cut, ...prefilter, "-O", "-o", thin], { stdio: "ignore" });
+    renameSync(thin, cut);
+  }
   const opl = execFileSync("osmium", ["add-locations-to-ways", "--keep-untagged-nodes", "-f", "opl,add_metadata=false", "-o", "-", cut],
     { maxBuffer: 2 ** 31 - 1 }).toString("utf8");
   rmSync(cut);
@@ -106,9 +115,12 @@ export const FILTERS = {
     || (type !== "node" && STRUCTURES.some((s) => s.match(t)))) as OsmFilter,
   /** fountains: a surface model reads their sculptures as tree crowns */
   fountains: ((_type, t) => t.amenity === "fountain") as OsmFilter,
-  /** rail route relations (S-Bahn, regional, long distance, Stadtbahn) and the tracks they run on, tunnels included */
+  /**
+   * rail route relations (S-Bahn, regional, long distance, Stadtbahn) and the tracks they run on, tunnels included;
+   * funicular tracks too (Zagreb's Uspinjača has no route relation: its two cars shuttle on the ways themselves)
+   */
   rails: ((type, t) => (type === "relation" && /^(train|light_rail|subway|tram)$/.test(t.route ?? ""))
-    || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge)$/.test(t.railway ?? ""))) as OsmFilter,
+    || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge|funicular)$/.test(t.railway ?? ""))) as OsmFilter,
   roads: ((type, t) => type === "way" && ROAD.test(t.highway ?? "") && t.area !== "yes") as OsmFilter,
   /** street furniture and roofs on posts (presets streetLamps, roofsOnPosts …) */
   furniture: ((type, t) => (type === "node" && (/^(street_lamp|traffic_signals|bus_stop)$/.test(t.highway ?? "")

@@ -805,7 +805,8 @@ async function exportRoads(areas: string[], heights: Heights) {
  * and back out over the map edge). Columnar like the roads:
  *   n, s, vis  tracks (each OSM way once): samples [e, n, u] in 0.1 m, delta-coded per track; visible runs.
  *              Tunnels are hidden, bridges run on the deck (bridges.ts).
- *   l          lines: k kind (0 Stadtbahn, 1 S-Bahn, 2 regional, 3 long distance), r ref, c colour,
+ *   l          lines: k kind (0 Stadtbahn, 1 S-Bahn, 2 regional, 3 long distance, 4 street tram, 5 funicular car;
+ *              4 and 5 only in regions with local stock, places.ts `rail`), r ref, c colour,
  *              i interval (min), w tracks in running order (~index: run backwards), st stops (m along the
  *              run), b the line back (-1: back along the same run)
  */
@@ -824,6 +825,7 @@ async function exportTrains(areas: string[], heights: Heights) {
     }
   }
   if (!rels.size) return;
+  const RAIL = REGIONS[activeRegion()].rail;
   const enu = new Map<number, Array<[number, number]>>();
   const lineOf = (w: any) => enu.get(w.id) ?? enu.set(w.id, w.geometry.map((p: any) => latLonEnu(p.lat, p.lon))).get(w.id)!;
   const lenOf = (w: any) => { const l = lineOf(w); let d = 0; for (let i = 1; i < l.length; i++) d += Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]); return d; };
@@ -852,17 +854,22 @@ async function exportTrains(areas: string[], heights: Heights) {
     return [run.fwd[0] ? f[0] : f.at(-1)!, run.fwd.at(-1) ? l.at(-1)! : l[0]];
   };
   const kindOf = (t: Record<string, string>) => {
+    if (RAIL && t.route === "tram") return 4;
     if (/^(light_rail|subway|tram)$/.test(t.route)) return 0;
     const refs = (t.ref ?? "").toUpperCase().split(";").map((x) => x.trim());
     if (refs.some((x) => /^S\s*\d/.test(x))) return 1;
     if (refs.some((x) => /^(ICE|IC|EC|ECE|EN|NJ|TGV|RJX?|FLX)\b/.test(x)) || /long_distance|high_speed/.test(t.service ?? "")) return 3;
     return 2;
   };
-  const DEFAULT_INTERVAL = [10, 15, 30, 60];
+  const DEFAULT_INTERVAL = [10, 15, 30, 60, RAIL?.tramInterval ?? 10, 60];
+  const refOf = (t: Record<string, string>) => String(t.ref ?? "").split(";").at(-1)!.trim();
   const intervalOf = (t: Record<string, string>, k: number) => {
     const m = /^(?:(\d+):)?(\d+)/.exec(t.interval ?? "");
     const v = m ? (m[1] ? Number(m[1]) * 60 : 0) + Number(m[2]) : 0;
-    return v >= 3 && v <= 240 ? v : DEFAULT_INTERVAL[k];
+    if (v >= 3 && v <= 240) return v;
+    if (k === 4) return RAIL?.interval?.[refOf(t)] ?? DEFAULT_INTERVAL[k];
+    if (k < 4 && RAIL?.mainline) return new RegExp(RAIL.mainline.line).test(refOf(t)) ? RAIL.mainline.every : RAIL.mainline.single;
+    return DEFAULT_INTERVAL[k];
   };
 
   // one line per ref and its way back: the longest run, and the other direction ending where it starts
@@ -870,7 +877,9 @@ async function exportTrains(areas: string[], heights: Heights) {
   for (const r of rels.values()) {
     const run = runOf(r);
     if (!run || run.len < 300) continue;
-    const k = kindOf(r.tags ?? {}), key = `${r.tags.route}:${(r.tags.ref ?? r.tags.name ?? r.id).toString().split(";").at(-1)!.trim()}`;
+    const k = kindOf(r.tags ?? {});
+    if (k === 4 && RAIL?.night?.includes(refOf(r.tags))) continue; // night line: the map shows the day
+    const key = `${r.tags.route}:${(r.tags.ref ?? r.tags.name ?? r.id).toString().split(";").at(-1)!.trim()}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push({ r, run, k });
   }
@@ -888,8 +897,15 @@ async function exportTrains(areas: string[], heights: Heights) {
     if (best > 0 && bd < 3000) { chosen[ia].back = chosen.length; chosen.push({ ...g[best], back: ia }); }
   }
 
-  // sample every track a chosen line runs on, once
   const terrainU = terrainSampler(areas), ends = bridgeEndsOf(areas);
+  // funiculars have no route relation: each track is a line of its own, run bottom to top, the cars
+  // counterweighted (the next track's car starts at the top: its run is reversed)
+  if (RAIL) [...ways.values()].filter((w) => w.tags?.railway === "funicular" && lenOf(w) > 20).forEach((w, i) => {
+    const l = lineOf(w), up = (terrainU(...l.at(-1)!) ?? 0) >= (terrainU(...l[0]) ?? 0);
+    chosen.push({ r: { tags: { route: "funicular", ref: w.tags.name ?? "" }, members: [] }, run: { ids: [w.id], fwd: [up === (i % 2 === 0)], len: lenOf(w) }, k: 5, back: -1 });
+  });
+
+  // sample every track a chosen line runs on, once
   const index = new Map<number, number>(), tracks: number[][] = [];
   let hidden = 0, total = 0;
   for (const c of chosen) for (const id of c.run.ids) {
@@ -943,7 +959,7 @@ async function exportTrains(areas: string[], heights: Heights) {
     st.sort((a, b) => a - b);
     const t = c.r.tags ?? {};
     return {
-      k: c.k, r: String(t.ref ?? "").split(";").at(-1)!.trim(), c: t.colour ?? "", i: intervalOf(t, c.k), b: c.back,
+      k: c.k, r: refOf(t), c: t.colour ?? "", i: intervalOf(t, c.k), b: c.back,
       w: c.run.ids.map((id, j) => (c.run.fwd[j] ? index.get(id)! : ~index.get(id)!)),
       st: st.filter((v, i) => !i || v - st[i - 1] > 30),
     };
@@ -964,8 +980,9 @@ async function exportTrains(areas: string[], heights: Heights) {
     out.vis.push(runs.length, ...runs);
   }
   writeData("trains", JSON.stringify(out));
-  const kinds = [0, 1, 2, 3].map((k) => lines.filter((l) => l.k === k).length);
-  console.log(`  trains: ${lines.length} lines (${kinds[0]} Stadtbahn, ${kinds[1]} S-Bahn, ${kinds[2]} regional, ${kinds[3]} long distance) on ${tracks.length} tracks, ${total} samples, ${((hidden / Math.max(1, total)) * 100).toFixed(1)}% hidden`);
+  const kinds = [0, 1, 2, 3, 4, 5].map((k) => lines.filter((l) => l.k === k).length);
+  const local = RAIL ? `, ${kinds[4]} tram, ${kinds[5]} funicular` : "";
+  console.log(`  trains: ${lines.length} lines (${kinds[0]} Stadtbahn, ${kinds[1]} S-Bahn, ${kinds[2]} regional, ${kinds[3]} long distance${local}) on ${tracks.length} tracks, ${total} samples, ${((hidden / Math.max(1, total)) * 100).toFixed(1)}% hidden`);
 }
 
 /**

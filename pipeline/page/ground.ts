@@ -7,9 +7,9 @@
 
 type P2 = [number, number];
 /** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
-/** s, u: pavement sides and surface (src/ground.ts, preset streetDetail) */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: number[]; s?: number; u?: string }
-interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number]> }
+/** p, u: pavement sides and surface (src/ground.ts, preset streetDetail); s: a track line's surface kind */
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: number[]; s?: string; p?: number; u?: string }
+interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number, number?]> }
 
 const FILL: Record<string, string> = {
   residential: "#dcd5c6", commercial: "#dfdbd2", industrial: "#cfcbc2", campus: "#e1dacb",
@@ -241,6 +241,8 @@ export function drawGround(
     stroke(f.l!, 0.9, "rgba(255,255,255,0.9)", [20, 15]);
   }
   ctx.lineCap = "round";
+  // 2c. tracks mapped as lines with a width (a racecourse's training track): a band in their surface's colour
+  for (const f of of("trackline")) stroke(f.l!, f.w!, FILL[f.s ?? "track"] ?? FILL.track);
 
   // 3. soft contact shadows (short: the art has no long shadows)
   ctx.save();
@@ -298,10 +300,10 @@ export function drawGround(
       for (const f of rs) stroke(f.l!, f.w! + 2.4, "#e2ddd2");
     }
     const streets = rs.filter((f) => f.k === "street");
-    // pavements: both sides, or the sides OSM puts them on (s: bit 1 left, 2 right; 0 none)
+    // pavements: both sides, or the sides OSM puts them on (p: bit 1 left, 2 right; 0 none)
     const sides = (f: Feature, w: number, c: string) => {
-      if (f.s === undefined) stroke(f.l!, f.w! + 2 * w, c);
-      else for (const [bit, side] of [[1, 1], [2, -1]]) if (f.s & bit) stroke(offset(f.l!, side * (f.w! / 2 + w / 2)), w, c);
+      if (f.p === undefined) stroke(f.l!, f.w! + 2 * w, c);
+      else for (const [bit, side] of [[1, 1], [2, -1]]) if (f.p & bit) stroke(offset(f.l!, side * (f.w! / 2 + w / 2)), w, c);
     };
     for (const f of streets) sides(f, 3, KERB);
     const streetJs = layer === 0 ? js.filter((j) => CLASS[j[4]] === "street" && j[5] !== 0) : []; // pavements round street corners

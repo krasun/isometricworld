@@ -195,7 +195,7 @@ function material(sun: THREE.Vector3) {
  * Instanced crowns and trunks for a tile's trees ([x, y, crown radius, crown centre above the ground]); `ground`
  * gives the terrain height, `trunkMaterial` draws the trunks (instance colours: bark), `sun` lights the crowns.
  */
-export function richTrees(trees: Array<[number, number, number, number]>, ground: (x: number, y: number) => number,
+export function richTrees(trees: Array<[number, number, number, number, number?]>, ground: (x: number, y: number) => number,
   trunkMaterial: THREE.Material, sun: THREE.Vector3): THREE.Object3D[] {
   const G = geometries(), groups = new Map<THREE.BufferGeometry, Array<[THREE.Matrix4, THREE.Color]>>();
   const trunks: Array<[THREE.Matrix4, THREE.Color]> = [];

@@ -39,10 +39,10 @@ export function lathe(p: Piece, c: P2, rings: Array<[number, number]>, n: number
   }
 }
 
-/** level ring (annulus, or a disc if inner = 0) at height z above base, as roof triangles */
-export function disc(p: Piece, c: P2, z: number, outer: number, inner: number, n: number) {
+/** level ring (annulus, or a disc if inner = 0) at height z above base, as roof triangles; the first corner as lathe's */
+export function disc(p: Piece, c: P2, z: number, outer: number, inner: number, n: number, turn = 0) {
   for (let i = 0; i < n; i++) {
-    const a0 = (i / n) * 2 * Math.PI, a1 = ((i + 1) / n) * 2 * Math.PI;
+    const a0 = turn + (i / n) * 2 * Math.PI, a1 = turn + ((i + 1) / n) * 2 * Math.PI;
     const o0 = [c[0] + outer * Math.cos(a0), c[1] + outer * Math.sin(a0), p.base + z];
     const o1 = [c[0] + outer * Math.cos(a1), c[1] + outer * Math.sin(a1), p.base + z];
     if (inner <= 0) { p.roof.push(c[0], c[1], p.base + z, ...o0, ...o1); continue; }

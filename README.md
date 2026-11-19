@@ -13,6 +13,10 @@ Second city: **Stuttgart** (`/stuttgart`), by [Lukas Hermann](https://lukasherma
 around it from LGL Baden-Württemberg open data, drawn procedurally instead of painted. Full-quality clip:
 [`video/stuttgart.mp4`](video/stuttgart.mp4).
 
+Third city: **Zagreb** (`/zagreb`), by [Andrej Šimunaj](https://zeropointstudio.io): the whole city (its 17
+districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted through fal.ai. Live at
+[zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io).
+
 ## The idea
 
 Real cities as a hand-painted isometric illustration you can pan and zoom like a map, with every building,
@@ -29,7 +33,7 @@ street and tree where it really is, and a little life on top (cars, buses, cats,
 ## Quick start
 
 Needs Node 24+, Chromium (or Chrome: set `CHROME_PATH`), and for the optional steps FFmpeg (clips), gifsicle (GIF), the Codex CLI
-(painting) and a Cloudflare account with wrangler (publishing).
+(painting; or a fal.ai key, see `.env.example`) and a Cloudflare account with wrangler (publishing).
 
 ```sh
 npm install
@@ -151,7 +155,7 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
 | fetch / scene | `pipeline/src/fetch.ts`, `scene.ts` | Buildings come from Tel Aviv-Yafo GIS (footprints + 2019 surveyed heights) and OSM elsewhere, and trees from the 2024 canopy layer, all extruded in our renderer. The municipal layer has one height per footprint (a podium can carry its tower's height: the Azrieli mall stood at 187 m), so the N municipal buildings OSM's 3D shapes (Simple 3D Buildings: `building:part`, heights) change most are swapped for those shapes (`scene -- tlv-core --parts N`, default 10; listed in `data/derived/<area>/osm-parts.json`). See "Fixing a few buildings" below. |
 | ground | `pipeline/src/ground.ts`, `pipeline/page/ground.ts` | Terrain from Copernicus GLO-30 (a surface model: buildings removed with a morphological opening + blur), sea from the OSM coastline. The surface is drawn per tile from OSM onto a canvas texture draped on the terrain: landuse, parks, beach, water, pavements, roads at real widths (`roadspec.ts`, shared with traffic) with lane markings kept out of junctions, flat road ends with junction disks (no bulges at bridge ends), rail drawn in its layer (under road bridges), zebra crossings, paths, rail, soft contact shadows. Bridges/decks the municipal layer records as buildings (anything a motorway or railway runs through) are dropped in `scene.ts`. |
 | render | `pipeline/src/render.ts`, `pipeline/page/renderer.ts` | Headless Chrome (Playwright) + three.js. Buildings sit on the terrain grid and get window-grid facades; tree crowns are instanced. Each tile gets a color pass and a height pass. No network access, no API keys. |
-| paint | `pipeline/src/paint.ts` | Codex CLI image generation (ChatGPT login, no API key). Each window gets four images: the render, the height map, the style reference (`pipeline/style/reference.png`) and the tree species sheet (`pipeline/style/trees.png`: ficus, tipuana, jacaranda, flame tree, olive, Aleppo pine, eucalyptus, date and fan palms; the render colour-codes each crown's species, mostly one species per ~40 m patch). Windows are 1024 px with stride 896, painted in rings from the centre; each continues its painted neighbours. Open sea reuses one validated sea texture. Any window with a black band or patch is repainted, and every restart re-checks finished windows. Negative window numbers need `--window=-7,4`. To fix something on a seam, delete the neighbour sharing it first (each window copies its painted neighbours' edge strips, so a repaint would copy the old mistake back). When tiles are assembled, deep water in every window is shifted to the median deep-sea colour, fading in from the coast, so the sea has no window-sized patches. `--older=<ISO time>` repaints windows painted before that time (after a style change) alongside a normal run. `--assemble` only rebuilds the art tiles. |
+| paint | `pipeline/src/paint.ts` | Codex CLI image generation (ChatGPT login, no API key). Each window gets four images: the render, the height map, the style reference (`pipeline/style/reference.png`) and the tree species sheet (`pipeline/style/trees.png`: ficus, tipuana, jacaranda, flame tree, olive, Aleppo pine, eucalyptus, date and fan palms; the render colour-codes each crown's species, mostly one species per ~40 m patch). Windows are 1024 px with stride 896, painted in rings from the centre; each continues its painted neighbours. With `PAINT_BACKEND=fal` (`FAL_KEY`) the windows go to an image model on fal.ai instead, many at once (`-j`), each call's billed cost logged to `paint-spend.jsonl` and capped by `PAINT_BUDGET_USD`. Open sea reuses one validated sea texture. Any window with a black band or patch is repainted, and every restart re-checks finished windows. Negative window numbers need `--window=-7,4`. To fix something on a seam, delete the neighbour sharing it first (each window copies its painted neighbours' edge strips, so a repaint would copy the old mistake back). When tiles are assembled, deep water in every window is shifted to the median deep-sea colour, fading in from the coast, so the sea has no window-sized patches. `--older=<ISO time>` repaints windows painted before that time (after a style change) alongside a normal run. `--assemble` only rebuilds the art tiles. |
 | export | `pipeline/src/export.ts` | Builds the `map` layer (paints, renders where unpainted) and the `photo` layer (renders) as an AVIF pyramid, only the tiles whose source changed since the published state, into the local cache. Every tile's content hash goes into `tiles-<layer>.<hash>.json` (the viewer requests `?v=<hash>`). Each city's opening view is saved as a small preview image (`preview/`), shown until the tiles are in. Roads go out columnar and delta-coded. OSM borders are projected onto the real terrain height from the height pass. OSM road bridges (layer > 0) are drawn over the painted tiles in the painted road style, so a bridge deck always lies on top of any rails or lanes Codex drew across it. |
 | publish | `pipeline/src/publish.ts` | Uploads the cache to the R2 bucket (tiles and previews first, `world.json` last), checks every upload, records the published state, empties the cache. |
 | web | `web/src/scripts/map.ts`, `traffic.ts`, `cats.ts`, `sky.ts` | OpenSeadragon deep zoom: a sparse pyramid with a tile index (no 404s), level blending, and zoom limited to the metro. A canvas overlay draws borders, labels, and simulated cars and buses on OSM roads (split at every shared node): lanes within the drawn asphalt, car following with safe gaps, junctions taken in turns by approach, drifting cruise speeds; hidden behind buildings using the height pass and under bridges (higher OSM layer). A few street cats (~1 per 900 m of street) sit and stroll on the pavements when zoomed in close; small flocks of green parakeets dart over the streets, and every ~2 min an airliner comes in from the sea on the Ben Gurion approach and fades out inland. Regions can opt into more life (`life` in `places.ts`): detailed vehicles (body and cabin with windows and lights, vans, buses with their window band, shadows cast like the styled render's), coach parks of a tourist site (rows of parked coaches as on the orthophoto, coaches driving to and from them along the road graph by Dijkstra distances; `traffic.ts`), and pigeons on a square (walking, pecking, taking off as a flock; `pigeons.ts`). With `life.foreground` the render also writes a mask of what stands higher than a car (crowns, walls and roofs over ~2.5 m); export cuts those pixels out of the render as the `fg` tile layer (transparent elsewhere, z5–8), and the viewer draws it back over the vehicles where they are (`foreground.ts`), so they pass under trees and behind houses partly covered instead of fading out. Regions can opt into viewer effects (`effects` in `places.ts`): tilt-shift (`tiltshift.ts`), a sharp band across the middle with the edges blurred like a miniature, and a biplane to fly over the map (`fly.ts`: arrows or WASD bank it into turns and change its speed, a finger or the mouse held on the map steers it there, the map follows; a 3D model built in `biplane.ts` with three.js, loaded at the first take-off, seen through the map's camera and lit by its sun, an object of the map at 2.5× life size flying 45 m up, smoke puffs behind; its shadow lies over roofs, walls and crowns, read from the render's height pass, which export writes as `tiles/height/` for regions with a biplane, `heights.ts`). Round buttons in the top right corner, one under the other, switch them. More effects: cloud shadows drifting over the map (`clouds.ts`), and a search box finding streets and places by name with `/` (`search.ts`; export writes `data/search`: named roads and the named places of the region's OSM extract). Keys: **B** borders · **T** traffic · **P** raw render · **I** about · **V** video mode (`?video`) · **M** tilt-shift · **F** fly (Esc lands). `/#metro` shows the whole metro. |
@@ -244,6 +248,35 @@ npm -w pipeline run mine                      # data/derived/wieliczka-mine-<lev
 for l in I IIw IIn III IV V VI VII VIII IX 1645; do npm run render -- wieliczka-mine-$l -j 2; done
 npm run export -- wieliczka-town              # the levels go out with the region whenever they are rendered
 ```
+
+**Zagreb** (region `zagreb`, `sources: "zg3d"`) differs again:
+
+- Data: ZG3D 2022, the City of Zagreb's LoD2 building model (Croatian Open Licence, `zg3d.ts`): one Shapefile
+  of MultiPatch solids per district, downloaded through the data.zagreb.hr CKAN API (and read from
+  `data/raw/zg3d/` when offline). Three districts (Trešnjevka-sjever, Stenjevec, Podsljeme) are in HTRS96/TM
+  (EPSG:3765), the rest in WGS84; faces are re-wound so every roof faces up. Roof heights are above sea level
+  (HVRS71), and Copernicus GLO-30 is fitted to the building bases so they sit on the ground.
+- OSM from a Geofabrik extract via osmium, as in Stuttgart, for the ground, roads, trams and the Uspinjača
+  funicular. There is no open canopy layer: tree crowns are generated from OSM land cover around the trees OSM
+  maps one by one (`greenery.ts`), each with a species from its tags or its place (`species.ts`).
+- Shape: the union of the 17 city districts (OSM admin_level 9) plus a box over the airport, cut at about 45.87° N so
+  the Medvednica forest doesn't fill the map.
+- Look: painted, with the styled render (`STYLED`) as the fallback wherever a window isn't painted. Painted
+  with `PAINT_BACKEND=fal` and `openai/gpt-image-2.6/sunburst/edit` (high, ~$0.09 a window), picked in a
+  bake-off of nine models. The prompt names no landmarks: naming the Cathedral and Dolac for every window
+  made the model paint invented old towns into forests and onto the Hipodrom. Two checks now refuse such
+  windows (repainted up to 3 times, then left unpainted): roofs where the render has none (> 4% of the window)
+  and much busier detail than a nearly blank render (fields, squares). Art tiles that only some windows
+  cover blend into the render, and areas of one region reuse each other's windows, so painting
+  `zagreb-south` after `zagreb-core` continues its edges instead of repainting them. The ~40 windows the checks
+  still refused (woods, fields, big paved lots) were filled with `google/nano-banana-2.1/edit`
+  (`PAINT_FAL_ENDPOINT`, `PAINT_THINKING=high`, ~$0.09 a window): it keeps the layout, and an extra line
+  asks it to paint like the window's already-painted edge strips, else it keeps the render's chunky look.
+- Tracks get their surface's colour (`ground.ts` `trackKind`): only running tracks are red tartan. The Hipodrom has
+  a grass gallop track, a gravel trotting track and a sand training track mapped as a closed way with a width,
+  drawn as a band (a closed `leisure=track` is a line in OSM unless `area=yes`); riding arenas are sand.
+- Areas: `jelacic` (a test patch around Trg bana Jelačića) and 16 `zagreb-*` areas, overlapping boxes
+  trimmed to the outline.
 
 **Add an area:** add its bbox (and region) to `pipeline/src/areas.ts`, then run fetch, ground, scene, render, paint and export.
 Areas of one region share its camera and grid, so they line up.
