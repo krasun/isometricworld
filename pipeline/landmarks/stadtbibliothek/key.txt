@@ -1,0 +1,3 @@
+This is a map of the Europaviertel in Stuttgart with the Stadtbibliothek (a pale grey cube with a regular grid of square glass-block panels, each with a small dark window, and a flat grey roof with solar panels).
+- KEEP, pixel for pixel exactly as they are: the whole library cube (roof, parapet, solar panels and all four walls down to their foot).
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the plaza, streets, trees, rails, the building site and every other building, including the shopping centre and the office blocks next to it.

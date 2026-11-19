@@ -15,3 +15,7 @@ pasted back by box are listed per landmark below, so a landmark can be recreated
   --style reference-simple.png`, refs from `data/raw/photos/neues-schloss/`, `kunstgebaeude/`, `landtag/`, `oper/` +
   `schauspielhaus/` (PD/CC0/CC BY, see ATTRIBUTION.md). No edits. The Landtag key was run twice (the first came back
   tinted instead of flat magenta: check that the mask is a few % of the frame).
+- `stadtbibliothek`, `milaneo` (stuttgart-core, Europaviertel): one native frame each (4127,38 / 4596,145, both 1536×1024),
+  `--base render --aerial --aerial-source city --style reference-simple.png`, refs from `data/raw/photos/stadtbibliothek/`
+  and `milaneo/` (CC0/CC BY, see ATTRIBUTION.md), in the order listed in their SOURCES.md. No edits. The Milaneo's roofs
+  (green roof gardens, oval skylights) come from the orthophoto: no open photo shows them. Masks 3 % and 25 % of the frame.
