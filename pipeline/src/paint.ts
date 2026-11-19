@@ -328,8 +328,6 @@ function windows(): Array<[number, number]> {
 const HYBRID = !!args.aerial && args["aerial-input"];
 if (!["painted", "simple"].includes(args.look!)) throw new Error(`--look painted|simple (got ${args.look})`);
 const SIMPLE = args.look === "simple";
-/** Tel Aviv is frozen as published: its tiles keep the original assembly (no window colour matching). */
-const HARMONISE = AREA.region === "stuttgart"; // colour match + seam cuts; Tel Aviv and Zagreb keep the fixed feather
 /** Hybrid paintings follow the photo, not the render, so they correlate less with it (0.48-0.57 when right). */
 const minMatch = HYBRID ? 0.35 : MIN_MATCH;
 /** Render tile with the draped orthophoto on every surface that isn't a wall (aerial.ts marks walls 128 grey)
@@ -782,7 +780,6 @@ async function harmoniseSea(saved?: number[]) {
  */
 async function windowOffsets(): Promise<Map<string, number[]>> {
   const out = new Map<string, number[]>();
-  if (!HARMONISE) return out;
   // mean colour of each painted window's four overlap strips
   const strips = new Map<string, number[][]>(); // left, right, top, bottom
   for (const [i, j] of windows()) {
@@ -828,7 +825,7 @@ const SEAM_FEATHER = 8;
 async function assemble(all = false, only?: Set<string>) {
   const offsets = await windowOffsets();
   const ramp = new Float32Array(WIN);
-  // Tel Aviv: a fixed 64 px cross-fade centred in the overlap (complementary for neighbours)
+  // a 64 px cross-fade centred in the overlap: only as the tiny floor for corners no seam claims (below)
   const edge = (k: number) => Math.min(1, Math.max(0, (k + 0.5 - (OVERLAP - FEATHER) / 2) / FEATHER));
   for (let k = 0; k < WIN; k++) ramp[k] = Math.min(edge(k), edge(WIN - 1 - k));
 
@@ -901,7 +898,7 @@ async function assemble(all = false, only?: Set<string>) {
   /** 0 → 1 across the cut at band position `cut` (the far window's share) */
   const across = (b: number, cut: number) => Math.min(1, Math.max(0, (b - cut + SEAM_FEATHER / 2 + 0.5) / SEAM_FEATHER));
   const isPainted = (i: number, j: number) => existsSync(winFile(i, j));
-  /** per-pixel weight map of window (i,j): cut against each painted neighbour (Tel Aviv: the fixed ramp) */
+  /** per-pixel weight map of window (i,j): cut against each painted neighbour */
   const weightCache = new Map<string, Promise<Float32Array>>();
   const windowWeights = (i: number, j: number) => {
     const key = `${i}_${j}`;
@@ -909,8 +906,7 @@ async function assemble(all = false, only?: Set<string>) {
       if (weightCache.size >= 48) weightCache.delete(weightCache.keys().next().value!);
       weightCache.set(key, (async () => {
       const w = new Float32Array(WIN * WIN);
-      for (let y = 0; y < WIN; y++) for (let x = 0; x < WIN; x++) w[y * WIN + x] = HARMONISE ? 1 : ramp[x] * ramp[y];
-      if (!HARMONISE) return w;
+      for (let y = 0; y < WIN; y++) for (let x = 0; x < WIN; x++) w[y * WIN + x] = 1;
       const L = isPainted(i - 1, j) ? await seam(i - 1, j, true) : null, R = isPainted(i + 1, j) ? await seam(i, j, true) : null;
       const U = isPainted(i, j - 1) ? await seam(i, j - 1, false) : null, D = isPainted(i, j + 1) ? await seam(i, j, false) : null;
       for (let y = 0; y < WIN; y++) for (let x = 0; x < WIN; x++) {
@@ -976,12 +972,12 @@ async function assemble(all = false, only?: Set<string>) {
         }
     }
     const out = Buffer.alloc(T * T * 3);
-    // seam cuts (HARMONISE) end hard at a patch edge: there the render only fills where no window paints
+    // seam cuts end hard at a patch edge: there the render only fills where no window paints
     const render = partial && existsSync(renderFile(tx, ty)) ? await sharp(renderFile(tx, ty)).removeAlpha().raw().toBuffer() : null;
     for (let d = 0; d < T * T; d++) {
       const w = wsum[d];
       for (let c = 0; c < 3; c++)
-        out[d * 3 + c] = render && w < 1 && (!HARMONISE || w < 1e-3) ? acc[d * 3 + c] + render[d * 3 + c] * (1 - w) : acc[d * 3 + c] / Math.max(w, 1e-6);
+        out[d * 3 + c] = render && w < 1e-3 ? acc[d * 3 + c] + render[d * 3 + c] * (1 - w) : acc[d * 3 + c] / Math.max(w, 1e-6);
     }
     await writeAtomic(sharp(out, { raw: { width: T, height: T, channels: 3 } }).png(), join(base, `paint${SUFFIX}`, `${tx}_${ty}.png`));
     if (partial) partialTiles[k] = used; else delete partialTiles[k];
