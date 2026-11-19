@@ -1,0 +1,3 @@
+This is a map of the Schlossplatz in Stuttgart with the Neues Schloss (the large salmon-and-sandstone baroque palace with grey mansard roofs, three wings around a courtyard).
+- KEEP, pixel for pixel exactly as they are: the whole Neues Schloss (all three wings, roofs, dome, pavilions, walls down to their foot) and its paved courtyard with the fence and gate piers.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the Schlossplatz park, streets, squares, trees, the Schlossgarten and every other building, including the Kunstgebäude, the Landtag and the Altes Schloss.

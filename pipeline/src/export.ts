@@ -15,6 +15,7 @@
  *   data/borders.<hash>.json           OSM city borders in art-pixel space, on real terrain
  *   data/roads.<hash>.json             drivable roads for traffic (columnar, delta-coded: encodeRoads)
  *   data/trains.<hash>.json            rail lines and their tracks for the trains (exportTrains)
+ *   data/airport.<hash>.json           the airport's taxi network and stands (airport.ts)
  *   preview/<city>-<land|port>.<hash>.avif  the city's opening view, shown until the tiles are in
  * Content-hashed names never change, so browsers keep them for a year; world.json says which are current.
  * Tel Aviv's legacy data/tiles.json + .webp tiles stay on R2 untouched: the viewer's fallback without AVIF.
@@ -37,6 +38,7 @@ import { HOSTING } from "./hosting.ts";
 import { DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
 import { CITIES, REGIONS } from "./places.ts";
 import { readHeights } from "./heights.ts";
+import { airportNetwork } from "./airport.ts";
 import { deckHeight, isBridge } from "./bridges.ts";
 import { fetchPublishedState, stateHash } from "./webstate.ts";
 
@@ -304,7 +306,8 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
   let jobs: Array<() => Promise<void>> = [];
   for (const [k, file] of sources) {
     const [tx, ty] = parse(k);
-    const painted = layer === "map" && file.includes("/paint/");
+    // a cutout tile laid on a painted tile (cutout.ts) is painted too: it gets the bridge decks
+    const painted = layer === "map" && (file.includes("/paint/") || (file.includes("/cutout/") && existsSync(file.replace("/cutout/", "/paint/"))));
     const src = sourceHash(file);
     for (let j = 0; j < SPLIT; j++)
       for (let i = 0; i < SPLIT; i++) {
@@ -453,6 +456,14 @@ async function onGround(heights: Heights, lat: number, lon: number) {
   return { x, y, h };
 }
 
+/** The airport's taxi network (airport.ts) on the rendered ground. */
+async function exportAirport(heights: Heights) {
+  const net = await airportNetwork(REGIONS[activeRegion()], async (lat, lon) => (await placePoint(heights, lat, lon, null)).e);
+  if (!net) return;
+  writeData("airport", JSON.stringify(net));
+  console.log(`  airport: ${net.n.length / 3} nodes, ${net.w.length} ways, ${net.s.length} stands`);
+}
+
 async function exportBorders(heights: Heights) {
   const raw = readJson(join(RAW, "boundaries", `${activeRegion()}.json`));
   const feats = [];
@@ -480,14 +491,29 @@ async function exportBorders(heights: Heights) {
  * the grids. A road's height is the ground under it, not the lowest surface nearby (that is the track bed
  * next to a cutting or below an embankment).
  */
-/** bridge deck end heights (OSM way id -> [start, end]) that ground.ts computed for these areas (bridges.ts bridgeEnds) */
+/**
+ * Bridge deck end heights (OSM way id -> [start, end]) that ground.ts computed per area (bridges.ts bridgeEnds).
+ * Areas overlap and each solves only the roads it fetched, so near its border an area gets a bridge wrong
+ * (cut-off joints, terrain off its grid): take each way from the area it lies deepest inside, which is also
+ * the area whose render the map shows there (export picks tiles the same way).
+ */
 function bridgeEndsOf(areas: string[]) {
-  const m = new Map<number, [number, number]>();
-  for (const a of areas) {
+  const per = areas.map((a) => {
     const f = join(DERIVED, a, "ground", "bridge-ends.json");
-    if (existsSync(f)) for (const [id, e] of Object.entries(readJson(f))) m.set(Number(id), e as [number, number]);
-  }
-  return m;
+    return { bbox: AREAS[a].bbox, ends: existsSync(f) ? (readJson(f) as Record<string, [number, number]>) : {} };
+  });
+  const depth = ([s, w, n, e]: number[], g: Array<{ lat: number; lon: number }>) =>
+    Math.min(...g.map((p) => Math.min((p.lat - s) * 111e3, (n - p.lat) * 111e3, (p.lon - w) * 73e3, (e - p.lon) * 73e3)));
+  return (id: number, g: Array<{ lat: number; lon: number }>) => {
+    let best: [number, number] | undefined, bd = -Infinity;
+    for (const a of per) {
+      const v = a.ends[id];
+      if (!v) continue;
+      const d = depth(a.bbox, g);
+      if (d > bd) { bd = d; best = v; }
+    }
+    return best;
+  };
 }
 
 function terrainSampler(areas: string[]) {
@@ -526,6 +552,27 @@ async function placePoint(heights: Heights, lat: number, lon: number, u: number 
 }
 const latLonEnu = (lat: number, lon: number): [number, number] => { const e = ecefToEnu(llhToEcef(lat, lon, 0)); return [e[0], e[1]]; };
 
+/**
+ * Painted-over ground (cutout.ts `key` masks, e.g. the Wasen fairground): the OSM service roads under it are gone in
+ * the painting, so traffic must not drive there. Returns a test: is this map pixel inside any key mask?
+ */
+async function keyMasks(areas: string[]) {
+  const masks: Array<{ x: number; y: number; sx: number; sy: number; mw: number; mh: number; a: Buffer }> = [];
+  for (const area of areas) {
+    const f = join(DERIVED, area, "cutouts.json");
+    if (!existsSync(f)) continue;
+    for (const c of readJson(f)) {
+      if (!c.key) continue;
+      const [x, y, w, h] = c.key.frame, { data, info } = await sharp(join(DERIVED, area, c.key.mask)).extractChannel(0).raw().toBuffer({ resolveWithObject: true });
+      masks.push({ x, y, sx: info.width / w, sy: info.height / h, mw: info.width, mh: info.height, a: data });
+    }
+  }
+  return (px: number, py: number) => masks.some((m) => {
+    const mx = Math.floor((px - m.x) * m.sx), my = Math.floor((py - m.y) * m.sy);
+    return mx >= 0 && my >= 0 && mx < m.mw && my < m.mh && m.a[my * m.mw + mx] > 127;
+  });
+}
+
 /** Drivable roads as ENU polylines sampled every 4 m, each sample flagged visible/occluded. */
 async function exportRoads(areas: string[], heights: Heights) {
   const CLS: Record<string, number> = { motorway: 0, trunk: 0, primary: 1, secondary: 2, tertiary: 3, unclassified: 4, residential: 4, living_street: 5, service: 5 };
@@ -551,7 +598,7 @@ async function exportRoads(areas: string[], heights: Heights) {
       const width = roadWidth(t);
       // bridges: on the deck the render builds (bridges.ts), from the whole way's ends, by arc length
       const line: Array<[number, number]> = el.geometry.map((p: any) => { const e = ecefToEnu(llhToEcef(p.lat, p.lon, 0)); return [e[0], e[1]]; });
-      const deck = isBridge(t) ? deckHeight(line, terrainU, ends.get(el.id)) : null;
+      const deck = isBridge(t) ? deckHeight(line, terrainU, ends(el.id, el.geometry)) : null;
       let start = 0;
       for (let end = 1; end < el.nodes.length; end++) {
         if (end < el.nodes.length - 1 && (use.get(el.nodes[end]) ?? 0) < 2) continue;
@@ -580,13 +627,34 @@ async function exportRoads(areas: string[], heights: Heights) {
       }
     }
   }
-  occluded += hideUnderBridges(ways);
+  // rail bridges cover the roads under them too (a street through an underpass below the tracks)
+  const covers: Array<{ y: number; w: number; a: number; b: number; s: number[] }> = [];
+  for (const a of areas) {
+    const f = join(RAW, a, "rails.json");
+    if (!existsSync(f)) continue;
+    for (const el of readJson(f).elements) {
+      const t = el.tags ?? {};
+      if (!isBridge(t) || !t.railway || !(el.geometry?.length >= 2)) continue;
+      covers.push({ y: Number(t.layer) || 1, w: 5, a: -1, b: -1, s: el.geometry.flatMap((q: any) => [...latLonEnu(q.lat, q.lon), 0, 1]) });
+    }
+  }
+  occluded += hideUnderBridges(ways, covers);
   // nothing drives or walks in the faded margin outside the painted map
   for (const w of ways) for (let k = 0; k < w.s.length; k += 4) {
     if (!w.s[k + 3]) continue;
     const [x, y] = enuToPixel([w.s[k], w.s[k + 1], w.s[k + 2]]);
     if (edgeDistance(x, y) < (EDGE0 + EDGE1) / 2) { w.s[k + 3] = 0; occluded++; }
   }
+  // painted-over ground (key cutouts): a way mostly under the painting goes; one that only clips it hides its cars there
+  const painted = await keyMasks(areas);
+  let dropped = 0;
+  for (let i = ways.length - 1; i >= 0; i--) {
+    const w = ways[i], inside: number[] = [];
+    for (let k = 0; k < w.s.length; k += 4) { const [x, y] = enuToPixel([w.s[k], w.s[k + 1], w.s[k + 2]]); if (painted(x, y)) inside.push(k); }
+    if (inside.length * 4 * 2 >= w.s.length) { ways.splice(i, 1); dropped++; continue; }
+    for (const k of inside) if (w.s[k + 3]) { w.s[k + 3] = 0; occluded++; }
+  }
+  if (dropped) console.log(`  roads: ${dropped} ways dropped under painted cutouts`);
   bridgeDecks(ways);
   writeData("roads", JSON.stringify(encodeRoads(ways)));
   console.log(`  roads: ${ways.length} ways, ${total} samples, ${((occluded / Math.max(1, total)) * 100).toFixed(1)}% occluded, ${fallback} off the terrain grids`);
@@ -707,7 +775,7 @@ async function exportTrains(areas: string[], heights: Heights) {
     if (index.has(id)) continue;
     const w = ways.get(id), t = w.tags ?? {}, line = lineOf(w);
     const tunnel = /^(yes|building_passage|covered)$/.test(t.tunnel ?? "") || t.covered === "yes";
-    const deck = isBridge(t) ? deckHeight(line, terrainU, ends.get(id)) : null;
+    const deck = isBridge(t) ? deckHeight(line, terrainU, ends(id, w.geometry)) : null;
     const g = w.geometry, samples: number[] = [];
     let cum = 0;
     for (let i = 0; i < g.length - 1; i++) {
@@ -810,13 +878,13 @@ function encodeRoads(ways: Array<{ c: number; o: number; l: number; w: number; a
 }
 
 /**
- * Vehicles on a road passing under a bridge (a road on a higher layer) must disappear beneath its
+ * Vehicles on a road passing under a bridge (a road or, in `covers`, a railway on a higher layer) must disappear beneath its
  * deck: mark those samples hidden. Returns how many samples were hidden.
  */
-function hideUnderBridges(ways: Array<{ y: number; w: number; a: number; b: number; s: number[] }>) {
+function hideUnderBridges(ways: Array<{ y: number; w: number; a: number; b: number; s: number[] }>, covers: typeof ways = []) {
   type Seg = [number, number, number, number, number, number, number, number]; // a, b, half width, layer, way ends
   const CELL = 20, grid = new Map<string, Seg[]>();
-  for (const w of ways) {
+  for (const w of [...ways, ...covers]) {
     if (w.y <= 0) continue;
     for (let k = 0; k + 4 < w.s.length; k += 4) {
       const seg: Seg = [w.s[k], w.s[k + 1], w.s[k + 4], w.s[k + 5], w.w / 2 + 1.5, w.y, w.a, w.b];
@@ -969,14 +1037,14 @@ async function main() {
   shape = outlinePixels();
   // areas overlap: each tile from the area it lies deepest inside (its scene has the most context around it)
   const depth = new Map<string, number>();
-  const photo = new Map<Key, string>(), art = new Map<Key, string>();
+  const photo = new Map<Key, string>(), art = new Map<Key, string>(), cut = new Map<Key, string>(); // cut: cutout.ts landmarks
   const attributions = new Set<string>();
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const a of areas) {
     const dir = join(DERIVED, a);
     const m = readJson(join(dir, "manifest.json"));
     (m.attributions as string[]).flatMap((s) => s.split(";")).map((s) => s.trim()).filter(Boolean).forEach((s) => attributions.add(s));
-    for (const [layer, map] of [["render", photo], ["paint", art]] as const) {
+    for (const [layer, map] of [["render", photo], ["cutout", cut], ["paint", art]] as const) {
       if (!existsSync(join(dir, layer))) continue;
       for (const f of readdirSync(join(dir, layer)).filter((f) => f.endsWith(".png"))) {
         const [tx, ty] = parse(f.replace(".png", ""));
@@ -993,11 +1061,12 @@ async function main() {
   await exportRoads(areas, heights); // first: the bridge decks are drawn into the painted tiles
   await exportTrains(areas, heights);
   if (!process.argv.includes("--data-only")) {
-    await exportLayer("map", new Map([...photo, ...art])); // painted wins
+    await exportLayer("map", new Map([...photo, ...art, ...cut])); // cutouts win: cutout.ts lays them on the painted tile where there is one
     await exportLayer("photo", photo);
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
   }
   await exportBorders(heights);
+  await exportAirport(heights);
   const previews = await exportPreviews();
   // OpenSeadragon wants non-negative tile indices at every level: origin aligned to a min-zoom tile
   const block = TS * 2 ** (NATIVE_Z - MIN_Z);
@@ -1013,7 +1082,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains") },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), airport: dataFile("airport") },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {

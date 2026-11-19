@@ -1,0 +1,2 @@
+- KEEP, pixel for pixel exactly as they are: the whole stadium: the white roof ring with its outer steel ring, the seating bowl and pitch seen through the opening, the outer wall with its slanted columns and stairs, and the narrow paved concourse directly around the stadium's base.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: all roads, car parks, trees, sports fields, and every other building, including the long office building touching the stadium on the right and the low halls touching it at the bottom right.

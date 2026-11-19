@@ -1,0 +1,3 @@
+This is a map of the Schlossgarten in Stuttgart with the Staatstheater: the sandstone opera house with green copper roofs and a columned front on the lake, the grey scenery block with a green sawtooth roof behind it, and the white Schauspielhaus.
+- KEEP, pixel for pixel exactly as they are: the opera house (roofs, stage house, colonnade, statues, the steps down to the water), the scenery block with its links, and the Schauspielhaus with its foyer, all down to their foot.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the lake, lawns, paths, streets, trees and every other building, including the Landtag and the Kunstgebäude.

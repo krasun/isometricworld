@@ -12,6 +12,7 @@
     "ground": "npm -w pipeline run ground --",
     "render": "npm -w pipeline run render --",
     "paint": "npm -w pipeline run paint --",
+    "landmark": "npm -w pipeline run landmark --",
     "export": "npm -w pipeline run export --",
     "og": "npm -w pipeline run og --",
     "dev": "npm -w web run dev",

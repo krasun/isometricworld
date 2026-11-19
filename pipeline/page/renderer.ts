@@ -142,7 +142,7 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   // LoD2 footprints cast the same contact shadows as extruded buildings
   const shadows = { b: [...(data?.b ?? []), ...(data?.m ?? []).filter((m) => !m[9] || m[9] < 2).map((m) => [m[4], m[5], m[0], null] as [P2[], number, number, null])], t: data?.t ?? [] };
   const ctx = cv.getContext("2d")!;
-  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, shadows, ground, STYLED ? SHADOW : undefined);
+  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, shadows, ground, STYLED ? SHADOW : undefined, STYLED);
   buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h);
   if (STYLED) deckShadows(ctx, data);
   groundTexture.needsUpdate = true;
@@ -199,7 +199,7 @@ function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, 
   const cv = deckTexture.image as HTMLCanvasElement;
   if (w !== cv.width || h !== cv.height) deckTexture.dispose();
   cv.width = w; cv.height = h;
-  drawGround(cv.getContext("2d")!, bridges, [x0, y0, x1, y1], GROUND_MPT, { b: [], t: [] }, ground, SHADOW);
+  drawGround(cv.getContext("2d")!, bridges, [x0, y0, x1, y1], GROUND_MPT, { b: [], t: [] }, ground, SHADOW, STYLED);
   deckTexture.needsUpdate = true;
   const top: number[] = [], uv: number[] = [], side: number[] = [], sideN: number[] = [];
   const U = (x: number, y: number) => [(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)];
@@ -333,6 +333,20 @@ const PALETTE: Array<[number[], number[]]> = [
   [[0.86, 0.87, 0.88], [0.80, 0.80, 0.80]],
 ];
 
+/** AI texture sheet (style/textures) on clay-tile roofs; opt-in (render --tex) while we decide on it. Facades
+ *  stay procedural: a tiling sheet gives every building the same window rhythm (its lessons are in the shader). */
+const TEX = STYLED && params.get("tex") === "1";
+async function sheet(file: string) {
+  const t = await new THREE.TextureLoader().loadAsync(`/textures/${file}`);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.NoColorSpace;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+const NO_TEX = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+NO_TEX.needsUpdate = true;
+const roofTex = TEX ? await sheet("roof-tile.png") : NO_TEX;
+
 const buildingMaterial = new THREE.ShaderMaterial({
   vertexShader: /* glsl */ `
     attribute vec3 color;
@@ -345,7 +359,12 @@ const buildingMaterial = new THREE.ShaderMaterial({
     }`,
   fragmentShader: /* glsl */ `
     uniform vec3 sun;
+    uniform sampler2D roofTex; uniform float useTex;
     varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos;
+    // the roof sheet's mean colour (dividing by it tints the sheet to each roof's colour); one repeat per
+    // ROOF_M metres, ~3× real tile size so the rows stay readable
+    const vec3 ROOF_MEAN = vec3(0.796, 0.325, 0.208);
+    const float ROOF_M = 8.0;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     float vnoise(vec2 p) {
       vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -413,8 +432,14 @@ const buildingMaterial = new THREE.ShaderMaterial({
         // Stuttgart (LoD2): punched windows in plaster, sandstone, glass; roofs untextured
         light = 0.70 + 0.42 * max(dot(n, sun), 0.0) + 0.06 * n.z;
         if (vFacade.y < -100.0 && vFacade.x < 0.5) {
-          if (n.z < 0.97) { if (fract(vPos.z / 0.42) < 0.16) c *= 0.93; }   // tile courses
-          else c *= 0.95 + 0.07 * hash(floor(vPos.xy * 2.0));               // gravel
+          if (n.z < 0.97 && useTex > 0.5 && vColor.r > 1.6 * vColor.b) {
+            // clay tiles: rows along the eaves, the sheet's top up the slope
+            vec2 dn = normalize(n.xy), al = vec2(-dn.y, dn.x);
+            vec2 uv = vec2(dot(vPos.xy, al), -dot(vPos.xy, dn) / max(n.z, 0.3)) / ROOF_M;
+            c = texture2D(roofTex, uv).rgb * vColor / ROOF_MEAN;
+          }
+          else if (n.z < 0.97) { if (fract(vPos.z / 0.42) < 0.16) c *= 0.93; }   // tile courses
+          else if (abs(floor(vKind + 0.001) - 22.0) > 0.5) c *= 0.95 + 0.07 * hash(floor(vPos.xy * 2.0)); // gravel (car park decks: flat concrete)
           #ifdef ZG
           // old tile weathers in patches (moss, soot, newer tiles): mottle pitched roofs, soften flat ones
           if (n.z < 0.97) c *= 0.9 + 0.15 * vnoise(vPos.xy * 0.45) + 0.06 * (hash(floor(vPos.xy * 3.0)) - 0.5);
@@ -439,11 +464,13 @@ const buildingMaterial = new THREE.ShaderMaterial({
             bool shop = k != 2 && r6 < (ZGS && k == 0 ? 0.45 : 0.22);
             float GF = shop ? 4.2 : (k == 2 || r6 < 0.5 ? FH * 1.2 : FH);
             float BAY = k == 2 ? 3.1 + 1.2 * r2 : 2.2 + 1.7 * r2;
-            float hw = min(k == 2 ? 0.55 + 0.25 * r3 : 0.42 + 0.38 * r3, BAY * 0.5 - 0.35);
+            float hw = min(k == 2 ? 0.6 + 0.25 * r3 : 0.55 + 0.25 * r3, BAY * 0.5 - 0.35); // big windows read at map scale
             bool pairs = k != 2 && r4 > 0.72 && BAY > 2.8;
+            // older-looking buildings: tall windows in a stone surround under a head cap (as in the AI facade sheet)
+            bool orn = k == 2 || (k == 0 && r3 > 0.4);
             float fi = y < GF ? 0.0 : 1.0 + floor((y - GF) / FH);
             float fy = y < GF ? y : mod(y - GF, FH), fh = y < GF ? GF : FH;
-            float wh = fh * (k == 2 ? 0.58 + 0.1 * r4 : 0.44 + 0.16 * r4), s0 = min(fh * 0.3, fh - wh - 0.3);
+            float wh = fh * (k == 2 || orn ? 0.56 + 0.1 * r4 : 0.5 + 0.12 * r4), s0 = min(fh * 0.3, fh - wh - (orn ? 0.45 : 0.3));
             float bay = floor(x / BAY), cx = mod(x, BAY) - BAY * 0.5;
             if (pairs) { cx = abs(cx) - (hw * 0.5 + 0.12); }
             float rw = hash(vec2(bay, fi) + v * 31.0);
@@ -454,23 +481,29 @@ const buildingMaterial = new THREE.ShaderMaterial({
               else if (fy > GF - 0.75 && fy < GF - 0.35) c *= 0.82;
             } else if (abs(cx) < hw && fy > s0 && fy < s0 + wh) {
               float t = (fy - s0) / wh;
-              vec3 g = WIN * (0.9 + 0.3 * t);                                     // sky reflection toward the top
-              if (rw < 0.16) g = mix(vec3(0.56, 0.66, 0.76), WIN, t * 0.6);          // window catching the sky
-              else if (rw < 0.30) g = t > 0.45 ? vec3(0.84, 0.82, 0.76) : g;         // curtains
-              else if (rw < 0.40 && t > 1.0 - 0.35 - 0.4 * hash(vec2(rw, fi))) g = vec3(0.66, 0.66, 0.64); // roller blind
+              vec3 g = WIN * (0.94 + 0.12 * rw);                                   // flat slate glass, a touch of variation
+              if (rw < 0.06) g = mix(vec3(0.50, 0.60, 0.70), WIN, t * 0.7);          // the odd window catching the sky
+              else if (rw < 0.13 && t > 0.62) g = vec3(0.70, 0.69, 0.65);            // a lowered blind
               c = g;
               float e = min(hw - abs(cx), min(fy - s0, s0 + wh - fy));
-              if (e < 0.09) c = FRAME;                                             // frame
-              else if (r4 > 0.5 && k != 1 && (abs(cx) < 0.05 || abs(t - 0.7) * wh < 0.05)) c = FRAME; // mullion + transom
-            } else if (abs(cx) < hw + 0.1 && fy > s0 - 0.14 && fy <= s0) {
-              c = k == 2 ? c * 0.88 : FRAME * 0.97;                                // sill
-            } else if ((k == 2 || ZGS && k == 0 && r3 > 0.3) && abs(cx) < hw + 0.18 && fy >= s0 + wh && fy < s0 + wh + 0.3) {
-              c *= 0.86;                                                           // window head
+              if (e < 0.08) c = FRAME;                                             // frame
+              else if (k != 1 && hw > 0.35 && abs(cx) < 0.045) c = FRAME;          // mullion: two casements
+              else if (r4 > 0.5 && k != 1 && abs(t - 0.75) * wh < 0.04) c = FRAME; // transom
+            } else if (orn && abs(cx) < hw + 0.32 && fy >= s0 + wh + 0.12 && fy < s0 + wh + 0.36) {
+              c *= fy < s0 + wh + 0.17 ? 0.72 : 1.08;                              // head cap, shadow line under it
+            } else if (orn && abs(cx) < hw + 0.15 && fy > s0 - 0.02 && fy < s0 + wh + 0.12) {
+              c *= abs(cx) > hw + 0.11 ? 0.8 : 1.06;                               // stone surround, outlined
+            } else if (abs(cx) < hw + (orn ? 0.25 : 0.1) && fy > s0 - 0.16 && fy <= s0) {
+              c = orn ? c * 1.08 : FRAME * 0.97;                                   // sill
+            } else if (orn && abs(cx) < hw + 0.25 && fy > s0 - 0.3 && fy <= s0 - 0.16) {
+              c *= 0.84;                                                           // the sill's shadow
+            } else if (ZGS && k == 0 && r3 > 0.3 && !orn && abs(cx) < hw + 0.18 && fy >= s0 + wh && fy < s0 + wh + 0.3) {
+              c *= 0.86;                                                           // window head (Zagreb)
             } else if (k == 0 && r5 > 0.8 && abs(cx) >= hw && abs(cx) < hw * 1.85 && fy > s0 && fy < s0 + wh && BAY > hw * 4.0 + 0.4) {
               c = r1 < 0.4 ? vec3(0.33, 0.45, 0.36) : (r1 < 0.7 ? vec3(0.45, 0.50, 0.55) : vec3(0.50, 0.38, 0.28)); // shutters
               if (fract(fy / 0.22) < 0.25) c *= 0.85;
-            } else if ((r2 > 0.55 || k == 2) && fi > 0.5 && fy < 0.22) {
-              c *= 0.9;                                                            // string course
+            } else if (fi > 0.5 && fy < 0.45) {
+              c *= fy < 0.16 ? 0.58 + 0.12 * r2 : 1.07;                            // cornice between storeys: shadow line + lit band (≥1 px each)
             }
             if (plinth) c *= 0.8;
           } else if (k == 3) {       // towers: curtain wall, tint per building
@@ -523,6 +556,16 @@ const buildingMaterial = new THREE.ShaderMaterial({
             else if (cx > 0.5 && cx <= 0.58) c *= 0.82;                          // rib shadow
           }
           #endif
+          else if (k == 11) {      // masonry (tunnel portals, retaining walls): ashlar courses, staggered joints
+            float row = floor(y / 0.55), bl = 0.9 + 0.6 * hash(vec2(row, 3.1)), sx = x / bl + 0.5 * mod(row, 2.0);
+            c *= 0.9 + 0.16 * hash(vec2(floor(sx), row));
+            if (fract(y / 0.55) < 0.14 || fract(sx) < 0.08) c *= 0.72;
+          } else if (k == 12) {      // multi-storey car park: per level a concrete parapet band, then the dark open deck; columns
+            float FH = 2.9, fy = fract(y / FH);
+            bool column = abs(fract(x / 7.5) - 0.5) > 0.46;
+            if (fy > 0.4 && !column && y > 0.5) c = vec3(0.30, 0.31, 0.34) * (fy > 0.88 ? 0.82 : 1.0);
+            else if (fy < 0.05) c *= 0.88;                                        // slab edge
+          }
           else {                   // offices: ribbon windows or a grid of square windows, shop fronts
             float FH = 3.4 + 0.5 * r1, M = 1.3 + 0.8 * r2, fy = fract(y / FH);
             vec3 g = mix(WIN, r5 < 0.5 ? vec3(0.36, 0.48, 0.58) : vec3(0.40, 0.50, 0.46), 0.5) * (0.9 + 0.2 * hash(vec2(floor(x / M), floor(y / FH)) + v));
@@ -561,7 +604,7 @@ const buildingMaterial = new THREE.ShaderMaterial({
       }
       gl_FragColor = vec4(c * light, 1.0);
     }`,
-  uniforms: { sun: { value: SUN } },
+  uniforms: { sun: { value: SUN }, roofTex: { value: roofTex }, useTex: { value: TEX ? 1 : 0 } },
   defines: ZG ? { ZG: 1 } : {},
 });
 
@@ -677,10 +720,11 @@ const WALL_BY_STYLE: Record<number, number[][]> = {
   2: [[0.88, 0.79, 0.62], [0.84, 0.76, 0.62], [0.92, 0.88, 0.80]],
   3: [[0.80, 0.84, 0.88]],
   4: [[0.80, 0.79, 0.76], [0.74, 0.74, 0.72], [0.84, 0.82, 0.76]],
+  12: [[0.82, 0.81, 0.78], [0.78, 0.78, 0.76]], // car park concrete
   5: [[0.90, 0.90, 0.89], [0.84, 0.85, 0.86], [0.93, 0.91, 0.86]],
 };
-/** roof kinds (scene.ts lod2Style): red tile, brown tile, slate, gravel, copper, dark membrane, green roof */
-const ROOFS_STR = [[0.76, 0.36, 0.25], [0.62, 0.36, 0.26], [0.50, 0.51, 0.55], [0.86, 0.84, 0.79], [0.45, 0.70, 0.60], [0.74, 0.74, 0.74], [0.56, 0.68, 0.40]];
+/** roof kinds (scene.ts lod2Style): red tile, brown tile, slate, gravel, copper, dark membrane, green roof, parking deck */
+const ROOFS_STR = [[0.76, 0.36, 0.25], [0.62, 0.36, 0.26], [0.50, 0.51, 0.55], [0.86, 0.84, 0.79], [0.45, 0.70, 0.60], [0.74, 0.74, 0.74], [0.56, 0.68, 0.40], [0.62, 0.63, 0.65]];
 /**
  * Zagreb (Commons photos in ATTRIBUTION.md): Donji and Gornji grad are plastered in "Maria Theresa" ochre and
  * yellow, cream, salmon and pale pink, some pastel green and grey-white; roofs are weathered red-brown tile,
@@ -886,6 +930,56 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
   }
 }
 
+/**
+ * Top deck of a multi-storey car park (learned from an AI repaint of the Robert-Bosch-Krankenhaus P1): laid out
+ * along the footprint's longest edge in 16 m modules (5 m bays | 6 m aisle | 5 m bays), white bay lines every
+ * 2.5 m, a few parked cars (rounded boxes, ~1 per 250 m²), a stair/lift box at one end. Plain grey deck below.
+ */
+const CAR_COLOURS = [[0.86, 0.87, 0.88], [0.36, 0.38, 0.42], [0.42, 0.52, 0.66], [0.70, 0.71, 0.73], [0.74, 0.30, 0.26], [0.22, 0.23, 0.25]];
+function parkingDeck(o: Out, ring: P2[], z: number, rnd: () => number) {
+  let t = 0, best = 0;
+  for (let k = 0; k < ring.length; k++) {
+    const [ax, ay] = ring[k], [bx, by] = ring[(k + 1) % ring.length], L = Math.hypot(bx - ax, by - ay);
+    if (L > best) { best = L; t = Math.atan2(by - ay, bx - ax); }
+  }
+  const cu = Math.cos(t), sn = Math.sin(t);
+  const toW = (u: number, v: number): P2 => [u * cu - v * sn, u * sn + v * cu];
+  const us = ring.map(([x, y]) => x * cu + y * sn), vs = ring.map(([x, y]) => -x * sn + y * cu);
+  const u0 = Math.min(...us), u1 = Math.max(...us), v0 = Math.min(...vs), v1 = Math.max(...vs);
+  const ins = (u: number, v: number, m = 0.6) => [[0, 0], [m, 0], [-m, 0], [0, m], [0, -m]].every(([du, dv]) => pointInRing(...toW(u + du, v + dv), ring));
+  const line = (ua: number, va: number, ub: number, vb: number, w: number) => {
+    const du = ub - ua, dv = vb - va, L = Math.hypot(du, dv) || 1, nu = (-dv / L) * w / 2, nv = (du / L) * w / 2;
+    const q = [[ua - nu, va - nv], [ub - nu, vb - nv], [ub + nu, vb + nv], [ua + nu, va + nv]].map(([u, v]) => [...toW(u, v), z + 0.04]);
+    const up = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]) > 0; // counter-clockwise from above
+    quad3(o, up ? q : q.reverse(), [0.97, 0.97, 0.95]);
+  };
+  const W = v1 - v0, n = Math.max(1, Math.floor((W - 1) / 16)), vm = v0 + (W - n * 16) / 2;
+  const bays: Array<[number, number, number]> = []; // u, v (bay centre), side
+  for (let m = 0; m < n; m++) {
+    const vc = vm + m * 16 + 8;
+    for (const side of [-1, 1]) {
+      const va = vc + side * 3, vb = vc + side * 8;
+      let first = true;
+      for (let u = u0 + 1.5; u + 2.5 <= u1 - 1.5; u += 2.5) {
+        if (!ins(u, va) || !ins(u, vb) || !ins(u + 2.5, va) || !ins(u + 2.5, vb)) { first = true; continue; }
+        if (first) line(u, va, u, vb, 0.22);
+        line(u + 2.5, va, u + 2.5, vb, 0.22);
+        bays.push([u + 1.25, (va + vb) / 2, side]);
+        first = false;
+      }
+    }
+  }
+  const area = Math.abs(THREE.ShapeUtils.area(ring.map(([x, y]) => new THREE.Vector2(x, y))));
+  for (let k = Math.min(bays.length, Math.round(area / 250)); k > 0 && bays.length; k--) {
+    const [u, v] = bays.splice(Math.floor(rnd() * bays.length), 1)[0];
+    const [x, y] = toW(u, v), c = CAR_COLOURS[Math.floor(rnd() * CAR_COLOURS.length)];
+    prism(o, x, y, z, 1.8, 4.3, 0.75, 0.75, t, c.map((q) => q * 0.85)); // body
+    prism(o, x, y, z + 0.75, 1.5, 2.3, 0.55, 0.55, t, c);               // cabin
+  }
+  for (const [u, v] of [[u0 + 2.5, v0 + 2.5], [u1 - 2.5, v1 - 2.5], [u0 + 2.5, v1 - 2.5], [u1 - 2.5, v0 + 2.5]])
+    if (ins(u, v, 1.6)) { const [x, y] = toW(u, v); prism(o, x, y, z, 3.2, 3.2, 3.0, 3.0, t, [0.80, 0.79, 0.76]); break; } // stairs / lift
+}
+
 /** LoD2 meshes into the shared building arrays (flat-shaded triangles; walls carry facade coordinates). */
 function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[], fac: number[], kin: number[]) {
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
@@ -900,7 +994,8 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
     const rnd = mulberry(seed * 7919 + 1);
     // style in the integer part, the building's facade variation in the fraction (buildingMaterial)
     const kind = 10 + style + 0.05 + 0.9 * mulberry(seed * 104729 + 7)();
-    const green = roofKind % 10 === 6, landmark = (style === 4 && !!osmRoof) || !!bare; // hand-modelled / LOOKS landmarks: no roof furniture
+    const green = roofKind % 10 === 6, deck = style === 12, landmark = (style === 4 && !!osmRoof) || !!bare || deck; // hand-modelled / LOOKS landmarks / car parks: no roof furniture
+    let deckZ = -Infinity;
     const planes: Plane[] = [];
     for (let i = 0; i + 8 < roof.length; i += 9) {
       a.fromArray(roof, i); b.fromArray(roof, i + 3); c.fromArray(roof, i + 6);
@@ -910,6 +1005,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
       if (n.z < 0) n.negate();
       const r = n.z > 0.97 ? flatRoof : tileRoof; // planes within ~14° of level are flat roofs
       for (const v of [a, b, c]) { pos.push(v.x, v.y, v.z); nor.push(n.x, n.y, n.z); col.push(...r); fac.push(0, -1000); kin.push(kind); }
+      if (deck && n.z > 0.97 && area > 1) deckZ = Math.max(deckZ, a.z, b.z, c.z);
       if (landmark || area < 0.01 || n.z < 0.3) continue;
       // group triangles into planes (same normal and offset) for the roof furniture
       const d = n.x * a.x + n.y * a.y + n.z * a.z;
@@ -918,6 +1014,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
       pl.tris.push([a.x, a.y, b.x, b.y, c.x, c.y]); pl.area += area;
     }
     if (planes.length) roofFurniture({ pos, nor, col, fac, kin }, planes, footprint, wall, style, green, w, rnd);
+    if (deck && deckZ > -Infinity) parkingDeck({ pos, nor, col, fac, kin }, footprint, deckZ, rnd);
     for (let i = 0; i + 14 < wall.length; i += 15) {
       a.fromArray(wall, i); b.fromArray(wall, i + 5); c.fromArray(wall, i + 10);
       n.subVectors(b, a).cross(c.clone().sub(a)).normalize();
@@ -1010,7 +1107,7 @@ function buildObjects(data: TileObjects) {
   if (data.t.length) {
     const crowns = new THREE.InstancedMesh(STYLED ? CROWN : new THREE.IcosahedronGeometry(1, 2), treeMaterial, data.t.length);
     const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6).rotateX(Math.PI / 2).translate(0, 0, 0.5), treeMaterial, data.t.length);
-    const m = new THREE.Matrix4(), c = new THREE.Color(), bark = new THREE.Color(0.45, 0.36, 0.28);
+    const m = new THREE.Matrix4(), c = new THREE.Color(), bark = new THREE.Color(0.40, 0.31, 0.23);
     data.t.forEach(([x, y, r, ch, named], i) => {
       const g = ground(x, y), [name, , col, sxy, sz, palm] = species(x, y, r, named);
       if (palm && STYLED) {
@@ -1029,9 +1126,17 @@ function buildObjects(data: TileObjects) {
         m.makeScale(0.4, 0.4, top - g).setPosition(x, y, g);
         trunks.setMatrixAt(i, m);
       } else {
-        m.makeScale(r * sxy, r * sxy, r * sz).setPosition(x, y, g + ch);
-        crowns.setMatrixAt(i, m);
-        m.makeScale(0, 0, 0);
+        if (STYLED) {
+          // crown stretched down into an oval (at most 1.7× as tall as wide) so only a short trunk shows under it
+          const top = ch + r * sz, bot = Math.min(ch - r * sz, Math.max(2, 0.28 * top, top - 3.4 * r * sxy)), hz = (top - bot) / 2;
+          m.makeScale(r * sxy, r * sxy, hz).setPosition(x, y, g + bot + hz);
+          crowns.setMatrixAt(i, m);
+          m.makeScale(Math.max(0.35, r * 0.12), Math.max(0.35, r * 0.12), bot + hz * 0.5).setPosition(x, y, g);
+        } else {
+          m.makeScale(r * sxy, r * sxy, r * sz).setPosition(x, y, g + ch);
+          crowns.setMatrixAt(i, m);
+          m.makeScale(0, 0, 0);
+        }
         trunks.setMatrixAt(i, m);
       }
       crowns.setColorAt(i, c.setRGB(col[0], col[1], col[2]));

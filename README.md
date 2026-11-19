@@ -180,6 +180,7 @@ npm -w pipeline exec tsx src/traffictest.ts http://localhost:<port>/ 5     # 5 s
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/tel-aviv-yafo.mp4  # 14 s 1080² 60 fps clip for X (--preview: quick 6 fps check; --blur 8: motion blur)
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/stuttgart.mp4 --city stuttgart --seconds 4.5  # shots per city: FILMS in film.ts
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/zagreb.mp4 --city zagreb --film zagreb-readme --seconds 12  # --film: another shot list
+npm -w pipeline exec tsx src/beforeafter.ts before.mp4 after.mp4 ../video/stuttgart-before-after.mp4 --holds 0,7.35,19  # wipe: production vs dev cache (--film stuttgart-before-after; steps in beforeafter.ts)
 ```
 
 **Fixing a few buildings** (local rebuild, review, publish only them):
@@ -214,8 +215,51 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   DGM1 bare-earth terrain, and tree crowns found in the nDOM1 surface model (`canopy.ts`).
 - OSM comes from a Geofabrik extract via osmium (`osmExtract`, `osmlocal.ts`; `brew install osmium-tool`),
   not from Overpass.
-- Look: not painted. The renderer draws a styled look itself (facade and roof materials, hillshade, outlines,
-  ambient occlusion, paper grain; `STYLED` in `renderer.ts`).
+- Look: the renderer draws a styled look itself (facade and roof materials, hillshade, outlines, ambient
+  occlusion, paper grain; `STYLED` in `renderer.ts`). Selected patches of the centre are painted over it from
+  aerial photos (below); export shows paint where it exists and the styled render everywhere else.
+- Painting from aerial photos (the Stadtbibliothek / Europaviertel patch, windows 4..6 × -1..1 of `stuttgart-core`):
+  1. `npx tsx src/aerial.ts <area> --near <lat>,<lon> --radius <r> --source city` drapes the city's 2023
+     orthophotos (CC BY 4.0, cached in `data/raw/aerial/`) onto the render's view: every non-wall pixel gets the
+     photo colour of the ground point it shows (camera inverted at the height-pass height); walls stay grey 128.
+     Writes `data/derived/<area>/aerial-city/`. `--source lgl` (LGL DOP20) is newer but hazier.
+  2. `npm run paint -- <area> --near <lat>,<lon> --radius <r> --center <lat>,<lon> --aerial city --aerial-input`
+     bakes the photo into image 1 (walls from the render, roofs/ground/trees from the photo) and tells Codex to
+     keep its real colours and materials. Attaching the photo as an extra image instead (`--aerial` alone) was
+     tried and ignored by the model.
+  3. Photos can't show facades: add landmarks to `FACADES` in `paint.ts` (name, lat/lon, facade text); a note is
+     added to the prompt for every window it falls in. Without one the model guesses (the library came out beige).
+  4. QA: hybrid paintings follow the photo, not the render, so they match it less (0.41–0.61 when right);
+     the repaint threshold is 0.35 in this mode instead of 0.45.
+  5. Partly covered tiles at the patch edge fade from the paint into the render (64 px), so a patch needs no
+     full-tile alignment. Export as usual (all areas of the region).
+  - `--tag <name>` sends windows/work/paint to `<dir>-<name>` folders that export never reads: use it for experiments.
+  - Known gaps: the photo (2023) and LoD2 disagree in places; the photo wins on surfaces, so render-only details
+    (pools, some trees) disappear, and a building newer than LoD2 shows as a flat roof texture. ~2–5 min per window.
+  - `--look simple` (being tested at the airport) uses `style/reference-simple.png` (a crop of the styled render)
+    as the style reference, median-flattens the photo instead of boosting it (no CLAHE), and asks for flat
+    surfaces, low-poly trees and no aircraft or vehicles (the map animates both). Why: in the default look,
+    close up the painted tiles look washed out and noisy next to the render, and zoomed out the detail turns to
+    mush; painted AVIF tiles are ~1.9× the bytes of rendered ones (z8: 43 KB vs 23 KB).
+  - Windows are colour-matched before assembly (one RGB offset per window, least squares over the overlap
+    strips), then joined along a seam cut: per neighbour pair, the cheapest path (least colour difference)
+    through the overlap band, feathered over 8 px. Outside Tel Aviv only (Tel Aviv keeps the 128 px cross-fade,
+    which ghosted streets and trees where two windows disagreed). The cut does not fix a seam inside a window
+    where a pasted neighbour strip ends and the model painted a different material.
+  - Map mask: `aerial.ts` also writes `mask/<tx>_<ty>.png` (white = keep the render): streets (+ kerbs),
+    rails, squares, paving, water and bridge decks from `ground/features.json`, rasterised at 0.25 m and
+    applied only where the surface is within 2.5 m of the terrain (or on a bridge deck). The hybrid input
+    keeps the render there instead of the photo, and the prompt treats those flat shapes as exact geometry, so
+    the model keeps streets, tunnel mouths, turning loops, fountains and rail where the map has them.
+  - Building uses: `pois.ts` cuts OSM amenity/shop/tourism/leisure features (fast food with brand, fuel,
+    churches, stations, car parks, schools, …) from the extract into `data/raw/<area>/pois.json` (delete it to
+    re-cut). Up to 12 per window go into the prompt with their pixel position, most distinctive first.
+  - `--near`/`--center`/`aerial.ts` find the window via `groundPixel` (height pass), so high ground (the
+    airport, ~440 m) lands on the right window.
+  - Known misreads in the library patch: Mailänder Platz (pedestrian square, fountains) came out as a street,
+    because the photo's sun shadow plus the grey wall fill look like asphalt (the photo is not a true ortho;
+    buildings lean). The Wolframstraße underpass under the rail bridge shows cars and no portal:
+    `hideUnderBridges` (export.ts) only checks road under road, and `portals.ts` only handles tunnel-tagged ways.
 - Shape: the region's `outline` (`outline.ts`) is the union of OSM boundary relations (Stuttgart, 62375, and
   the bordering towns) plus a box around the airport. Only LGL cells and tiles touching it are fetched and
   rendered, and export fades the map edge along its outer border only (not between the towns).

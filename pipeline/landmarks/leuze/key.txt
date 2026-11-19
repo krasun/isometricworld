@@ -1,0 +1,3 @@
+This is a map of the Mineralbad Leuze in Stuttgart: the long low glass-and-blue bath building with green roofs on the bank of the Neckar, its blue drum and fan tower, and the turquoise outdoor pools beside it.
+- KEEP, pixel for pixel exactly as they are: the bath building (roofs, glazing, drum, tower, dome, down to its foot), the outdoor pools with their deck and sunbeds, the sculpture, and the lawns and trees inside the bath grounds around the pools.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the river Neckar, the bridges, all roads and tunnels, the railway, the park on the slope above, every other building and all trees outside the bath grounds.

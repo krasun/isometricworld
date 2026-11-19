@@ -104,7 +104,7 @@ if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;
   const b = `(${s},${w},${n},${e})`;
   const data = await osmQuery(`[out:json][timeout:300];
-${sources === "lgl" ? `(node["natural"="tree"]${b}; ${["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)).join(" ")} ${Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`).join(" ")} ${Object.keys(TOWERS).map((n) => `way["name"="${n}"]${b};`).join(" ")} nwr["amenity"="fountain"]${b};);` : `(way["building"]${b}; relation["building"]${b}; node["natural"="tree"]${b};);`}
+${sources === "lgl" ? `(node["natural"="tree"]${b}; ${["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)).join(" ")} ${Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`).join(" ")} ${Object.keys(TOWERS).map((n) => `nwr["name"="${n}"]${b};`).join(" ")} nwr["amenity"="fountain"]${b};);` : `(way["building"]${b}; relation["building"]${b}; node["natural"="tree"]${b};);`}
 out body geom;`, area.bbox, buildingFilter);
   writeFileSync(join(dir, "osm.json"), JSON.stringify(data));
   console.log(`  osm: ${data.elements.length} elements`);
@@ -147,7 +147,8 @@ if (!existsSync(join(dir, "ground.json"))) {
   const parts = [
     `way["highway"]["tunnel"!~"yes|building_passage"]${b};
   way["area:highway"]${b};
-  way["railway"~"^(rail|light_rail|tram)$"]["tunnel"!="yes"]${b};`,
+  way["railway"~"^(rail|light_rail|tram)$"]["tunnel"!="yes"]${b};
+  way["railway"="platform"]${b};`,
     `nwr["landuse"]${b};`,
     `nwr["leisure"~"^(park|garden|pitch|playground|stadium|track|golf_course|swimming_pool|dog_park|nature_reserve|recreation_ground|marina|sports_centre)$"]${b};
   nwr["natural"~"^(water|beach|sand|scrub|grassland|wood|wetland|coastline|bare_rock|heath)$"]${b};

@@ -3,7 +3,8 @@ import OpenSeadragon from "openseadragon";
 import type { Traffic } from "./traffic.ts";
 import type { Trains } from "./trains.ts";
 import type { Cats } from "./cats.ts";
-import type { Planes, Parrots, Pigeons, Airport } from "./sky.ts";
+import type { Planes, Parrots, Pigeons, Airport, LightAircraft, Signs } from "./sky.ts";
+import type { AirportTraffic } from "./airport.ts";
 import { CAMERA, ecefToEnu, llhToEcef, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
@@ -22,7 +23,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; borders?: string; roads?: string; trains?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; borders?: string; roads?: string; trains?: string; airport?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -87,7 +88,9 @@ const viewer = OpenSeadragon({
   springStiffness: 9,
   immediateRender: false,
   imageLoaderLimit: 8,
-  minPixelRatio: 0.8,     // fetch the finer level only once it is really needed (~40% fewer bytes)
+  // the finer level is fetched once the shown one would be stretched past 1/0.6 = 1.2× in device pixels (OSD's
+  // default 0.5 never stretches but loads ~1.4× more; 0.8 stretched up to 1.6× and blurred thin lines like rails)
+  minPixelRatio: 0.6,
   maxImageCacheCount: 600,
   minZoomImageRatio: 0.01, // real limit is set on open: the whole metro
   maxZoomPixelRatio: 2.5,
@@ -124,6 +127,7 @@ let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
 let trains: Trains | null = null;
 let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, pigeons: Pigeons | null = null, planes: Planes | null = null;
+let lightAircraft: LightAircraft | null = null, airport: AirportTraffic | null = null, signs: Signs | null = null;
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
@@ -133,10 +137,18 @@ function loadAnimations() {
     import("./traffic.ts"), import("./cats.ts"), import("./sky.ts"), import("./roads.ts"),
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
     files.trains ? Promise.all([import("./trains.ts"), fetch(`${BASE}/data/${files.trains}`).then((r) => (r.ok ? r.json() : null))]) : null,
-  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, Pigeons }, { decodeRoads }, data, rail]) => {
+    files.airport ? Promise.all([import("./airport.ts"), fetch(`${BASE}/data/${files.airport}`).then((r) => (r.ok ? r.json() : null))]) : null,
+  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, Pigeons, LightAircraft, Signs }, { decodeRoads }, data, rail, ground]) => {
     const roads = decodeRoads(data, !files.trains); // no trains: exported before terrain road heights
     if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)], REGIONS[REGION].rail?.stock);
-    if (world.airport) planes = new Planes(world.enu2px, world.airport);
+    // with the taxi network the airliners land, park and take off again; without it they fade out on the runway
+    const ap = REGIONS[REGION]?.airport;
+    if (ground?.[1] && ap) airport = new ground[0].AirportTraffic(world.enu2px, ap, ground[1]);
+    else if (world.airport) planes = new Planes(world.enu2px, world.airport);
+    const airfield = REGIONS[REGION]?.airfield; // from places.ts directly: no re-export of world.json needed
+    if (airfield) lightAircraft = new LightAircraft(world.enu2px, airfield);
+    const roofSigns = REGIONS[REGION]?.signs; // places.ts directly, like the airfield
+    if (roofSigns?.length) signs = new Signs(world.enu2px, roofSigns);
     if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)]);
     if (roads.length) cats = new Cats(roads, world.enu2px);
     if (traffic && trains && REGIONS[REGION].rail) traffic.yieldTo(trains); // Zagreb's trams share the streets
@@ -159,7 +171,7 @@ function loadAnimations() {
       if (Number.isFinite(u)) roosts.push([e, n, u]); // no street near: the square is outside the exported areas
     }
     if (roosts.length) pigeons = new Pigeons(world.enu2px, roosts);
-    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __pigeons: pigeons, __planes: planes });
+    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __pigeons: pigeons, __planes: planes, __lightAircraft: lightAircraft, __airport: airport, __signs: signs });
   });
 }
 setTimeout(loadAnimations, 6000); // slow connection: don't wait for every tile forever
@@ -231,9 +243,12 @@ function frame(t: number) {
     cats.step(dt);
     cats.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
-  if (showTraffic) { // sky above everything: parakeets or pigeons, then the airliner
+  if (signs) { signs.step(dt); signs.draw(ctx, toScreen, [0, 0, w, hgt]); } // part of the buildings: shown with traffic off too
+  if (showTraffic) { // sky above everything: parakeets or pigeons, light aircraft, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (pigeons) { pigeons.step(dt); pigeons.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
+    if (airport) { airport.step(dt); airport.draw(ctx, toScreen, [0, 0, w, hgt]); }
+    if (lightAircraft) { lightAircraft.step(dt); lightAircraft.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (planes) { planes.step(dt); planes.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
   }
   if (showBorders || k / dpr < 0.05) drawBorders(dpr); // borders appear automatically far out
@@ -327,7 +342,8 @@ document.getElementById("credits")!.innerHTML = [
   `© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>`,
   // the region's own data sources
   ...(REGION === "stuttgart"
-    ? [`Datenquelle: <a href="https://www.lgl-bw.de">LGL</a>, <a href="https://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a> (verändert)`]
+    ? [`Datenquelle: <a href="https://www.lgl-bw.de">LGL</a>, <a href="https://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a> (verändert)`,
+      `<a href="https://opendata.stuttgart.de/dataset/luftbilder-2021">Luftbilder: Landeshauptstadt Stuttgart</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> (verändert)`]
     : REGION === "zagreb" // Otvorena dozvola: source, date of its last change, link, change notice
       ? [`<a href="https://data.zagreb.hr/dataset/zg3d-2022-3d-model-gz">Grad Zagreb, ZG3D 2022</a> (7. 5. 2025.)`,
         `<a href="https://data.gov.hr/otvorena-dozvola">Otvorena dozvola</a>, izmijenjeno`]

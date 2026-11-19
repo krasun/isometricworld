@@ -1,0 +1,3 @@
+This is a map of the Wilhelma in Stuttgart, the zoological-botanical garden: the walled area with the Moorish garden, greenhouses, zoo houses, enclosures, paths and dense trees between the park meadows (top left), the railway and road (right) and the town (bottom).
+- KEEP, pixel for pixel exactly as they are: everything inside the zoo: all its buildings, glass roofs, greenhouses, gardens, ponds, paths, enclosures and its trees, up to the zoo's boundary.
+- REPLACE everything outside the zoo with one flat solid pure magenta colour #FF00FF: the open park meadows and the trees standing in them, the railway, all roads, the river, and every building outside the zoo.
