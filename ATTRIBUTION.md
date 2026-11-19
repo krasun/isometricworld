@@ -65,9 +65,12 @@ open-data renders and style sheets, no proprietary imagery. Terms as checked in 
   property in outputs (§4(c)) and allows lawful, non-infringing use, commercial use and publication included.
   Partner models may carry their own terms (§14(b)); outputs may not be used to build products that compete
   with those models, e.g. to train AI (§14(c)). fal does not itself assign output rights to the customer.
-- OpenAI ([Terms of Use](https://openai.com/policies/terms-of-use),
-  [Usage Policies](https://openai.com/policies/usage-policies/)): OpenAI assigns its rights, if any, in output;
-  output may not be presented as human-made.
+- OpenAI ([Terms of Use](https://openai.com/policies/terms-of-use), effective 1 Jan 2026, which also cover the
+  Codex CLI painting through a ChatGPT account; [Usage Policies](https://openai.com/policies/usage-policies/),
+  effective 20 Nov 2026; read on 19 Nov 2026): "you (a) retain your ownership rights in Input and (b) own the
+  Output. We hereby assign to you all our right, title, and interest, if any, in and to Output." You may not
+  "represent that Output was human-generated when it was not" or use output to train models that compete with
+  OpenAI's. Through fal.ai the assignment reaches fal (OpenAI's customer), not us directly.
 - Google ([Gemini API Additional Terms](https://ai.google.dev/gemini-api/terms),
   [Generative AI Prohibited Use Policy](https://policies.google.com/terms/generative-ai/use-policy)): Google
   claims no ownership of generated content; no models competing with the service; no misrepresenting AI output as
