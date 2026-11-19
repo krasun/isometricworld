@@ -89,7 +89,7 @@ data/derived/<area>/{render,paint,height}   sources (local only; expensive: back
         ▼
 data/web/regions/<region>/                  local cache = unpublished changes
         │ npm run dev                        dev server serves the cache, redirects everything else to R2
-        │ npm run publish -- <region>        upload (asks [y/N]), check, record state, empty the cache
+        │ npm run publish -- <region>        upload (asks [y/N]) with the state, check, record it, empty the cache
         ▼
 R2 isometricworldtiles/regions/<region>/    production (dev and deployed builds read it)
         │ npm run deploy                     rebuild the site: pages pick up the new file names and previews
@@ -107,7 +107,14 @@ R2 isometricworldtiles/regions/<region>/    production (dev and deployed builds 
   none (AVIF: Safari 16+, every current browser).
 - Export works without the cache: lower zoom levels that need an unchanged neighbour fetch it from R2.
   Exports stack until you publish (`data/web/<region>.state.json`); deleting `data/web/` drops unpublished
-  work and nothing else. Deleting `data/web-state/<region>.json` makes the next export rebuild everything.
+  work and nothing else.
+- The published state (every tile's source stamp and content hash) is kept locally in
+  `data/web-state/<region>.json` and on R2 as `regions/<region>/state.json` (`pipeline/src/webstate.ts`):
+  publish uploads it before `world.json`, and export downloads it when this machine has none, so another
+  maintainer (or a copy of the region's folder from another bucket) picks up where the last publish left off.
+  publish refuses when R2's state changed since the export started (someone else published): export again.
+  A region published before this: `npm run publish -- <region> --state-only` uploads its local state. Without
+  any state, the next export rebuilds everything.
 - Publish uses the wrangler login (`npx wrangler login`) or `CLOUDFLARE_API_TOKEN`. The Cloudflare API allows
   ~4 uploads/s: a whole region (~9k files) takes ~40 min once; later publishes carry only changes.
   `--keep` leaves the cache in place, `--yes` skips the question.
