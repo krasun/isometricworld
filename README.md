@@ -176,8 +176,8 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
   eaves (≈ 0.5 m) and gables (≈ 0.3 m), with a gutter under the eaves and downpipes at their ends and corners.
   `trunks`: broadleaf crowns stand on a trunk. `streetDetail`: pavements only where OSM's `sidewalk*` tags put
   them, separately mapped sidewalks drawn as kerbed pavement, and road and path surfaces (paving, setts,
-  gravel, dirt, grass, concrete) from OSM `surface` (`ground.ts`, `page/ground.ts`). `greenery`: lawns and
-  gardens where the orthophoto is green, traced as smooth outlines over plain residential land (`greenery.ts`),
+  gravel, dirt, grass, concrete) from OSM `surface` (`ground.ts`, `page/ground.ts`). `lawns`: lawns and
+  gardens where the orthophoto is green, traced as smooth outlines over plain residential land (`lawns.ts`),
   and a grass texture fixed to the map on lawns, parks, meadows and the like. `richTrees` (`page/trees.ts`):
   crowns of several lobes in a few variants, a Central European species mix with its own shapes, colours and
   bark (limes, oaks, birches, fruit trees, poplars, willows, tiered spruces, umbrella pines, thujas), and

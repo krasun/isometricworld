@@ -1,5 +1,5 @@
 /**
- * Lawns and gardens from an orthophoto (ground.ts, preset `greenery`): where the photo is green, the ground is
+ * Lawns and gardens from an orthophoto (ground.ts, preset `lawns`): where the photo is green, the ground is
  * drawn as grass. OSM maps parks and some gardens; the yards between houses it mostly leaves as plain
  * residential land, which the map drew as one beige colour.
  *

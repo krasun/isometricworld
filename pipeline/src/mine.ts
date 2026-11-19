@@ -25,7 +25,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AREAS } from "./areas.ts";
 import { ecefToEnu, enuToLlh, llhToEcef, useRegion } from "./camera.ts";
-import { contours, simplifyRing } from "./greenery.ts";
+import { contours, simplifyRing } from "./lawns.ts";
 import sharp from "sharp";
 import { CAP, CHAMBERS, COLLAR, EGGS, GROTTO, HONDIUS, LAYERED, LEVELS, SHAFTS, SOURCES, type Confidence, type MineChamber, type MineLevel } from "./minedata.ts";
 import { FILTERS, localOsm } from "./osmlocal.ts";

@@ -22,7 +22,7 @@ import sharp from "sharp";
 import { openArea } from "./areas.ts";
 import { ecefToEnu, enuToLlh, llhToEcef } from "./camera.ts";
 import { fromPuwg, gugikTerrain, orthoChunks, toPuwg } from "./gugik.ts";
-import { lawns } from "./greenery.ts";
+import { lawns } from "./lawns.ts";
 import { playLayout } from "./playgrounds.ts";
 import { parkLayout } from "./parking.ts";
 import { rasterSampler, toUtm } from "./lgl.ts";
@@ -52,8 +52,8 @@ const DGM = region.sources === "lgl" || region.sources === "gugik";
 const STYLED = region.look === "styled";
 /** Preset `streetDetail`: pavements where OSM maps them, separately mapped ones drawn as such, OSM surfaces. */
 const DETAIL = STYLED && styleOf(region.style).streetDetail;
-/** Preset `greenery`: lawns where the orthophoto is green (greenery.ts; GUGiK's orthophoto). */
-const GREENERY = STYLED && styleOf(region.style).greenery && region.sources === "gugik";
+/** Preset `lawns`: lawns where the orthophoto is green (lawns.ts; GUGiK's orthophoto). */
+const LAWNS = STYLED && styleOf(region.style).lawns && region.sources === "gugik";
 /** Preset `waterDetail`: watercourses as lines, treatment basins murky, dry (intermittent) reservoirs a grassy
  *  basin (page/ground.ts draws the water's depth). */
 const WATER_DETAIL = STYLED && styleOf(region.style).waterDetail;
@@ -582,7 +582,7 @@ if (PLAYGROUNDS && existsSync(join(RAW, name, "osm-play.json"))) {
   console.log(`  playgrounds: ${sand.length} sandpits, ${pads.length} safety pads`);
 }
 // lawns and gardens where the orthophoto is green, a feature per 128 m block (the area and ~700 m round it)
-if (GREENERY) {
+if (LAWNS) {
   const m = 0.006, box = [S - m, W - m, N + m, E + m], c = [[box[0], box[1]], [box[0], box[3]], [box[2], box[1]], [box[2], box[3]]].map(([la, lo]) => toPuwg(la, lo));
   const pbox = [Math.min(...c.map((q) => q[0])), Math.min(...c.map((q) => q[1])), Math.max(...c.map((q) => q[0])), Math.max(...c.map((q) => q[1]))];
   const blocks = await lawns(orthoChunks(box), pbox, (e, n) => { const [la, lo] = fromPuwg(e, n), [x, y] = toEnu(lo, la); return [r1(x), r1(y)]; });

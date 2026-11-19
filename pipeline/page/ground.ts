@@ -70,7 +70,7 @@ function waterTexture(): HTMLCanvasElement {
   return (waterTile = c);
 }
 
-/** Grass kinds that get the grass texture (preset `greenery`). */
+/** Grass kinds that get the grass texture (preset `lawns`). */
 const GRASSY = new Set(["lawn", "park", "meadow", "scrub", "orchard", "cemetery", "allotments", "airgrass", "drybasin"]);
 let grassTile: HTMLCanvasElement | null = null;
 /**

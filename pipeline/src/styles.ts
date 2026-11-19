@@ -42,9 +42,9 @@ export interface StylePreset {
    *  separately mapped sidewalks drawn as pavement, road and path surfaces (paving, setts, gravel, dirt, grass,
    *  concrete). false: a pavement along both sides of every street, roads asphalt. */
   streetDetail: boolean;
-  /** Lawns and gardens where the orthophoto is green (ground.ts, greenery.ts; sources with an orthophoto: gugik),
+  /** Lawns and gardens where the orthophoto is green (ground.ts, lawns.ts; sources with an orthophoto: gugik),
    *  over the plain residential, commercial and campus land; false: that land is one flat colour. */
-  greenery: boolean;
+  lawns: boolean;
   /** Trees of several lobes, species shapes (birches, poplars, willows, spruces, pines, thujas…) and foliage
    *  shading (page/trees.ts); false: one lumpy ball per broadleaf crown. */
   richTrees: boolean;
@@ -96,7 +96,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, greenery: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: false, roofDetail: false, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: false, roofDetail: false, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -115,7 +115,7 @@ export const STYLES = {
     eaves: { overhang: 0.5, verge: 0.3, gutters: true },
     trunks: true,
     streetDetail: true,
-    greenery: true,
+    lawns: true,
     richTrees: true,
     bushes: true,
     bridgeDetail: true,
