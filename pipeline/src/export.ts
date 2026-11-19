@@ -20,9 +20,11 @@
  *   data/trains.<hash>.json            rail lines and their tracks for the trains (exportTrains)
  *   preview/<city>-<land|port>.<hash>.avif  the city's opening view, shown until the tiles are in
  * Content-hashed names never change, so browsers keep them for a year; world.json says which are current.
- * The legacy data/tiles.json + .webp tiles stay on R2 untouched: the viewer's fallback without AVIF.
- * What is published (tile sources + hashes) is tracked in data/web-state/<region>.json; an export not
- * yet published keeps its state next to the cache (data/web/<region>.state.json) so exports stack.
+ * Tel Aviv's legacy data/tiles.json + .webp tiles stay on R2 untouched: the viewer's fallback without AVIF.
+ * Other regions have no WebP pyramid and need none.
+ * What is published (tile sources + hashes) is tracked in data/web-state/<region>.json, and on R2 as
+ * regions/<region>/state.json (webstate.ts: downloaded when this machine has none); an export not yet
+ * published keeps its state next to the cache (data/web/<region>.state.json) so exports stack.
  *
  * Tile (x, y) at zoom z covers global art pixels [x·512·2^(8-z), …); z = 8 is 1:1.
  */
@@ -40,6 +42,7 @@ import { CITIES, REGIONS } from "./places.ts";
 import { readHeights } from "./heights.ts";
 import { FILTERS, localOsm } from "./osmlocal.ts";
 import { deckHeight, isBridge } from "./bridges.ts";
+import { fetchPublishedState, stateHash } from "./webstate.ts";
 
 const TS = 512;                  // web tile size
 const SPLIT = CAMERA.tile / TS;  // web tiles per art tile edge
@@ -132,6 +135,9 @@ interface State {
   data: Record<string, string>;
   /** source PNG path -> "mtime:size@content hash" */
   src?: Record<string, string>;
+  /** stateHash of the published state this export started from (none: from scratch); publish refuses
+   *  when R2's state has moved on since (someone else published) */
+  base?: string;
 }
 let state: State = { layers: {}, data: {} };
 /** what is on R2 now: a tile encoded to the same bytes stays out of the cache, so publish uploads only real changes */
@@ -1161,8 +1167,10 @@ async function main() {
   const mineLevels = Object.keys(AREAS).filter((a) => AREAS[a].mine && AREAS[a].region === [...regions][0] && existsSync(join(DERIVED, a, "render")) && existsSync(join(DERIVED, a, "mine.json")));
   if (regions.size !== 1) throw new Error(`export one region at a time (got ${[...regions].join(", ")})`);
   OUT = join(WEB_CACHE, "regions", activeRegion());
+  if (await fetchPublishedState(activeRegion())) console.log(`  published state downloaded from R2 → ${publishedFile()}`);
   const from = [pendingFile(), publishedFile()].find(existsSync);
   if (from) state = readJson(from);
+  if (from === publishedFile()) state.base = stateHash(readFileSync(from)); // stacked exports keep theirs
   if (existsSync(publishedFile())) published = readJson(publishedFile());
   if (process.argv.includes("--parts")) {
     SCOPE = areas.flatMap((a) => { const f = join(DERIVED, a, "osm-parts.json"); return existsSync(f) ? readJson(f).map((p: { px: number[] }) => p.px) : []; });

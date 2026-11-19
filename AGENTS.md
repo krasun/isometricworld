@@ -1,6 +1,6 @@
 # Isometric World: guide for agents
 
-Hand-painted isometric city maps from open data. Read `README.md` (pipeline, layout) and
+Isometric city maps from open data, painted with AI. Read `README.md` (pipeline, layout) and
 `ATTRIBUTION.md` (sources, licences) first. Everything is TypeScript; the site is Astro + OpenSeadragon.
 
 ## Hard rules
@@ -20,7 +20,9 @@ Hand-painted isometric city maps from open data. Read `README.md` (pipeline, lay
 5. **Never delete `data/derived/`** (renders, height passes and, above all, paintings: hours of image
    generation each) or `data/web-state/` (what is published). `data/web/` is only the unpublished cache.
 6. **Publishing is outward-facing**: `npm run publish` uploads to the production bucket, `npm run deploy` updates the live site. Run it only when the user
-   asked for it; it asks `[y/N]` (`--yes` only with the user's go-ahead).
+   asked for it; it asks `[y/N]` (`--yes` only with the user's go-ahead). **Working for a contributor** (not a
+   maintainer of the production bucket): publish only to their review bucket (`TILES_BUCKET` in `.env`, README
+   "Contributing a city"), never to `isometricworldtiles`.
 7. Tile coordinates are fixed by a region's `origin` and `headingDeg`. **Never change them for a region
    that has tiles**: every tile, paint and link would move.
 
@@ -34,7 +36,10 @@ Hand-painted isometric city maps from open data. Read `README.md` (pipeline, lay
 - **Hosting** (`pipeline/src/hosting.ts`, README "Hosting"): tiles and region data live only on R2
   (`isometricworldtiles`, `regions/<region>/` under `TILES_ORIGIN` from `.env`), never in git or
   `web/public`. `export` writes changed files to the cache `data/web/regions/<region>/`, `npm run dev` shows
-  the cache over production, `publish` uploads and empties the cache.
+  the cache over production, `publish` uploads (with the region's state, `regions/<region>/state.json`, which
+  export downloads when it's missing locally) and empties the cache. A contributor who publishes a region to
+  their own bucket must include `state.json`. Tiles are AVIF only: don't build a WebP
+  fallback for a new region (Tel Aviv's old WebP pyramid is legacy).
 - **Area** (`AREAS` in `pipeline/src/areas.ts`): a bbox the pipeline fetches, renders and paints. Belongs
   to one region; CLIs call `openArea(name)`, which switches the camera to that region.
 
@@ -116,7 +121,7 @@ npm run paint -- <area> --center <lat>,<lon>  # slow (Codex); paint the test pat
 npm run export -- <all areas of the region>   # changed tiles into data/web (cache)
 npm run dev                                    # check the cache over production (http://localhost:<port>/)
 npm run og -- <city-slug>                      # social card web/public/og/<city-slug>.jpg from the tiles (commit it)
-npm run publish -- <region>                    # only with the user's go-ahead
+npm run publish -- <region>                    # only with the user's go-ahead; contributors: to a review bucket (README "Contributing a city")
 npm run deploy                                 # after every publish: pages bake in world.json's file names + preview
 ```
 

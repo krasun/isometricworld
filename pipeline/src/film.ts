@@ -4,7 +4,8 @@
  *
  *   npx tsx src/film.ts [url] [out.mp4] [--city tel-aviv-yafo] [--fps 60] [--size 1080 | WxH] [--seconds 14] [--blur 1] [--grain 5] [--preview]
  *
- * - --city picks the shot list (FILMS) and the title; the clip opens /<city> on the site.
+ * - --city picks the shot list (FILMS) and the title; the clip opens /<city> on the site. --film <name> picks
+ *   another shot list of that city (e.g. --city zagreb --film zagreb-readme).
  *
  * - The camera follows a Catmull-Rom spline through SHOTS in (x, y, ln scale), resting at each pose
  *   (with a slow push in) and easing between them. Moves advance by *perceived* motion (screen px
@@ -25,7 +26,7 @@ import { CITIES, DEFAULT_CITY, REGIONS } from "./places.ts";
 const args = process.argv.slice(2);
 const flag = (name: string, def: number) => { const i = args.indexOf(`--${name}`); return i >= 0 ? Number(args[i + 1]) : def; };
 const preview = args.includes("--preview");
-const VALUED = ["--fps", "--size", "--seconds", "--blur", "--grain", "--city"];
+const VALUED = ["--fps", "--size", "--seconds", "--blur", "--grain", "--city", "--film"];
 const pos = args.filter((a, i) => !a.startsWith("--") && !VALUED.includes(args[i - 1]));
 const SLUG = (() => { const i = args.indexOf("--city"); return i >= 0 ? args[i + 1] : DEFAULT_CITY; })(), CITY = CITIES[SLUG];
 if (!CITY) throw new Error(`unknown city ${SLUG}`);
@@ -86,9 +87,18 @@ const FILMS: Record<string, Film> = {
     { at: [-21596, 2377], px: true, scale: 0.12, hold: 1.4, out: 0, note: "Jarun: the whole lake, its islands and the regatta course" },
     { at: [45.8000, 15.9750], scale: 0.042, hold: 2.6, out: 0, title: true, note: "the city from the Sava to the foot of Medvednica (title)" },
   ] },
+  // the README clip (--city zagreb --film zagreb-readme --seconds 12), like the other cities': no loop
+  "zagreb-readme": { settle: true, moveZoomOut: 0.4, shots: [
+    { at: [-1415, 1892], px: true, scale: 0.6, hold: 1.3, note: "Glavni kolodvor, King Tomislav Square and the Art Pavilion" },
+    { at: [-2768, -277], px: true, scale: 0.85, hold: 1.2, note: "the Croatian National Theatre (HNK)" },
+    { at: [-12182, 1050], px: true, scale: 0.09, note: "wide: over Trešnjevka towards the lake" },
+    { at: [-21596, 2377], px: true, scale: 0.12, hold: 1.4, out: 0, note: "Jarun: the whole lake, its islands and the regatta course" },
+    { at: [45.8000, 15.9750], scale: 0.042, hold: 2.6, out: 0, title: true, note: "the city from the Sava to the foot of Medvednica (title)" },
+  ] },
 };
-const FILM = FILMS[SLUG];
-if (!FILM) throw new Error(`no shots for ${SLUG} (FILMS in film.ts)`);
+const FILM_NAME = (() => { const i = args.indexOf("--film"); return i >= 0 ? args[i + 1] : SLUG; })();
+const FILM = FILMS[FILM_NAME];
+if (!FILM) throw new Error(`no shots for ${FILM_NAME} (FILMS in film.ts)`);
 // a loop ends on (one frame before) the first pose: it is appended as a pose without a hold
 const SHOTS: Shot[] = FILM.loop ? [...FILM.shots, { ...FILM.shots[0], hold: 0, out: 0, title: undefined }] : FILM.shots;
 const HOLD_ZOOM = 0.035;  // ln-scale drift during each hold (a slow push in, so poses never freeze)

@@ -5,7 +5,7 @@ Isometric maps of real cities, built from open data. Everything is TypeScript.
 ![Tel Aviv-Yafo](video/tel-aviv-yafo.gif)
 
 First city: **Tel Aviv-Yafo** (`/tel-aviv-yafo` on the dev server), from Jaffa to Yarkon Park and
-Ramat Gan, including the sea. Full-quality clip: [`video/tel-aviv-yafo.mp4`](video/tel-aviv-yafo.mp4).
+Ramat Gan, including the sea, painted with AI (OpenAI's image model through the Codex CLI). Full-quality clip: [`video/tel-aviv-yafo.mp4`](video/tel-aviv-yafo.mp4).
 
 ![Stuttgart](video/stuttgart.gif)
 
@@ -13,13 +13,17 @@ Second city: **Stuttgart** (`/stuttgart`), by [Lukas Hermann](https://lukasherma
 around it from LGL Baden-Württemberg open data, drawn procedurally instead of painted. Full-quality clip:
 [`video/stuttgart.mp4`](video/stuttgart.mp4).
 
+![Zagreb](video/zagreb.gif)
+
 Third city: **Zagreb** (`/zagreb`), by [Andrej Šimunaj](https://zeropointstudio.io): the whole city (its 17
-districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted through fal.ai. Live at
-[zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io).
+districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted with AI (OpenAI's and Google's image models through fal.ai). Live at
+[isometricworld.dmytrokrasun.com/zagreb](https://isometricworld.dmytrokrasun.com/zagreb) and on Andrej's site,
+[zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io). Full-quality clip:
+[`video/zagreb.mp4`](video/zagreb.mp4).
 
 ## The idea
 
-Real cities as a hand-painted isometric illustration you can pan and zoom like a map, with every building,
+Real cities as an isometric illustration, painted with AI, that you can pan and zoom like a map, with every building,
 street and tree where it really is, and a little life on top (cars, buses, cats, parakeets, an airliner).
 
 1. **Geometry from open data**: buildings and trees (municipal GIS, OpenStreetMap), streets, parks,
@@ -85,7 +89,7 @@ data/derived/<area>/{render,paint,height}   sources (local only; expensive: back
         ▼
 data/web/regions/<region>/                  local cache = unpublished changes
         │ npm run dev                        dev server serves the cache, redirects everything else to R2
-        │ npm run publish -- <region>        upload (asks [y/N]), check, record state, empty the cache
+        │ npm run publish -- <region>        upload (asks [y/N]) with the state, check, record it, empty the cache
         ▼
 R2 isometricworldtiles/regions/<region>/    production (dev and deployed builds read it)
         │ npm run deploy                     rebuild the site: pages pick up the new file names and previews
@@ -98,16 +102,59 @@ R2 isometricworldtiles/regions/<region>/    production (dev and deployed builds 
 - Everything but `data/world.json` is cached for a year (`immutable`): tile URLs carry `?v=<content hash>`
   from `tiles-<layer>.<hash>.json`, and the data files and city previews have their hash in the name, so a
   re-painted tile or a new export gets new URLs. `world.json` (60 s) names the current files; the page
-  preloads the ones its build saw. Tiles are AVIF; the last WebP pyramid (`tiles.json`, `.webp`) stays as
-  the fallback for browsers without AVIF.
+  preloads the ones its build saw. Tiles are AVIF only. Tel Aviv keeps its last WebP pyramid (`tiles.json`,
+  `.webp`) as a legacy fallback for browsers without AVIF; newer regions (Stuttgart, Zagreb) have none and need
+  none (AVIF: Safari 16+, every current browser).
 - Export works without the cache: lower zoom levels that need an unchanged neighbour fetch it from R2.
   Exports stack until you publish (`data/web/<region>.state.json`); deleting `data/web/` drops unpublished
-  work and nothing else. Deleting `data/web-state/<region>.json` makes the next export rebuild everything.
-- Publish uses the wrangler login (`npx wrangler login`) or `CLOUDFLARE_API_TOKEN`. The Cloudflare API allows
-  ~4 uploads/s: a whole region (~9k files) takes ~40 min once; later publishes carry only changes.
+  work and nothing else.
+- The published state (every tile's source stamp and content hash) is kept locally in
+  `data/web-state/<region>.json` and on R2 as `regions/<region>/state.json` (`pipeline/src/webstate.ts`):
+  publish uploads it before `world.json`, and export downloads it when this machine has none, so another
+  maintainer (or a copy of the region's folder from another bucket) picks up where the last publish left off.
+  publish refuses when R2's state changed since the export started (someone else published): export again.
+  A region published before this: `npm run publish -- <region> --state-only` uploads its local state. Without
+  any state, the next export rebuilds everything.
+- Publish uses R2's S3 API with `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` (the only way a token scoped to one
+  bucket works), else the Cloudflare API with `CLOUDFLARE_API_TOKEN` or the wrangler login (`npx wrangler login`).
+  The Cloudflare API allows ~4 uploads/s: a whole region (~9k files) takes ~40 min once (the S3 API is faster);
+  later publishes carry only changes.
   `--keep` leaves the cache in place, `--yes` skips the question.
 - The bucket is public, read-only (CORS: any origin, GET/HEAD), so a production build works from any host or
   local port. In dev, `/regions/*` goes through the dev server: the local cache first, then proxied from R2.
+
+### Contributing a city
+
+Contributors never publish to the production bucket. The code goes in as a pull request; the tiles go to a
+bucket for review, and the maintainers copy them into production after merging.
+
+1. **Pull request** with the code (`places.ts`, `areas.ts`, sources, `ATTRIBUTION.md`, credits), as in
+   AGENTS.md "Adding a city". A new region gets a new `regions/<region>/` name; never publish to an existing one.
+2. **Publish the region to a review bucket**, either:
+   - **your own R2 bucket** (public access on, through r2.dev or a custom domain), or
+   - **a temporary bucket from us**: ask in the pull request. You get the bucket name, its public URL, the
+     account ID and an R2 token that can only write to that bucket and expires.
+
+   Then, in your `.env`:
+   ```sh
+   TILES_BUCKET=<bucket>            # never isometricworldtiles
+   TILES_JURISDICTION=eu            # only if the bucket was created in a jurisdiction
+   TILES_ORIGIN=<its public URL>
+   CLOUDFLARE_ACCOUNT_ID=<the bucket's account>
+   R2_ACCESS_KEY_ID=<access key of an R2 token with Object Read & Write on that bucket>
+   R2_SECRET_ACCESS_KEY=<its secret access key>
+   ```
+   and run `npm run export -- <areas>` and `npm run publish -- <region>` as usual. Publish uploads
+   everything under `regions/<region>/`: tiles, previews, data files, `state.json` (the published state: keep
+   it, it lets anyone continue from your export) and `world.json` last. Nothing else goes in the bucket.
+3. **Tell us in the pull request**: the bucket, its public URL, the file count and size, and (your own bucket)
+   a read-only R2 token for it (Object Read on that bucket), for the copy.
+4. **Review** (maintainers): `TILES_ORIGIN=<review URL> npm run dev` shows the region from the review bucket;
+   check the city page, borders, traffic, credits, no console errors.
+5. **Merge and copy** (maintainers): merge the pull request, then copy `regions/<region>/` into production
+   (Cloudflare R2 → Data Migration, or rclone) so the keys stay `regions/<region>/…` and the content type and
+   cache headers are kept, `world.json` last. Check every file `world.json` names against its content hash,
+   that `state.json` arrived, then `npm run deploy`. Delete the temporary bucket and its token afterwards.
 
 ## Pipeline
 
@@ -132,6 +179,7 @@ npm -w pipeline exec tsx src/tour.ts   http://localhost:<port>/ tour   # screens
 npm -w pipeline exec tsx src/traffictest.ts http://localhost:<port>/ 5     # 5 sim-minutes: overlaps, speeds, jams
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/tel-aviv-yafo.mp4  # 14 s 1080² 60 fps clip for X (--preview: quick 6 fps check; --blur 8: motion blur)
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/stuttgart.mp4 --city stuttgart --seconds 4.5  # shots per city: FILMS in film.ts
+npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/zagreb.mp4 --city zagreb --film zagreb-readme --seconds 12  # --film: another shot list
 ```
 
 **Fixing a few buildings** (local rebuild, review, publish only them):

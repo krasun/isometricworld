@@ -44,7 +44,8 @@ const json = <T>(file: string) => fetch(`${BASE}/data/${file}`).then((r) => r.js
 // the page preloads the data files named in world.json at build time (MapPage.astro); world.json is
 // the truth (a publish after the build renames them; those preloads then go unused)
 const worldReady = json<World>("world.json");
-// AVIF tiles (40% smaller); browsers without AVIF get the last WebP pyramid (data/tiles.json)
+// AVIF tiles (40% smaller); browsers without AVIF get the last WebP pyramid (data/tiles.json): Tel Aviv only,
+// newer regions have none
 const avifReady = new Promise<boolean>((done) => {
   const img = new Image();
   img.onload = () => done(img.width === 1);
@@ -459,12 +460,14 @@ document.getElementById("credits")!.innerHTML = [
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
   // the salt mine's levels (mine.ts): Hondius's 1645 plan; the facts' sources are listed in the mine panel
   ...(files.mine ? [`Salt mine: plan by <a href="https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg">W. Hondius, 1645</a> (public domain)`] : []),
+  // painted regions say so (their credits in places.ts carry the label for clips too); Stuttgart is drawn procedurally
+  ...(REGIONS[REGION].credits.some((c) => /painted with ai/i.test(c)) ? ["Painted with AI"] : []),
   // the method to recreate the derived database (ODbL) and the code
   `<a href="https://github.com/krasun/isometricworld">Source</a>`,
   REGION === "stuttgart" // the Stuttgart region was built by Lukas Hermann
     ? `Made by <a href="https://lukashermann.dev/">Lukas Hermann</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
     : REGION === "zagreb" // the Zagreb region was built by Andrej Šimunaj (ZeroPointStudio)
-      ? `Made by <a href="https://zeropointstudio.io">Andrej Šimunaj</a>`
+      ? `Made by <a href="https://zeropointstudio.io">Andrej Šimunaj</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
       : REGION === "wieliczka" // the Wieliczka region was built by Maciek Chmura
         ? `Made by <a href="https://maciek.cloud/">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
         : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
