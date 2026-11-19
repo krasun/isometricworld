@@ -4,7 +4,9 @@
  * down; camera.ts axes) and lit by the map's sun (the styled renderer's: from the viewer's back left, high). Two
  * passes into one small transparent canvas, each drawn onto the map before the next: the shadow alone (every vertex
  * pushed along the sunlight onto the ground `drop` under the plane, drawn once per pixel through the stencil),
- * centred on where the plane's centre casts it, then the plane alone, centred on itself.
+ * centred on where the plane's centre casts it, then the plane alone, centred on itself. Where fly.ts lays the shadow
+ * over roofs it needs the shadow's coverage on the CPU: that is rendered small into its own target and read back
+ * without holding up the frame (requestShadowMask), arriving a frame or so later.
  */
 import * as THREE from "three";
 import { axes } from "../../../pipeline/src/camera.ts";
@@ -26,6 +28,15 @@ export class Biplane3D {
   private shadowMatrix = new THREE.Matrix4();
   private back: THREE.Vector3;
   private drop = 18;
+  private maskTarget: THREE.WebGLRenderTarget | null = null;
+  /** a read of the shadow's coverage is on its way (requestShadowMask), into these bytes */
+  private reading = false;
+  private rgba: Uint8Array | null = null;
+  /**
+   * The shadow's coverage as last read back (requestShadowMask): alpha per texel, `size` across, rows from the top,
+   * the same view as renderShadow's; [u0, v0, u1, v1] bounds its non-empty texels (u0 > u1 when it is empty).
+   */
+  mask: { size: number; alpha: Uint8Array; box: [number, number, number, number] } | null = null;
 
   constructor() {
     this.canvas = document.createElement("canvas");
@@ -93,13 +104,57 @@ export class Biplane3D {
   /** the plane alone, the canvas centred on it */
   renderPlane() { this.pass(false, new THREE.Vector3()); }
 
+  /**
+   * The shadow alone (as renderShadow, after pose) into a small target `size` px across, its pixels read back to the CPU
+   * without holding up the frame (three copies them into a buffer on the GPU, then looks at a fence until that is
+   * done): they land in `mask` a frame or so later, too soon for the slowly turning plane to show it. One read at a
+   * time; a call while one is on its way does nothing. Reading the canvas back instead stalled every frame until the
+   * GPU had finished everything before it, the map's blur (tilt-shift) included.
+   */
+  requestShadowMask(size: number) {
+    if (this.reading) return;
+    let rt = this.maskTarget;
+    if (!rt || rt.width !== size) {
+      rt?.dispose();
+      rt = this.maskTarget = new THREE.WebGLRenderTarget(size, size, { stencilBuffer: true, samples: 4 });
+    }
+    const [x, y, z] = this.sun;
+    this.renderer.setRenderTarget(rt);
+    this.pass(true, new THREE.Vector3((-x / z) * this.drop, (-y / z) * this.drop, -this.drop));
+    this.renderer.setRenderTarget(null);
+    if (this.rgba?.length !== size * size * 4) this.rgba = new Uint8Array(size * size * 4);
+    const rgba = this.rgba;
+    this.reading = true;
+    this.renderer.readRenderTargetPixelsAsync(rt, 0, 0, size, size, rgba)
+      .then(() => this.unpack(size, rgba), () => { /* lost context: the flat shadow stands in */ })
+      .finally(() => { this.reading = false; });
+  }
+
+  /** the pixels read back into `mask`: their alpha, rows flipped to run from the top like a canvas's, and its box */
+  private unpack(size: number, rgba: Uint8Array) {
+    const m = this.mask?.size === size ? this.mask : (this.mask = { size, alpha: new Uint8Array(size * size), box: [0, 0, 0, 0] });
+    const { alpha, box } = m;
+    box[0] = box[1] = size; box[2] = box[3] = -1;
+    for (let v = 0; v < size; v++) {
+      const row = (size - 1 - v) * size;
+      for (let u = 0; u < size; u++) {
+        const a = (alpha[v * size + u] = rgba[(row + u) * 4 + 3]);
+        if (!a) continue;
+        if (u < box[0]) box[0] = u;
+        if (u > box[2]) box[2] = u;
+        if (v < box[1]) box[1] = v;
+        if (v > box[3]) box[3] = v;
+      }
+    }
+  }
+
   private pass(shadow: boolean, centre: THREE.Vector3) {
     this.plane.visible = !shadow; this.shadow.visible = shadow;
     this.camera.position.copy(centre).addScaledVector(this.back, 60);
     this.renderer.render(this.scene, this.camera);
   }
 
-  dispose() { this.renderer.dispose(); }
+  dispose() { this.maskTarget?.dispose(); this.renderer.dispose(); }
 
   // ---- the model: x forward, y left, z up (m) ----------------------------------------------------------
   private build() {

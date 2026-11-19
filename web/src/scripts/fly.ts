@@ -47,6 +47,8 @@ const MPP = 0.25;
 const DROP_MIN = -12, DROP_MAX = 45;
 /** the draped shadow is worked out on a grid at most this many cells across, then drawn scaled up */
 const WORK = 320;
+/** the flat shadow's coverage is read back this many texels across (biplane.ts requestShadowMask) */
+const MASK = 256;
 /** its colour: the map's own shadows' cool grey-blue (biplane.ts draws the flat one alike) */
 const SHADE = [34, 41, 62];
 
@@ -66,9 +68,9 @@ export class Fly {
   /** the local ground the shadow is laid on (m, heights.ts), eased so it never jumps; the last frame's dt */
   private zg: number | null = null;
   private dt = 0;
-  /** the flat shadow read back (small), and the draped one before it is drawn scaled */
-  private maskCanvas = document.createElement("canvas");
+  /** the draped shadow before it is drawn scaled, and its pixels (kept: no new buffer a frame) */
   private workCanvas = document.createElement("canvas");
+  private work: ImageData | null = null;
   private inv: number[];
   private button: HTMLButtonElement;
   private hint: HTMLElement;
@@ -137,6 +139,7 @@ export class Fly {
     const up = this.toEnu(0, -1);
     this.psi = Math.atan2(up[1], up[0]);
     this.v = SPEED.start; this.bank = 0; this.pitch = 0; this.age = 0; this.puffs = []; this.cam = null; this.zg = null;
+    if (this.model) this.model.mask = null; // the last flight's shadow
     this.flying = true;
     this.button.setAttribute("aria-pressed", "true");
     this.button.title = this.button.ariaLabel = "Land the biplane (F)";
@@ -213,8 +216,8 @@ export class Fly {
       m.pose(this.psi, this.bank, this.pitch, this.t, ALT / SCALE);
       const [sx, sy, sz] = m.sun, a = this.air, W = m.canvas.width;
       const [gx, gy] = proj([a[0] - (sx / sz) * ALT, a[1] - (sy / sz) * ALT, a[2] - ALT]);
-      m.renderShadow();
       if (!this.heights || !this.drape(ctx, toScreen, m, gx, gy, W, fade)) {
+        m.renderShadow();
         ctx.globalAlpha = fade; ctx.drawImage(m.canvas, gx - W / 2, gy - W / 2); ctx.globalAlpha = 1;
       }
     }
@@ -231,9 +234,10 @@ export class Fly {
   }
 
   /**
-   * The flat shadow (in the model's canvas, centred on gx, gy for ground at the local ground's height) laid over the
-   * surface: a pixel showing a surface dz higher than that ground is in shadow where the flat shadow is at the pixel
-   * moved away from the sun by dz along the sunlight, as seen on screen. False when there is nothing to lay it on.
+   * The flat shadow (W px square centred on gx, gy for ground at the local ground's height; its coverage read back from
+   * the model a frame or two ago) laid over the surface: a pixel showing a surface dz higher than that ground is in
+   * shadow where the flat shadow is at the pixel moved away from the sun by dz along the sunlight, as seen on screen.
+   * False when there is nothing to lay it on yet.
    */
   private drape(ctx: CanvasRenderingContext2D, toScreen: ToScreen, m: Biplane3D, gx: number, gy: number, W: number, fade: number) {
     const H = this.heights!, M = this.host.enu2px, L = m.sun;
@@ -261,21 +265,30 @@ export class Fly {
       this.zg = this.zg === null ? want : this.zg + (want - this.zg) * Math.min(1, this.dt * 2);
     }
     const zg = this.zg!;
-    // the flat shadow read back, small
-    const ms = Math.min(W, 256), mc = this.maskCanvas;
-    if (mc.width !== ms) { mc.width = mc.height = ms; }
-    const mg = mc.getContext("2d", { willReadFrequently: true })!;
-    mg.clearRect(0, 0, ms, ms); mg.drawImage(m.canvas, 0, 0, ms, ms);
-    const mask = mg.getImageData(0, 0, ms, ms).data, f = ms / W;
+    // the flat shadow's coverage (biplane.ts): asked for again each frame, the one that has arrived used
+    m.requestShadowMask(MASK);
+    if (!m.mask) return false;
+    const { size: ms, alpha: mask, box: [bu0, bv0, bu1, bv1] } = m.mask, f = ms / W;
     // the draped shadow on a grid, a cell per `step` screen px, its cells fixed to the map (no shimmer as it moves)
     const step = Math.max(1, Math.ceil(Math.max(rx1 - rx0, ry1 - ry0) / WORK));
     const gx0 = o[0] + Math.floor((rx0 - o[0]) / step) * step, gy0 = o[1] + Math.floor((ry0 - o[1]) / step) * step;
     const ow = Math.ceil((rx1 - gx0) / step) + 1, oh = Math.ceil((ry1 - gy0) / step) + 1, wc = this.workCanvas;
     if (wc.width !== ow || wc.height !== oh) { wc.width = ow; wc.height = oh; }
-    const wg = wc.getContext("2d")!, img = wg.createImageData(ow, oh), out = img.data;
-    const mAt = (u: number, v: number) => (u < 0 || v < 0 || u >= ms || v >= ms ? 0 : mask[(v * ms + u) * 4 + 3]);
+    const wg = wc.getContext("2d")!;
+    if (this.work?.width !== ow || this.work.height !== oh) this.work = wg.createImageData(ow, oh);
+    else this.work.data.fill(0);
+    const img = this.work, out = img.data;
+    const mAt = (u: number, v: number) => (u < 0 || v < 0 || u >= ms || v >= ms ? 0 : mask[v * ms + u]);
+    // only the columns and rows whose texels, for some drop, can fall in the coverage's box: a cell reads texels
+    // floor(fu) and the next, fu = (px − cx·dz − x0)·f − 0.5, so it needs fu ≥ u0 − 1 for the largest and fu < u1 + 1
+    // for the smallest shift (rows alike); every cell left out would come out empty
+    const sxa = Math.min(cx * DROP_MIN, cx * DROP_MAX), sxb = Math.max(cx * DROP_MIN, cx * DROP_MAX);
+    const sya = Math.min(cy * DROP_MIN, cy * DROP_MAX), syb = Math.max(cy * DROP_MIN, cy * DROP_MAX);
+    const cell = (p: number, g0: number) => (p - g0) / step - 0.5; // the cell whose centre is at screen px p
+    const i0 = Math.max(0, Math.floor(cell(x0 + sxa + (bu0 - 0.5) / f, gx0))), i1 = Math.min(ow - 1, Math.ceil(cell(x0 + sxb + (bu1 + 1.5) / f, gx0)));
+    const j0 = Math.max(0, Math.floor(cell(y0 + sya + (bv0 - 0.5) / f, gy0))), j1 = Math.min(oh - 1, Math.ceil(cell(y0 + syb + (bv1 + 1.5) / f, gy0)));
     let any = false;
-    for (let j = 0; j < oh; j++) for (let i = 0; i < ow; i++) {
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const px = gx0 + (i + 0.5) * step, py = gy0 + (j + 0.5) * step, [x, y] = art(px, py), z = H.at(x, y);
       const dz = Number.isNaN(z) ? 0 : Math.max(DROP_MIN, Math.min(DROP_MAX, z - zg));
       // the flat shadow where this surface would lie at ground level, read between its pixels

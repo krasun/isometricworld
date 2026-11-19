@@ -9,7 +9,8 @@ const T = CAMERA.tile, N = 256, PX = T / N;
 
 export class Heights {
   private tiles = new Map<string, Float32Array | null | "loading">();
-  private lk = ""; private lh: Float32Array | null = null;
+  /** the tile the last height came from (numbers: no key string per read, the drape reads ~10⁵ a frame) */
+  private ltx = NaN; private lty = NaN; private lh: Float32Array | null = null;
 
   /** `index`: tile "tx_ty" → content hash; `url`: where that tile is */
   constructor(private index: Record<string, string>, private url: (tx: number, ty: number, v: string) => string) {}
@@ -20,7 +21,7 @@ export class Heights {
       const k = `${tx}_${ty}`;
       if (!this.index[k] || this.tiles.has(k)) continue;
       this.tiles.set(k, "loading");
-      this.load(tx, ty, k).then((h) => { this.tiles.set(k, h); this.lk = ""; }, () => this.tiles.set(k, null));
+      this.load(tx, ty, k).then((h) => { this.tiles.set(k, h); this.ltx = NaN; }, () => this.tiles.set(k, null));
     }
   }
 
@@ -39,8 +40,8 @@ export class Heights {
 
   /** the surface's height (m over the region's base) at global art px */
   at(x: number, y: number): number {
-    const tx = Math.floor(x / T), ty = Math.floor(y / T), k = `${tx}_${ty}`;
-    if (k !== this.lk) { this.lk = k; const t = this.tiles.get(k); this.lh = t instanceof Float32Array ? t : null; }
+    const tx = Math.floor(x / T), ty = Math.floor(y / T);
+    if (tx !== this.ltx || ty !== this.lty) { this.ltx = tx; this.lty = ty; const t = this.tiles.get(`${tx}_${ty}`); this.lh = t instanceof Float32Array ? t : null; }
     return this.lh ? this.lh[Math.floor((y - ty * T) / PX) * N + Math.floor((x - tx * T) / PX)] : NaN;
   }
 }
