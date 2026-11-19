@@ -21,9 +21,14 @@ districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted 
 [zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io). Full-quality clip:
 [`video/zagreb.mp4`](video/zagreb.mp4).
 
+![Wieliczka](video/wieliczka.gif)
+
 Fourth city: **Wieliczka** (`/wieliczka`), by [Maciek Chmura](https://maciek.cloud/): the town near Kraków from
 GUGiK, Poland's national open geodata, drawn procedurally instead of painted, with its salt mine's levels under
-the town and a biplane to fly over it.
+the town and a biplane to fly over it. Full-quality clip: [`video/wieliczka.mp4`](video/wieliczka.mp4).
+Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i
+kartograficznego (GUGiK, CC BY 4.0) · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Salt mine: plan by
+W. Hondius, 1645 (public domain).
 
 ## The idea
 
@@ -219,6 +224,7 @@ npm -w pipeline exec tsx src/traffictest.ts http://localhost:<port>/ 5     # 5 s
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/tel-aviv-yafo.mp4  # 14 s 1080² 60 fps clip for X (--preview: quick 6 fps check; --blur 8: motion blur)
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/stuttgart.mp4 --city stuttgart --seconds 4.5  # shots per city: FILMS in film.ts
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/zagreb.mp4 --city zagreb --film zagreb-readme --seconds 12  # --film: another shot list
+npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/wieliczka.mp4 --city wieliczka --seconds 12
 ```
 
 **Fixing a few buildings** (local rebuild, review, publish only them):

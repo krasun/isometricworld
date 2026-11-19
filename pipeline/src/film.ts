@@ -95,6 +95,14 @@ const FILMS: Record<string, Film> = {
     { at: [-21596, 2377], px: true, scale: 0.12, hold: 1.4, out: 0, note: "Jarun: the whole lake, its islands and the regatta course" },
     { at: [45.8000, 15.9750], scale: 0.042, hold: 2.6, out: 0, title: true, note: "the city from the Sava to the foot of Medvednica (title)" },
   ] },
+  // the README clip (--city wieliczka --seconds 12): the Rynek, the castle, the mine's shafts, the graduation tower, the town
+  wieliczka: { settle: true, moveZoomOut: 0.4, shots: [
+    { at: [49.9821, 20.0603], scale: 0.85, hold: 1.4, note: "Rynek Górny: pigeons on the square, Szyb Regis behind it" },
+    { at: [49.9840, 20.0589], scale: 0.85, hold: 1.2, note: "the salt works castle (Zamek Żupny) and its tower" },
+    { at: [49.9836, 20.0550], scale: 0.7, hold: 1.3, note: "Szyb Daniłowicza, the mine's entrance, coaches in their parks" },
+    { at: [49.98445, 20.0521], scale: 0.7, hold: 1.2, note: "the graduation tower (tężnia) and its lookout" },
+    { at: [49.9825, 20.0585], scale: 0.12, hold: 2.4, out: 0, title: true, note: "the town on its hills (title)" },
+  ] },
 };
 const FILM_NAME = (() => { const i = args.indexOf("--film"); return i >= 0 ? args[i + 1] : SLUG; })();
 const FILM = FILMS[FILM_NAME];
