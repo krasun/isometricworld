@@ -9,6 +9,8 @@
  * A CITY is a named view into a region: /<city-slug> opens the region centred on it.
  */
 
+import type { StyleName } from "./styles.ts";
+
 export interface Region {
   title: string;
   /** ENU origin. Fixed forever once tiles exist: changing it moves every tile of the region. */
@@ -47,6 +49,30 @@ export interface Region {
   };
   /** Squares the pigeon flocks wheel over (web/src/scripts/sky.ts Pigeons), lat/lon; Tel Aviv has its parakeets instead. */
   pigeons?: Array<[number, number]>;
+  /**
+   * Viewer effects (web/src/scripts): tiltShift, the map as a miniature, a sharp band across the middle and the
+   * edges blurred (tiltshift.ts; a button and M switch it); fly, a biplane to fly over the map (fly.ts; a button
+   * and F take off and land); clouds, their shadows drifting over the map (clouds.ts); search, a box finding streets
+   * and places by name (search.ts; export.ts writes the index).
+   */
+  effects?: { tiltShift?: boolean; fly?: boolean; clouds?: boolean; search?: boolean };
+  /**
+   * Life on the map (web/src/scripts). `vehicles: "detailed"`: cars drawn as body and cabin with windows and
+   * lights (hatchbacks, saloons, SUVs, vans), buses with their window band, shadows cast like the render's
+   * (traffic.ts). `coaches`: a tourist site's coach parks, each a row of parked coaches as measured on the
+   * orthophoto (its centre, the coaches' heading and the row's direction in compass °, how many, metres
+   * apart); coaches drive to and from them on the roads. `pigeons`: squares with a flock pecking on the paving
+   * and taking off now and then (pigeons.ts; the region's `pigeons` are flocks wheeling in the air instead).
+   * `foreground` (styled look): the render also writes what stands higher than a car (crowns, walls and roofs
+   * above ~2.5 m), exported as the "fg" tile layer and drawn back over the vehicles (foreground.ts), so they
+   * pass under trees and behind houses, partly covered, instead of fading out there.
+   */
+  life?: {
+    vehicles?: "detailed";
+    foreground?: boolean;
+    coaches?: Array<{ name: string; at: [number, number]; heading: number; row: number; count: number; step: number }>;
+    pigeons?: Array<{ name: string; at: [number, number]; r: number; count: number }>;
+  };
   /** Credit lines (video mode and footer). */
   credits: string[];
   /** Geoid undulation at the origin (EGM2008, m): sea level as ellipsoid height. */
@@ -59,13 +85,28 @@ export interface Region {
    */
   heightBase?: number;
   /**
-   * Where buildings, trees and terrain come from beyond OSM:
+   * Where buildings, trees and terrain come from beyond OSM (data only; how they are drawn is `look`):
    *   "tlv"  Tel Aviv-Yafo municipal GIS (buildings + canopy), Copernicus GLO-30 terrain
    *   "lgl"  LGL Baden-Württemberg open data: LoD2 buildings, nDOM1 tree crowns, DGM1 terrain
    *   "zg3d" City of Zagreb ZG3D 2022 LoD2 buildings (zg3d.ts), OSM trees, Copernicus GLO-30 terrain
+   *   "gugik" GUGiK (Poland) open data: LoD2 + LoD1 2024 buildings with their BDOT10k function, the buildings
+   *          they lack from BDOT10k and OSM outlines (roofs fitted to the NMPT: fitroof.ts), tree crowns from
+   *          NMPT − NMT, NMT terrain (gugik.ts; the powiats in `teryt`)
    *   unset  OSM buildings and trees, Copernicus GLO-30 terrain
    */
-  sources?: "tlv" | "lgl" | "zg3d";
+  sources?: "tlv" | "lgl" | "zg3d" | "gugik";
+  /** sources "gugik": TERYT codes of the powiats (counties) whose buildings the areas need, e.g. ["1219"]. */
+  teryt?: string[];
+  /**
+   * How the map is drawn:
+   *   "painted"  (default) the render is only the input: every window is repainted by the image model (paint.ts)
+   *   "styled"   the renderer draws the finished look itself (STYLED in page/renderer.ts): LoD2 roofs and
+   *              facades, hillshade, outlines, OSM roof/facade colours, landmarks, tunnel portals, bridge models
+   * Only the styled look draws LoD2 meshes, so a region with LoD2 buildings ("lgl") needs "styled".
+   */
+  look?: "painted" | "styled";
+  /** look "styled": the preset in styles.ts (shadows, palettes…; default "stuttgart"). */
+  style?: StyleName;
   /** OSM from this Geofabrik .osm.pbf extract (osmlocal.ts) instead of the Overpass API. */
   osmExtract?: string;
   /**
@@ -142,6 +183,7 @@ export const REGIONS: Record<string, Region> = {
     groundH: 300, // Kessel floor ~245 m NHN + geoid
     heightBase: 250, // valley ~250 m, Fernsehturm top ~750 m ellipsoid: 150…805 m fits
     sources: "lgl",
+    look: "styled",
     // Stuttgart (OSM relation 62375, Stadtkreis) and the towns around it (admin_level 8): Fellbach, Waiblingen,
     // Remseck am Neckar, Ludwigsburg, Kornwestheim, Korntal-Münchingen, Gerlingen, Ditzingen, Böblingen,
     // Sindelfingen, Leonberg, Esslingen am Neckar, Ostfildern, Filderstadt, Leinfelden-Echterdingen;
@@ -202,12 +244,48 @@ export const REGIONS: Record<string, Region> = {
       clip: [45.5, 15.5, 45.87, 16.5],
     },
   },
+  wieliczka: {
+    title: "Wieliczka",
+    origin: { lat: 49.98236, lon: 20.06018, h: 0 }, // Rynek Górny (centre of its OSM pedestrian area)
+    headingDeg: 330, // looks NNW: north near the top, 30° to the old town's N–S / E–W streets; the A4 and Kraków at the back
+    country: "Poland",
+    municipalities: ["Wieliczka"],
+    credits: [
+      "Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK)",
+      "Buildings: GUGiK 3D models, BDOT10k, OSM · Roofs: GUGiK orthophoto · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Trees: GUGiK NMPT",
+      "Salt mine: W. Hondius 1645 (public domain), facts from M.P. 1994/424 and open publications",
+    ],
+    osmExtract: "https://download.geofabrik.de/europe/poland/malopolskie-latest.osm.pbf",
+    geoidM: 39.6, // EGM2008 at Rynek Górny (GeographicLib GeoidEval: 39.574 m)
+    groundH: 300, // the town lies ~210–390 m above sea level, + geoid
+    heightBase: 250, // valley ~250 m, hills ~430 m ellipsoid, buildings well below 805 m
+    sources: "gugik",
+    teryt: ["1219", "1261"], // powiat wielicki; Kraków (across the A4, in the ring around the town)
+    look: "styled",
+    style: "poland",
+    effects: { tiltShift: true, fly: true, clouds: true, search: true },
+    life: {
+      vehicles: "detailed",
+      foreground: true,
+      // the salt mine's coach parks by Szyb Daniłowicza, the rows as parked on the 2025 orthophoto
+      coaches: [
+        { name: "parking autokarowy, ul. Daniłowicza", at: [49.98425, 20.054817], heading: 0.8, row: 76, count: 7, step: 4.3 },
+        { name: "Parking 1 Wieliczka", at: [49.98483, 20.053309], heading: 138.3, row: 180.8, count: 4, step: 6 },
+      ],
+      pigeons: [{ name: "Rynek Górny", at: [49.982359, 20.060181], r: 18, count: 26 }], // the paved square, 54 × 52 m
+    },
+    // gmina Wieliczka (OSM relation 2662713, admin_level 7: the town and its villages) and Kraków (449696,
+    // north of the A4), cut further by the areas: the town (relation 2751961) and the A4 stay clear of the
+    // faded edge, the villages and Kraków's edge around them fade out
+    outline: { relations: [2662713, 449696] },
+  },
 };
 
 export const CITIES: Record<string, City> = {
   "tel-aviv-yafo": { title: "Tel Aviv-Yafo", region: "israel-center", center: [32.0745, 34.7810], widthM: 5200 },
   stuttgart: { title: "Stuttgart", region: "stuttgart", center: [48.7784, 9.18], widthM: 3000 },
   zagreb: { title: "Zagreb", region: "zagreb", center: [45.8131, 15.9772], widthM: 3000 },
+  wieliczka: { title: "Wieliczka", region: "wieliczka", center: [49.9825, 20.0585], widthM: 2000 },
 };
 
 export const DEFAULT_CITY = "tel-aviv-yafo";

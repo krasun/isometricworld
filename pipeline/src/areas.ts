@@ -8,7 +8,13 @@ export interface Area {
   region: string;
   /** south, west, north, east (WGS84) */
   bbox: [number, number, number, number];
+  /** a level of a salt mine (mine.ts, minedata.ts): drawn as a cutaway under the town, exported as its own layer */
+  mine?: string;
 }
+
+/** The Wieliczka salt mine's levels (mine.ts): the mine's outline (OSM) with a margin, one area per level. */
+const MINE_BBOX: [number, number, number, number] = [49.9735, 20.0255, 49.988, 20.0905];
+const MINE_LEVELS = ["I", "IIw", "IIn", "III", "IV", "V", "VI", "VII", "VIII", "IX"];
 
 export const AREAS: Record<string, Area> = {
   /** Jaffa → Yarkon Park → Ramat Gan, including the sea off the coast. */
@@ -99,6 +105,16 @@ export const AREAS: Record<string, Area> = {
   "zagreb-sesvete-east": { title: "Sesvete (east)", region: "zagreb", bbox: [45.770, 16.160, 45.874, 16.245] },
   /** Between Žitnjak, the Sava and the airport (Kosnica, Ivanja Reka). */
   "zagreb-southeast": { title: "Žitnjak · Ivanja Reka", region: "zagreb", bbox: [45.755, 16.040, 45.800, 16.170] },
+  /** Wieliczka test patch: Rynek Górny, Zamek Żupny, the Regis, Daniłowicza and Kinga shafts, the graduation
+   *  tower, the Rynek-Kopalnia station, St Clement's and St Sebastian's (~1.2 × 1.4 km). */
+  "wieliczka-rynek": { title: "Wieliczka · Rynek Górny · Kopalnia", region: "wieliczka", bbox: [49.977, 20.049, 49.988, 20.068] },
+  /** The whole town (OSM relation 2751961: 49.971–50.005 N, 20.003–20.089 E) and a ~650 m ring around it, so
+   *  the faded map edge (up to ~640 m wide) falls on the villages and Kraków, not on the town; north to past
+   *  the A4 (50.000–50.018 N). */
+  "wieliczka-town": { title: "Wieliczka", region: "wieliczka", bbox: [49.965, 19.994, 50.024, 20.098] },
+  ...Object.fromEntries(MINE_LEVELS.map((id) => [`wieliczka-mine-${id}`, { title: `Salt mine · level ${id}`, region: "wieliczka", bbox: MINE_BBOX, mine: id }])),
+  /** the first level on Hondius's 1645 plan (mine.ts build1645) */
+  "wieliczka-mine-1645": { title: "Salt mine · level I in 1645", region: "wieliczka", bbox: MINE_BBOX, mine: "1645" },
 };
 
 /** Look up an area and switch the camera to its region: call before any projection. */

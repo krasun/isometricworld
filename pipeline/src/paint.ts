@@ -11,6 +11,9 @@
  *   npm run paint -- tlv-core --near 32.064,34.775 --radius 2   # a patch of windows
  *   npm run paint -- tlv-core -j 3                              # everything, centre first (--center lat,lon)
  *   npm run paint -- tlv-core --parts                           # windows over the buildings scene.ts gave OSM 3D shapes
+ *   npm run paint -- tlv-core --window=-1,-2 --model=<codex model> --effort=low
+ * (--model / --effort: the Codex model that drives the image tool, when the one in ~/.codex/config.toml isn't
+ * available to the logged-in ChatGPT account; negative window or centre values need the `=` form)
  */
 import { spawn } from "node:child_process";
 import { appendFileSync, copyFileSync, existsSync, linkSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -129,6 +132,25 @@ and tram tracks empty.`,
     trees: join(PIPELINE, "style", "trees-stuttgart.png"),
     inventionChecks: true,
   },
+  // Wieliczka is drawn procedurally (look: "styled"): nothing of it is painted. This prompt is only for an optional
+  // painted A/B test of a few windows, like Stuttgart's.
+  wieliczka: {
+    ground: "Streets, squares, parks, fields, rail and streams",
+    country: "Poland",
+    render: `The layout and every roof shape are exact (real \
+pitched, hipped and flat roofs from Poland's national 3D building models) and the roof colours come from the aerial \
+photo; the walls' colours and window patterns are stylised hints (grey = asphalt with lane markings, pale = pavement/plaza, \
+green = grass/park, beige-yellow = fields, blue = water, brown lines = rail). Tree crowns are rounded deciduous crowns \
+(oak, lime, maple, birch) and dark narrow cones (spruce, pine), as in image 4.`,
+    treesOf: "Central European",
+    treeHint: " (broad rounded deciduous crowns in late-spring green, spruces and pines as narrow dark cones)",
+    materials: `Draw believable Wieliczka \
+(a small historic salt-mining town near Kraków) materials: plastered houses in white, cream, yellow and pastel tones, \
+red and brown clay-tile or sheet-metal pitched roofs, grey sheet and tar roofs, the salt mine's historic shaft houses and \
+the medieval castle in plaster and stone, churches with copper or shingle roofs, 1970s–80s blocks of flats, real window \
+grids, chimneys, dormers, solar panels where the render shows them.`,
+    trees: join(PIPELINE, "style", "trees-stuttgart.png"),
+  },
 };
 
 const CONTINUATION = `- The strip(s) along the {edges} edge(s) of image 1 are ALREADY-PAINTED neighbouring artwork. \
@@ -149,6 +171,8 @@ const { values: args, positionals } = parseArgs({
     older: { type: "string" },
     assemble: { type: "boolean", default: false }, // only rebuild every art tile from the windows
     j: { type: "string", default: "3" },
+    model: { type: "string" },
+    effort: { type: "string" },
     center: { type: "string", default: "32.0715,34.7745" }, // lat,lon painted first (Rothschild / Dizengoff / beach)
   },
 });
@@ -366,7 +390,10 @@ async function falPaint(cwd: string, prompt: string, id: string): Promise<void> 
 function codex(cwd: string, prompt: string): Promise<void> {
   return new Promise((resolve) => {
     const log = openSync(join(cwd, "codex.log"), "w");
-    const p = spawn("codex", ["exec", "--skip-git-repo-check", ...(process.env.CODEX_MODEL ? ["-m", process.env.CODEX_MODEL] : []), "-s", "workspace-write", "-C", cwd, "-i", "input.png", "-i", "height.png", "-i", "style.png", "-i", "trees.png", "-"],
+    // the Codex model: --model, else CODEX_MODEL, else ~/.codex/config.toml's; --effort its reasoning effort
+    const codexModel = args.model ?? process.env.CODEX_MODEL;
+    const model = [...(codexModel ? ["-m", codexModel] : []), ...(args.effort ? ["-c", `model_reasoning_effort="${args.effort}"`] : [])];
+    const p = spawn("codex", ["exec", "--skip-git-repo-check", "-s", "workspace-write", ...model, "-C", cwd, "-i", "input.png", "-i", "height.png", "-i", "style.png", "-i", "trees.png", "-"],
       { stdio: ["pipe", log, log] });
     const timer = setTimeout(() => p.kill("SIGTERM"), 900_000);
     p.on("close", () => { clearTimeout(timer); closeSync(log); resolve(); });

@@ -4,6 +4,13 @@ import type { Traffic } from "./traffic.ts";
 import type { Trains } from "./trains.ts";
 import type { Cats } from "./cats.ts";
 import type { Planes, Parrots, Pigeons, Airport } from "./sky.ts";
+import { TiltShift } from "./tiltshift.ts";
+import type { Pigeons as PeckingPigeons } from "./pigeons.ts";
+import { Foreground, type FgIndex } from "./foreground.ts";
+import type { Mine, MineData } from "./mine.ts";
+import type { Fly } from "./fly.ts";
+import type { Clouds } from "./clouds.ts";
+import type { SearchItem } from "./search.ts";
 import { CAMERA, ecefToEnu, llhToEcef, llhToPixel, useRegion } from "../../../pipeline/src/camera.ts";
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 declare const __TILES_ORIGIN__: string; // TILES_ORIGIN from .env, injected by astro.config.mjs
@@ -22,7 +29,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; borders?: string; roads?: string; trains?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; "tiles-height"?: string; borders?: string; roads?: string; trains?: string; mine?: string; search?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -66,13 +73,24 @@ function tileSource(layer: string, have: Index) {
     minLevel: world.min_zoom, maxLevel: NZ,
     getTileUrl: (level: number, x: number, y: number) => {
       const [tx, ty] = global(level, x, y);
-      return `${BASE}/tiles/${layer}/${level}/${tx}/${ty}.${EXT}?v=${have[level][`${tx}_${ty}`]}`; // immutable URL per content
+      return `${BASE}/tiles/${layer}/${level}/${tx}/${ty}.${EXT}?v=${have[level]?.[`${tx}_${ty}`]}`; // immutable URL per content
     },
     tileExists: (level: number, x: number, y: number) => {
       const [tx, ty] = global(level, x, y);
       return have[level]?.[`${tx}_${ty}`] !== undefined;
     },
   };
+}
+
+/**
+ * Tiles kept decoded. The canvas drawer keeps each tile as a canvas of its own, 1 MB for a 512 px tile, so a fixed 600
+ * could hold 630 MB of canvases (iOS Safari caps a page's canvas memory well below that). Measured, one layer draws at
+ * most ~8 tiles per megapixel of the screen + 12 in a frame, and a salt mine's levels (surface dimmed, levels fading)
+ * up to ~3× that: keep four screens' worth, at least 150. The physical screen, so a window made larger still fits.
+ */
+function cacheTiles() {
+  const dpr = window.devicePixelRatio || 1, mpx = (screen.width * dpr * screen.height * dpr) / 1e6;
+  return Math.max(150, Math.round(4 * (8 * mpx + 12)));
 }
 
 const viewer = OpenSeadragon({
@@ -88,7 +106,7 @@ const viewer = OpenSeadragon({
   immediateRender: false,
   imageLoaderLimit: 8,
   minPixelRatio: 0.8,     // fetch the finer level only once it is really needed (~40% fewer bytes)
-  maxImageCacheCount: 600,
+  maxImageCacheCount: cacheTiles(),
   minZoomImageRatio: 0.01, // real limit is set on open: the whole metro
   maxZoomPixelRatio: 2.5,
   visibilityRatio: 0.4,
@@ -124,22 +142,91 @@ let showBorders = false, showTraffic = true;
 const heading = (world.camera.headingDeg * Math.PI) / 180;
 let trains: Trains | null = null;
 let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, pigeons: Pigeons | null = null, planes: Planes | null = null;
+/** pigeons pecking on a square and taking off (life.pigeons; pigeons.ts), apart from the flocks wheeling over squares (sky.ts) */
+let pecking: PeckingPigeons | null = null;
+/** what stands higher than a car, drawn back over the vehicles (life.foreground; AVIF only) */
+let foreground: Foreground | null = null;
+if (modern && files["tiles-fg"]) json<FgIndex>(files["tiles-fg"]).then((index) => {
+  foreground = new Foreground(index, (z, x, y, v) => `${BASE}/tiles/fg/${z}/${x}/${y}.${EXT}?v=${v}`, TS, NZ, world.min_zoom);
+});
+// a salt mine's levels under the town (Wieliczka; mine.ts): a lift panel, each level its own layer
+let mine: Mine | null = null;
+if (modern && files.mine) Promise.all([import("./mine.ts"), json<MineData>(files.mine)]).then(([{ Mine: MineView }, data]) => {
+  mine = new MineView(data, {
+    enu2px: world.enu2px,
+    addLayer: (layer, indexFile) => json<Index>(indexFile).then((have) => new Promise((resolve) => viewer.addTiledImage({
+      tileSource: tileSource(layer, have) as unknown as OpenSeadragon.TileSourceOptions, opacity: 0,
+      success: (e) => resolve((e as unknown as { item: OpenSeadragon.TiledImage }).item),
+    }))),
+    dimSurface: (o) => { if (base()) base().setOpacity(o); else viewer.addOnceHandler("open", () => base().setOpacity(o)); },
+  });
+  Object.assign(window as object, { __mine: mine });
+});
+// a biplane to fly over the map (effects.fly; fly.ts): the map follows it and stops panning by drag meanwhile
+let fly: Fly | null = null;
+if (REGIONS[REGION]?.effects?.fly) import("./fly.ts").then(({ Fly: Biplane }) => {
+  const gestures = viewer as unknown as { gestureSettingsMouse: { dragToPan: boolean; flickEnabled: boolean }; gestureSettingsTouch: { dragToPan: boolean; flickEnabled: boolean } };
+  const [[by0, bx0], [by1, bx1]] = world.bounds;
+  fly = new Biplane({
+    enu2px: world.enu2px,
+    groundZ: REGIONS[REGION].groundH,
+    bounds: [bx0, by0, bx1, by1],
+    center: () => { const c = base().viewportToImageCoordinates(viewer.viewport.getCenter(true)); return [c.x + ox, c.y + oy]; },
+    screenToGlobal: (sx, sy) => { const dpr = window.devicePixelRatio || 1; return [(sx * dpr - tx) / k, (sy * dpr - ty) / k]; },
+    follow: (x, y) => viewer.viewport.panTo(globalToViewport(x, y), true),
+    // the surface heights its shadow is laid over (lossless WebP whatever the map's format)
+    heights: files["tiles-height"] ? { index: () => json<Record<string, string>>(files["tiles-height"]!), url: (x, y, v) => `${BASE}/tiles/height/${x}/${y}.webp?v=${v}` } : undefined,
+    onChange: (flying) => {
+      for (const g of [gestures.gestureSettingsMouse, gestures.gestureSettingsTouch]) { g.dragToPan = !flying; g.flickEnabled = !flying; }
+      if (!flying) return;
+      if (mine?.underground) mine.open(false); // up from the mine to take off
+      // the plane is ~24 m across, like the map's houses: from farther out than ~1 km across, close in to take off
+      const dpr = window.devicePixelRatio || 1, across = ((canvas.clientWidth * dpr) / k) * CAMERA.mpp;
+      if (across > 1000) viewer.viewport.zoomTo(base().getContentSize().x / (600 / CAMERA.mpp));
+    },
+  }, document.getElementById("map")!);
+  Object.assign(window as object, { __fly: fly });
+});
+// going somewhere (the search): the plane lands, the mine comes up, the spot is marked a while
+let mark: { x: number; y: number; label: string; t: number } | null = null;
+function goTo(x: number, y: number, widthM?: number, label?: string) {
+  if (fly?.flying) fly.stop();
+  if (mine?.underground) mine.open(false);
+  viewer.viewport.panTo(globalToViewport(x, y));
+  if (widthM) viewer.viewport.zoomTo(base().getContentSize().x / (widthM / CAMERA.mpp));
+  if (label) mark = { x, y, label, t: performance.now() };
+}
+const effects = REGIONS[REGION]?.effects ?? {};
+// cloud shadows drifting over the map (effects.clouds; clouds.ts)
+let clouds: Clouds | null = null;
+if (effects.clouds) import("./clouds.ts").then(({ Clouds: C }) => { clouds = new C(world.enu2px); Object.assign(window as object, { __clouds: clouds }); });
+// finding streets and places (effects.search; search.ts)
+if (effects.search && files.search) Promise.all([import("./search.ts"), json<SearchItem[]>(files.search)]).then(([{ Search }, items]) => new Search(items, { go: goTo }));
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
   if (animationsRequested) return;
   animationsRequested = true;
   Promise.all([
-    import("./traffic.ts"), import("./cats.ts"), import("./sky.ts"), import("./roads.ts"),
+    import("./traffic.ts"), import("./cats.ts"), import("./sky.ts"), import("./roads.ts"), import("./pigeons.ts"),
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
     files.trains ? Promise.all([import("./trains.ts"), fetch(`${BASE}/data/${files.trains}`).then((r) => (r.ok ? r.json() : null))]) : null,
-  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, Pigeons }, { decodeRoads }, data, rail]) => {
+  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, Pigeons }, { decodeRoads }, { Pigeons: Pecking }, data, rail]) => {
     const roads = decodeRoads(data, !files.trains); // no trains: exported before terrain road heights
     if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)], REGIONS[REGION].rail?.stock);
     if (world.airport) planes = new Planes(world.enu2px, world.airport);
-    if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)]);
+    const life = REGIONS[REGION]?.life;
+    if (roads.length) traffic = new Traffic(roads, world.enu2px, [Math.sin(heading), Math.cos(heading)], 1, { detailed: life?.vehicles === "detailed", coaches: life?.coaches });
     if (roads.length) cats = new Cats(roads, world.enu2px);
     if (traffic && trains && REGIONS[REGION].rail) traffic.yieldTo(trains); // Zagreb's trams share the streets
+    if (roads.length && life?.pigeons?.length) { // the paving's height: the nearest road sample's
+      const ground = (x: number, y: number) => {
+        let best = Infinity, z = 0;
+        for (const r of roads) for (let i = 0; i < r.s.length; i += 4) { const d = Math.hypot(r.s[i] - x, r.s[i + 1] - y); if (d < best) { best = d; z = r.s[i + 2]; } }
+        return z;
+      };
+      pecking = new Pecking(world.enu2px, life.pigeons, ground, [Math.sin(heading), Math.cos(heading)]);
+    }
     if (roads.length && REGION === "israel-center") { // Tel Aviv's feral parakeets roam over the streets' extent
       const a = [Infinity, Infinity, -Infinity, -Infinity];
       for (const r of roads) for (let i = 0; i < r.s.length; i += 4) {
@@ -159,7 +246,7 @@ function loadAnimations() {
       if (Number.isFinite(u)) roosts.push([e, n, u]); // no street near: the square is outside the exported areas
     }
     if (roosts.length) pigeons = new Pigeons(world.enu2px, roosts);
-    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __pigeons: pigeons, __planes: planes });
+    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __pigeons: pigeons, __pecking: pecking, __planes: planes });
   });
 }
 setTimeout(loadAnimations, 6000); // slow connection: don't wait for every tile forever
@@ -205,6 +292,7 @@ function drawBorders(dpr: number) {
   }
 }
 
+const tilt = REGIONS[REGION]?.effects?.tiltShift ? new TiltShift(document.getElementById("map")!) : null;
 let lastT = performance.now();
 function frame(t: number) {
   const dpr = window.devicePixelRatio || 1;
@@ -219,28 +307,61 @@ function frame(t: number) {
   // zoomed out too far to see them (their draw() thresholds), cars and cats pause instead of
   // simulating thousands of invisible movers every frame
   const px = k / dpr;
-  if (trains && showTraffic && px >= 0.08) { // under the cars: road bridges cross the tracks, rarely the reverse
+  const above = showTraffic && !mine?.underground; // below ground, the town's life stays up there
+  if (trains && above && px >= 0.08) { // under the cars: road bridges cross the tracks, rarely the reverse
     trains.step(dt);
     trains.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
-  if (traffic && showTraffic && px >= 0.14) {
+  if (traffic && above && px >= 0.14) {
     traffic.step(dt);
     traffic.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+    foreground?.draw(ctx, k, tx, ty, traffic.boxes);
   }
-  if (cats && showTraffic && px >= 0.6) {
+  if (cats && above && px >= 0.6) {
     cats.step(dt);
     cats.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
-  if (showTraffic) { // sky above everything: parakeets or pigeons, then the airliner
+  if (pecking && above) { // they keep pecking (and taking off) out of sight too: cheap
+    pecking.step(dt);
+    pecking.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+  }
+  if (clouds && !mine?.underground) { clouds.step(dt); clouds.draw(ctx, k, tx, ty, w, hgt, px); } // over the town, under the sky
+  if (above) { // sky above everything: parakeets or pigeons, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (pigeons) { pigeons.step(dt); pigeons.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
     if (planes) { planes.step(dt); planes.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }
   }
+  if (fly?.flying) { // over everything; down into the mine it lands
+    if (mine?.underground) fly.stop();
+    else { fly.step(dt); fly.draw(ctx, toScreen); }
+  }
+  mine?.draw(ctx, toScreen, px, dpr, [0, 0, w, hgt]);
+  if (mark && !mine?.underground) drawMark(dpr, t);
   if (showBorders || k / dpr < 0.05) drawBorders(dpr); // borders appear automatically far out
+  tilt?.update();
   lastT = t;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+/** the spot the search went to: a pin with its name, for a few seconds, then fading */
+function drawMark(dpr: number, t: number) {
+  const age = (t - mark!.t) / 1000;
+  if (age > 8) { mark = null; return; }
+  const [x, y] = toScreen(mark!.x, mark!.y), a = Math.min(1, (8 - age) / 1.5), bob = Math.max(0, 1 - age * 2) * 14 * dpr;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.beginPath(); ctx.ellipse(x, y, 7 * dpr, 3 * dpr, 0, 0, 2 * Math.PI); ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fill();
+  const py = y - bob;
+  ctx.beginPath(); ctx.moveTo(x, py); ctx.bezierCurveTo(x - 11 * dpr, py - 16 * dpr, x - 11 * dpr, py - 30 * dpr, x, py - 30 * dpr);
+  ctx.bezierCurveTo(x + 11 * dpr, py - 30 * dpr, x + 11 * dpr, py - 16 * dpr, x, py); ctx.fillStyle = "#d64b3c"; ctx.fill();
+  ctx.lineWidth = 1.5 * dpr; ctx.strokeStyle = "#fff"; ctx.stroke();
+  ctx.beginPath(); ctx.arc(x, py - 21 * dpr, 3.5 * dpr, 0, 2 * Math.PI); ctx.fillStyle = "#fff"; ctx.fill();
+  ctx.font = `600 ${13 * dpr}px ui-sans-serif, system-ui, sans-serif`; ctx.textAlign = "center";
+  ctx.lineWidth = 3.5 * dpr; ctx.strokeStyle = "rgba(255,255,255,0.95)"; ctx.fillStyle = "#1f2a37";
+  ctx.strokeText(mark!.label, x, py - 37 * dpr); ctx.fillText(mark!.label, x, py - 37 * dpr);
+  ctx.restore();
+}
 
 // ---- controls ----------------------------------------------------------------------------------
 let photo: OpenSeadragon.TiledImage | null = null, photoRequested = false;
@@ -256,11 +377,13 @@ function togglePhoto() {
 }
 
 window.addEventListener("keydown", (e) => {
+  if ((e.target as HTMLElement)?.closest?.("input, textarea")) return; // typing in the search
   const key = e.key.toLowerCase();
   if (key === "b") showBorders = !showBorders;
   if (key === "t") showTraffic = !showTraffic;
   if (key === "p") togglePhoto();
   if (key === "v") document.body.classList.toggle("video");
+  if (key === "m") tilt?.toggle();
 });
 if (new URLSearchParams(location.search).has("video")) document.body.classList.add("video");
 
@@ -331,8 +454,12 @@ document.getElementById("credits")!.innerHTML = [
     : REGION === "zagreb" // Otvorena dozvola: source, date of its last change, link, change notice
       ? [`<a href="https://data.zagreb.hr/dataset/zg3d-2022-3d-model-gz">Grad Zagreb, ZG3D 2022</a> (7. 5. 2025.)`,
         `<a href="https://data.gov.hr/otvorena-dozvola">Otvorena dozvola</a>, izmijenjeno`]
-      : [`<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`]),
+      : REGION === "wieliczka" // GUGiK (PZGiK material, CC BY 4.0) requires this notice: "prepared from the national geodetic and cartographic resource"
+        ? [`Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (<a href="https://www.geoportal.gov.pl/">GUGiK</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>)`]
+        : [`<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`]),
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
+  // the salt mine's levels (mine.ts): Hondius's 1645 plan; the facts' sources are listed in the mine panel
+  ...(files.mine ? [`Salt mine: plan by <a href="https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg">W. Hondius, 1645</a> (public domain)`] : []),
   // painted regions say so (their credits in places.ts carry the label for clips too); Stuttgart is drawn procedurally
   ...(REGIONS[REGION].credits.some((c) => /painted with ai/i.test(c)) ? ["Painted with AI"] : []),
   // the method to recreate the derived database (ODbL) and the code
@@ -341,6 +468,8 @@ document.getElementById("credits")!.innerHTML = [
     ? `Made by <a href="https://lukashermann.dev/">Lukas Hermann</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
     : REGION === "zagreb" // the Zagreb region was built by Andrej Šimunaj (ZeroPointStudio)
       ? `Made by <a href="https://zeropointstudio.io">Andrej Šimunaj</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
-      : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
+      : REGION === "wieliczka" // the Wieliczka region was built by Maciek Chmura
+        ? `Made by <a href="https://maciek.cloud/">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
+        : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
 // each credit stays on one line; the separator rides at the end of the previous one so no line starts with "·"
 ].map((c, i, all) => `<span class="credit">${c}${i < all.length - 1 ? " ·" : ""}</span>`).join(" ");

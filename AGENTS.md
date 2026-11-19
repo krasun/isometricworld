@@ -85,8 +85,12 @@ Search for, and record URL + licence of each:
   Tel Aviv-only. Add the new city's sources behind a per-region/per-area switch, or rely on the OSM
   fallback; never assume the TLV files exist for other areas. Stuttgart (`sources: "lgl"`) is the worked
   example of a second source set: LGL LoD2/DGM1/nDOM1, OSM from a Geofabrik extract (`osmExtract`, needs
-  osmium-tool), procedural styled look instead of painting, and a region `outline` (city limits + airport) that
-  limits fetching/rendering and shapes the faded map edge. See README "Stuttgart".
+  osmium-tool), procedural styled look instead of painting (`look: "styled"`), and a region `outline` (city
+  limits + airport) that limits fetching/rendering and shapes the faded map edge. See README "Stuttgart".
+  `sources` says where the data comes from, `look` how it is drawn: check data with `sources` and the look
+  with `look` (`STYLED`), never one for the other. A styled region picks a preset in `pipeline/src/styles.ts`
+  (`style`, e.g. "poland" with cast sun shadows); a new look feature is a preset field whose value in the
+  existing presets keeps their look (check the Stuttgart test patch pixel for pixel), not a flag on regions.
 - `ATTRIBUTION.md`: add every new source (see Hard rules).
 
 ### 4. Paint with an image model
