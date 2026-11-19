@@ -23,7 +23,7 @@ import { createInterface } from "node:readline/promises";
 import { HOSTING } from "./hosting.ts";
 import { WEB_CACHE, WEB_STATE } from "./paths.ts";
 import { REGIONS } from "./places.ts";
-import { STATE_CACHE, STATE_REL, publishedStateFile } from "./webstate.ts";
+import { STATE_CACHE, STATE_REL, publishedStateFile, remoteState, stateHash } from "./webstate.ts";
 
 const args = process.argv.slice(2);
 const region = args.find((a) => !a.startsWith("--")) ?? "israel-center";
@@ -46,6 +46,16 @@ const files = STATE_ONLY ? [] : readdirSync(dir, { recursive: true }).map(String
   .sort((a, b) => rank(a) - rank(b));
 const bytes = files.reduce((s, f) => s + statSync(join(dir, f)).size, 0);
 const tiles = files.filter((f) => f.startsWith("tiles/")).length;
+// someone else published this region since this export (or this machine's state) was made: their tiles would
+// be overwritten with stale ones and their state lost
+const remote = await remoteState(region);
+const startedFrom = STATE_ONLY ? stateHash(readFileSync(publishedStateFile(region)))
+  : existsSync(pending) ? (JSON.parse(readFileSync(pending, "utf8")).base ?? null) : undefined;
+if (remote !== null && startedFrom !== undefined && stateHash(remote) !== startedFrom) {
+  console.error(`${region}: R2 has a newer published state than ${STATE_ONLY ? publishedStateFile(region) : "this export started from"} (someone published since).
+  Move ${publishedStateFile(region)} and data/web/${region}* aside, export again (it downloads R2's state), then publish.`);
+  process.exit(1);
+}
 if (!STATE_ONLY) {
   console.log(`${region}: ${tiles} tiles + ${files.length - tiles} data files, ${(bytes / 1e6).toFixed(1)} MB → r2://${HOSTING.bucket}/regions/${region}/ (${HOSTING.origin})`);
   if (!(await confirm())) process.exit(1);

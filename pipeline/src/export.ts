@@ -38,7 +38,7 @@ import { DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
 import { CITIES, REGIONS } from "./places.ts";
 import { readHeights } from "./heights.ts";
 import { deckHeight, isBridge } from "./bridges.ts";
-import { fetchPublishedState } from "./webstate.ts";
+import { fetchPublishedState, stateHash } from "./webstate.ts";
 
 const TS = 512;                  // web tile size
 const SPLIT = CAMERA.tile / TS;  // web tiles per art tile edge
@@ -131,6 +131,9 @@ interface State {
   data: Record<string, string>;
   /** source PNG path -> "mtime:size@content hash" */
   src?: Record<string, string>;
+  /** stateHash of the published state this export started from (none: from scratch); publish refuses
+   *  when R2's state has moved on since (someone else published) */
+  base?: string;
 }
 let state: State = { layers: {}, data: {} };
 /** what is on R2 now: a tile encoded to the same bytes stays out of the cache, so publish uploads only real changes */
@@ -953,6 +956,7 @@ async function main() {
   if (await fetchPublishedState(activeRegion())) console.log(`  published state downloaded from R2 → ${publishedFile()}`);
   const from = [pendingFile(), publishedFile()].find(existsSync);
   if (from) state = readJson(from);
+  if (from === publishedFile()) state.base = stateHash(readFileSync(from)); // stacked exports keep theirs
   if (existsSync(publishedFile())) published = readJson(publishedFile());
   if (process.argv.includes("--parts")) {
     SCOPE = areas.flatMap((a) => { const f = join(DERIVED, a, "osm-parts.json"); return existsSync(f) ? readJson(f).map((p: { px: number[] }) => p.px) : []; });
