@@ -21,6 +21,10 @@ districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted 
 [zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io). Full-quality clip:
 [`video/zagreb.mp4`](video/zagreb.mp4).
 
+Fourth city: **Wieliczka** (`/wieliczka`), by [Maciek Chmura](https://maciek.cloud/): the town near Kraków from
+GUGiK, Poland's national open geodata, drawn procedurally instead of painted, with its salt mine's levels under
+the town and a biplane to fly over it.
+
 ## The idea
 
 Real cities as an isometric illustration, painted with AI, that you can pan and zoom like a map, with every building,

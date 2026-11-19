@@ -11,7 +11,7 @@
  *   npm run paint -- tlv-core --near 32.064,34.775 --radius 2   # a patch of windows
  *   npm run paint -- tlv-core -j 3                              # everything, centre first (--center lat,lon)
  *   npm run paint -- tlv-core --parts                           # windows over the buildings scene.ts gave OSM 3D shapes
- *   npm run paint -- wieliczka-town --window=-1,-2 --center=49.98236,20.06018 --model=gpt-6-luna --effort=low
+ *   npm run paint -- tlv-core --window=-1,-2 --model=<codex model> --effort=low
  * (--model / --effort: the Codex model that drives the image tool, when the one in ~/.codex/config.toml isn't
  * available to the logged-in ChatGPT account; negative window or centre values need the `=` form)
  */
@@ -132,6 +132,8 @@ and tram tracks empty.`,
     trees: join(PIPELINE, "style", "trees-stuttgart.png"),
     inventionChecks: true,
   },
+  // Wieliczka is drawn procedurally (look: "styled"): nothing of it is painted. This prompt is only for an optional
+  // painted A/B test of a few windows, like Stuttgart's.
   wieliczka: {
     ground: "Streets, squares, parks, fields, rail and streams",
     country: "Poland",
