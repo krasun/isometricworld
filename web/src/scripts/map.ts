@@ -37,7 +37,8 @@ const json = <T>(file: string) => fetch(`${BASE}/data/${file}`).then((r) => r.js
 // the page preloads the data files named in world.json at build time (MapPage.astro); world.json is
 // the truth (a publish after the build renames them; those preloads then go unused)
 const worldReady = json<World>("world.json");
-// AVIF tiles (40% smaller); browsers without AVIF get the last WebP pyramid (data/tiles.json)
+// AVIF tiles (40% smaller); browsers without AVIF get the last WebP pyramid (data/tiles.json): Tel Aviv only,
+// newer regions have none
 const avifReady = new Promise<boolean>((done) => {
   const img = new Image();
   img.onload = () => done(img.width === 1);

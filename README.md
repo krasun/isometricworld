@@ -98,8 +98,9 @@ R2 isometricworldtiles/regions/<region>/    production (dev and deployed builds 
 - Everything but `data/world.json` is cached for a year (`immutable`): tile URLs carry `?v=<content hash>`
   from `tiles-<layer>.<hash>.json`, and the data files and city previews have their hash in the name, so a
   re-painted tile or a new export gets new URLs. `world.json` (60 s) names the current files; the page
-  preloads the ones its build saw. Tiles are AVIF; the last WebP pyramid (`tiles.json`, `.webp`) stays as
-  the fallback for browsers without AVIF.
+  preloads the ones its build saw. Tiles are AVIF only. Tel Aviv keeps its last WebP pyramid (`tiles.json`,
+  `.webp`) as a legacy fallback for browsers without AVIF; newer regions (Stuttgart, Zagreb) have none and need
+  none (AVIF: Safari 16+, every current browser).
 - Export works without the cache: lower zoom levels that need an unchanged neighbour fetch it from R2.
   Exports stack until you publish (`data/web/<region>.state.json`); deleting `data/web/` drops unpublished
   work and nothing else. Deleting `data/web-state/<region>.json` makes the next export rebuild everything.

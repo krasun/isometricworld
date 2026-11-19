@@ -17,7 +17,8 @@
  *   data/trains.<hash>.json            rail lines and their tracks for the trains (exportTrains)
  *   preview/<city>-<land|port>.<hash>.avif  the city's opening view, shown until the tiles are in
  * Content-hashed names never change, so browsers keep them for a year; world.json says which are current.
- * The legacy data/tiles.json + .webp tiles stay on R2 untouched: the viewer's fallback without AVIF.
+ * Tel Aviv's legacy data/tiles.json + .webp tiles stay on R2 untouched: the viewer's fallback without AVIF.
+ * Other regions have no WebP pyramid and need none.
  * What is published (tile sources + hashes) is tracked in data/web-state/<region>.json; an export not
  * yet published keeps its state next to the cache (data/web/<region>.state.json) so exports stack.
  *
