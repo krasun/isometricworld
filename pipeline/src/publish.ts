@@ -78,6 +78,7 @@ async function put(rel: string, body: Buffer<ArrayBuffer> = readFileSync(join(di
   const key = `regions/${region}/${rel}`;
   const headers = (): Record<string, string> => ({
     Authorization: `Bearer ${token}`,
+    ...(HOSTING.jurisdiction ? { "cf-r2-jurisdiction": HOSTING.jurisdiction } : {}),
     "Content-Type": TYPES[rel.split(".").pop()!],
     // world.json is the one name that is reused; tiles carry ?v=<hash>, everything else has it in its name
     "Cache-Control": cache ?? (rel.endsWith("world.json") ? HOSTING.cacheData : HOSTING.cacheTiles),

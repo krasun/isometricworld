@@ -17,8 +17,10 @@ function need(name: string): string {
 }
 
 export const HOSTING = {
-  /** R2 bucket (Cloudflare account CLOUDFLARE_ACCOUNT_ID). */
-  bucket: "isometricworldtiles",
+  /** R2 bucket (Cloudflare account CLOUDFLARE_ACCOUNT_ID): production, or a contributor's own (TILES_BUCKET). */
+  get bucket() { return env().TILES_BUCKET || "isometricworldtiles"; },
+  /** the bucket's jurisdiction ("eu", "fedramp"), if it has one: R2's API needs it for every object */
+  get jurisdiction() { return env().TILES_JURISDICTION || ""; },
   get accountId() { return need("CLOUDFLARE_ACCOUNT_ID"); },
   /** Public origin of the bucket (its custom domain), no trailing slash. */
   get origin() { return need("TILES_ORIGIN").replace(/\/+$/, ""); },
