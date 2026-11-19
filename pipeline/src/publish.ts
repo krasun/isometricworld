@@ -2,11 +2,14 @@
  * Publish a region's exported files to R2 and empty the local cache.
  *
  *   npm run publish -- israel-center [--yes] [--keep]
+ *   npm run publish -- israel-center --state-only [--yes]   # upload only data/web-state/<region>.json
  *
  * Uploads everything in data/web/regions/<region>/ (only what `npm run export` changed) to the
- * bucket in hosting.ts: tiles first, then previews and the content-hashed data files, world.json last
- * (it names the current files, so the live site never points at one that is not there yet). Each upload is checked (stored size = local size); then the export's state becomes
- * the published state (data/web-state/<region>.json) and the cache is deleted (--keep: leave it).
+ * bucket in hosting.ts: tiles first, then previews and the content-hashed data files, then the export's
+ * state (regions/<region>/state.json, webstate.ts), world.json last (it names the current files, so the
+ * live site never points at one that is not there yet). Each upload is checked (stored size = local size);
+ * then the export's state becomes the published state (data/web-state/<region>.json) and the cache is
+ * deleted (--keep: leave it).
  *
  * Rate: the Cloudflare REST API allows ~4 uploads/s, so a full region (~9k files) takes ~40 min the
  * first time; later publishes only carry what changed.
@@ -20,24 +23,32 @@ import { createInterface } from "node:readline/promises";
 import { HOSTING } from "./hosting.ts";
 import { WEB_CACHE, WEB_STATE } from "./paths.ts";
 import { REGIONS } from "./places.ts";
+import { STATE_CACHE, STATE_REL, publishedStateFile } from "./webstate.ts";
 
 const args = process.argv.slice(2);
 const region = args.find((a) => !a.startsWith("--")) ?? "israel-center";
 if (!REGIONS[region]) throw new Error(`unknown region ${region}`);
 const dir = join(WEB_CACHE, "regions", region), pending = join(WEB_CACHE, `${region}.state.json`);
-if (!existsSync(dir)) { console.log(`nothing to publish: ${dir} is empty (run npm run export first)`); process.exit(0); }
+const STATE_ONLY = args.includes("--state-only");
+if (STATE_ONLY && !existsSync(publishedStateFile(region))) { console.log(`nothing to upload: no ${publishedStateFile(region)}`); process.exit(0); }
+if (!STATE_ONLY && !existsSync(dir)) { console.log(`nothing to publish: ${dir} is empty (run npm run export first)`); process.exit(0); }
+
+async function confirm(question = "publish? [y/N] ") {
+  if (args.includes("--yes")) return true;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const ok = /^y(es)?$/i.test((await rl.question(question)).trim());
+  rl.close();
+  return ok;
+}
 
 const rank = (f: string) => (f.startsWith("tiles/") ? 0 : f.endsWith("world.json") ? 2 : 1);
-const files = readdirSync(dir, { recursive: true }).map(String).filter((f) => /\.(avif|webp|json)$/.test(f))
+const files = STATE_ONLY ? [] : readdirSync(dir, { recursive: true }).map(String).filter((f) => /\.(avif|webp|json)$/.test(f))
   .sort((a, b) => rank(a) - rank(b));
 const bytes = files.reduce((s, f) => s + statSync(join(dir, f)).size, 0);
 const tiles = files.filter((f) => f.startsWith("tiles/")).length;
-console.log(`${region}: ${tiles} tiles + ${files.length - tiles} data files, ${(bytes / 1e6).toFixed(1)} MB → r2://${HOSTING.bucket}/regions/${region}/ (${HOSTING.origin})`);
-if (!args.includes("--yes")) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const ok = /^y(es)?$/i.test((await rl.question("publish? [y/N] ")).trim());
-  rl.close();
-  if (!ok) process.exit(1);
+if (!STATE_ONLY) {
+  console.log(`${region}: ${tiles} tiles + ${files.length - tiles} data files, ${(bytes / 1e6).toFixed(1)} MB → r2://${HOSTING.bucket}/regions/${region}/ (${HOSTING.origin})`);
+  if (!(await confirm())) process.exit(1);
 }
 
 let token = process.env.CLOUDFLARE_API_TOKEN ?? "";
@@ -53,13 +64,13 @@ const slot = async () => { const t = Math.max(Date.now(), nextSlot); nextSlot = 
 
 const TYPES: Record<string, string> = { avif: "image/avif", webp: "image/webp", json: "application/json" };
 const api = `https://api.cloudflare.com/client/v4/accounts/${HOSTING.accountId}/r2/buckets/${HOSTING.bucket}/objects/`;
-async function put(rel: string) {
-  const body = readFileSync(join(dir, rel)), key = `regions/${region}/${rel}`;
+async function put(rel: string, body: Buffer<ArrayBuffer> = readFileSync(join(dir, rel)), cache?: string) {
+  const key = `regions/${region}/${rel}`;
   const headers = (): Record<string, string> => ({
     Authorization: `Bearer ${token}`,
     "Content-Type": TYPES[rel.split(".").pop()!],
     // world.json is the one name that is reused; tiles carry ?v=<hash>, everything else has it in its name
-    "Cache-Control": rel.endsWith("world.json") ? HOSTING.cacheData : HOSTING.cacheTiles,
+    "Cache-Control": cache ?? (rel.endsWith("world.json") ? HOSTING.cacheData : HOSTING.cacheTiles),
   });
   for (let attempt = 1; ; attempt++) {
     try {
@@ -78,7 +89,19 @@ async function put(rel: string) {
   }
 }
 
-// tiles and previews in parallel, then the data files in order (world.json last)
+if (STATE_ONLY) await stateOnly();
+
+/** --state-only: upload this machine's published state (a region published before states went to R2). */
+async function stateOnly(): Promise<never> {
+  const body = readFileSync(publishedStateFile(region));
+  console.log(`${region}: ${publishedStateFile(region)} (${(body.length / 1e6).toFixed(1)} MB) → r2://${HOSTING.bucket}/regions/${region}/${STATE_REL}`);
+  if (!(await confirm("upload? [y/N] "))) process.exit(1);
+  await put(STATE_REL, body, STATE_CACHE);
+  console.log("  uploaded and checked");
+  process.exit(0);
+}
+
+// tiles and previews in parallel, then the data files in order (the state, then world.json last)
 const t0 = Date.now();
 let done = 0;
 const tileFiles = files.filter((f) => !f.startsWith("data/")), dataFiles = files.filter((f) => f.startsWith("data/")); // world.json sorts last
@@ -89,7 +112,12 @@ await Promise.all(Array.from({ length: 8 }, async () => {
     if (++done % 200 === 0) process.stdout.write(`\r  ${done}/${files.length} · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   }
 }));
-for (const f of dataFiles) { await put(f); done++; }
+// the export's state goes up before world.json makes this publish live: the next export, here or on another
+// machine, starts from it
+const finalState = existsSync(pending) ? readFileSync(pending) : null;
+for (const f of dataFiles.filter((f) => !f.endsWith("world.json"))) { await put(f); done++; }
+if (finalState) await put(STATE_REL, finalState, STATE_CACHE);
+for (const f of dataFiles.filter((f) => f.endsWith("world.json"))) { await put(f); done++; }
 console.log(`\r  ${done}/${files.length} uploaded and checked in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
 
 // spot check through the public domain (what the site loads)
@@ -99,5 +127,5 @@ if (!r.ok) throw new Error(`${HOSTING.origin}/regions/${region}/${probe}: ${r.st
 console.log(`  ${HOSTING.origin}/regions/${region}/${probe}: ${r.status}`);
 
 mkdirSync(WEB_STATE, { recursive: true });
-if (existsSync(pending)) renameSync(pending, join(WEB_STATE, `${region}.json`));
+if (finalState) renameSync(pending, publishedStateFile(region));
 if (!args.includes("--keep")) { rmSync(dir, { recursive: true, force: true }); console.log(`  cache emptied: ${dir}`); }
