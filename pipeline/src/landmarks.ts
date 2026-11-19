@@ -544,10 +544,72 @@ function stMark(ctx: RebuildCtx): Piece[] {
   return out;
 }
 
+/**
+ * Johanneskirche am Feuersee, Stuttgart (Christian Friedrich von Leins, 1864–76). LoD2 has the nave but not the
+ * tower. The tower today ends about 45 m up (66 m with its spire, burnt out in 1944 and never rebuilt; Stuttgarter
+ * Zeitung): a square sandstone shaft, a clock storey, then an open octagonal lantern with a balustrade and no
+ * spire. OSM's bell_tower part gives the octagon's place and size; its 30 m is too low against the Commons photos
+ * in ATTRIBUTION.md. Yellow Stuttgart sandstone, red-brown tile roof.
+ */
+function johanneskirche(ctx: RebuildCtx): Piece[] {
+  const oct8 = ctx.parts.find((p) => p.t["tower:type"] === "bell_tower");
+  if (!oct8 || !ctx.meshes.length) return [];
+  const c = centroid(oct8.ring), base = Math.min(...ctx.meshes.map((m) => m.base));
+  const sq = ctx.parts.filter((p) => p !== oct8 && Math.hypot(...sub(centroid(p.ring), c)) < 2).sort((a, b) => b.h - a.h)[0];
+  let ang = 0, best = 0; // the square part's longest edge, folded into 0…90°
+  const r = sq?.ring ?? oct8.ring;
+  for (let i = 0; i < r.length; i++) {
+    const d = sub(r[(i + 1) % r.length], r[i]), L = Math.hypot(...d);
+    if (L > best) { best = L; ang = Math.atan2(d[1], d[0]); }
+  }
+  ang = ((ang % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2);
+  const local = (x: number, y: number) => { const dx = x - c[0], dy = y - c[1]; return [dx * Math.cos(ang) + dy * Math.sin(ang), -dx * Math.sin(ang) + dy * Math.cos(ang)]; };
+  const half = sq ? Math.max(...sq.ring.map((p) => Math.max(...local(...p).map(Math.abs)))) : 4.5;
+  const R8 = Math.max(...oct8.ring.map((p) => Math.hypot(...sub(p, c)))); // octagon circumradius
+  for (const m of ctx.meshes) {
+    cut(m, (x, y) => { const [u, v] = local(x, y); return Math.abs(u) < half + 0.5 && Math.abs(v) < half + 0.5; });
+    m.look = { roof: TILE_BROWN, wall: SANDSTONE, style: 2, bare: 1 };
+  }
+  const q = Math.SQRT2, ph4 = ang + Math.PI / 4, ph8 = ang + Math.PI / 8, zC = 34, zT = 44.2;
+  const look = (wall: number[], roof = SANDSTONE_LEDGE) => ({ roof, wall, style: 2, bare: 3 as const });
+  const at = (u: number, v: number): P2 => [c[0] + u * Math.cos(ang) - v * Math.sin(ang), c[1] + u * Math.sin(ang) + v * Math.cos(ang)];
+  const a = half - 0.6; // the shaft inside its buttresses
+  const shaft = piece(c, base, half, zC, look(SANDSTONE));
+  shaft.footprint = [at(-half, -half), at(half, -half), at(half, half), at(-half, half)];
+  shaft.look.bare = 1; // the shaft casts the tower's contact shadow
+  lathe(shaft, c, [[-3, a * q], [zC - 0.8, a * q], [zC - 0.8, (a + 0.4) * q], [zC, (a + 0.4) * q]], 4, ph4);
+  disc(shaft, c, zC, (a + 0.4) * q, 0, 4, ph4);
+  const butt = piece(c, base, half, zC + 5, look(SANDSTONE));
+  for (const [su, sv] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const b = at(su * (half - 0.7), sv * (half - 0.7));
+    lathe(butt, b, [[-3, 1.0 * q], [12, 1.0 * q], [12.6, 0.8 * q], [24, 0.8 * q], [24.6, 0.6 * q], [zC, 0.6 * q], [zC, 0.5 * q], [zC + 5, 0]], 4, ph4);
+  }
+  // the lantern: an octagon of tall pointed openings (dark panels on each face), a ledge and a balustrade, flat top
+  const oct = piece(c, base, R8, zT + 0.8, look(SANDSTONE));
+  lathe(oct, c, [[zC, R8], [zT, R8], [zT, R8 + 0.35], [zT + 0.8, R8 + 0.35]], 8, ph8);
+  disc(oct, c, zT + 0.8, R8 + 0.35, 0, 8, ph8);
+  const hole = piece(c, base, R8, zT, { roof: null, wall: [0.2, 0.17, 0.14], style: 4, bare: 3 });
+  for (let k = 0; k < 8; k++) {
+    const a0 = ph8 + (k * Math.PI) / 4, a1 = a0 + Math.PI / 4, m = (a0 + a1) / 2, ri = R8 * Math.cos(Math.PI / 8) + 0.06;
+    const n: P2 = [Math.cos(m), Math.sin(m)], t: P2 = [-n[1], n[0]], w = R8 * Math.sin(Math.PI / 8) * 0.55;
+    const P = (s: number, z: number) => [c[0] + n[0] * ri + t[0] * s, c[1] + n[1] * ri + t[1] * s, base + z];
+    tri2(hole, P(-w, zC + 1.5), P(w, zC + 1.5), P(w, zT - 2.2), base);
+    tri2(hole, P(-w, zC + 1.5), P(w, zT - 2.2), P(-w, zT - 2.2), base);
+    tri2(hole, P(-w, zT - 2.2), P(w, zT - 2.2), P(0, zT - 1), base); // pointed arch
+  }
+  for (let k = 0; k < 8; k++) { // small pinnacles round the balustrade
+    const a0 = ph8 + (k * Math.PI) / 4, pc: P2 = [c[0] + R8 * Math.cos(a0), c[1] + R8 * Math.sin(a0)];
+    lathe(oct, pc, [[zT - 1, 0.3], [zT + 1.2, 0.3], [zT + 2.6, 0]], 4, ph4);
+  }
+  return [shaft, butt, oct, hole];
+}
+const SANDSTONE = [0.86, 0.76, 0.56], SANDSTONE_LEDGE = [0.76, 0.66, 0.48], TILE_BROWN = [0.58, 0.28, 0.2];
+
 /** landmarks rebuilt in part from their LoD2 meshes and OSM building:parts, keyed by OSM wikidata (names repeat: Novi Zagreb has its own St Mark's) */
 export const REBUILDS: Record<string, (ctx: RebuildCtx) => Piece[]> = {
   Q312220: zagrebCathedral,
   Q1637186: stMark,
+  Q6217188: johanneskirche,
 };
 
 /**

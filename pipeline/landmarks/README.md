@@ -19,3 +19,10 @@ pasted back by box are listed per landmark below, so a landmark can be recreated
   `--base render --aerial --aerial-source city --style reference-simple.png`, refs from `data/raw/photos/stadtbibliothek/`
   and `milaneo/` (CC0/CC BY, see ATTRIBUTION.md), in the order listed in their SOURCES.md. No edits. The Milaneo's roofs
   (green roof gardens, oval skylights) come from the orthophoto: no open photo shows them. Masks 3 % and 25 % of the frame.
+- `feuersee` (stuttgart-core, Johanneskirche and the whole Feuersee lot): native frame -2058,-4812,1536,1024 (`--frame=`
+  with `=`: negative values), `--base render --style reference-simple.png`, refs from `data/raw/photos/johanneskirche/`
+  in the order of its SOURCES.md, no aerial. The first try (four ground photos, aerial, "real olive water") painted the
+  church side-on and lost the pond's shape: LoD2 has no tower, so the model invented one from the photos. Fixed in the
+  model first (`landmarks.ts` `johanneskirche`: a 45 m tower from OSM's bell_tower part, `REBUILDS` by wikidata, which
+  the LGL fetch now includes), then two refs and a prompt that keeps the render's outlines and the pond exactly.
+  Lesson: give a landmark its massing in the model before painting; photos carry materials, never the view. Mask 18.7 %.

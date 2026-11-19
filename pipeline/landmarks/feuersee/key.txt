@@ -1,0 +1,3 @@
+This is a map of the Feuersee in Stuttgart-West: a rectangular pond with green water and a fountain, the neo-Gothic sandstone Johanneskirche with its square tower and octagonal lantern on a peninsula, weeping willows and trees around the water.
+- KEEP, pixel for pixel exactly as they are: the whole Feuersee lot inside the ring of streets: the pond water, the fountain, the stone edges and railings, the peninsula, the church with its tower, and the lawns, paths, willows and trees around the pond up to the pavement.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the streets and pavements around the lot, cars, every other building and the street trees along the outer streets.
