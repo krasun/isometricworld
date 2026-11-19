@@ -13,9 +13,13 @@ Second city: **Stuttgart** (`/stuttgart`), by [Lukas Hermann](https://lukasherma
 around it from LGL Baden-Württemberg open data, drawn procedurally instead of painted. Full-quality clip:
 [`video/stuttgart.mp4`](video/stuttgart.mp4).
 
+![Zagreb](video/zagreb.gif)
+
 Third city: **Zagreb** (`/zagreb`), by [Andrej Šimunaj](https://zeropointstudio.io): the whole city (its 17
 districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted through fal.ai. Live at
-[zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io).
+[isometricworld.dmytrokrasun.com/zagreb](https://isometricworld.dmytrokrasun.com/zagreb) and on Andrej's site,
+[zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io). Full-quality clip:
+[`video/zagreb.mp4`](video/zagreb.mp4).
 
 ## The idea
 
@@ -133,6 +137,7 @@ npm -w pipeline exec tsx src/tour.ts   http://localhost:<port>/ tour   # screens
 npm -w pipeline exec tsx src/traffictest.ts http://localhost:<port>/ 5     # 5 sim-minutes: overlaps, speeds, jams
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/tel-aviv-yafo.mp4  # 14 s 1080² 60 fps clip for X (--preview: quick 6 fps check; --blur 8: motion blur)
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/stuttgart.mp4 --city stuttgart --seconds 4.5  # shots per city: FILMS in film.ts
+npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/zagreb.mp4 --city zagreb --film zagreb-readme --seconds 12  # --film: another shot list
 ```
 
 **Fixing a few buildings** (local rebuild, review, publish only them):
