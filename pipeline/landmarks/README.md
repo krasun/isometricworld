@@ -10,3 +10,8 @@ pasted back by box are listed per landmark below, so a landmark can be recreated
   `paint.ts --guide`. Made before this tool: its files are in overview-wasen-v4/ and overview-wasen-key/.
 - `arena` (stuttgart-east, MHPArena): frame 1760,10200,1536,1024, `--base paint --aerial`. Files in overview-arena/ and
   overview-arena-key/ (made before this tool).
+- `neues-schloss`, `kunstgebaeude`, `landtag`, `staatstheater` (stuttgart-core, Schlossgarten): one native frame each
+  (-990,-1100 / -420,-1100 / -904,-622 / -325,-258, all 1536×1024), `--base render --aerial --aerial-source city
+  --style reference-simple.png`, refs from `data/raw/photos/neues-schloss/`, `kunstgebaeude/`, `landtag/`, `oper/` +
+  `schauspielhaus/` (PD/CC0/CC BY, see ATTRIBUTION.md). No edits. The Landtag key was run twice (the first came back
+  tinted instead of flat magenta: check that the mask is a few % of the frame).

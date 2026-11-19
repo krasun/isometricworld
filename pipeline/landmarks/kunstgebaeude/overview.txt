@@ -1,0 +1,8 @@
+Paint image 1 as a clean, SIMPLE isometric illustration in EXACTLY the style of image 3 and of image 1 itself: flat-shaded 3D blocks with a thin dark outline along every edge, each surface one flat colour, low-poly faceted tree crowns with a dark outline, soft even daylight.
+
+The subject is the Kunstgebäude in Stuttgart (1913, Theodor Fischer), between the Schlossplatz and the Eckensee lake in the Schlossgarten. In image 1 it is only a plain massing model. Repaint THIS building as it really is (see the photos, images 5–8):
+- A large, low hall block of pale cream limestone under a broad, low, green copper roof (verdigris) with hipped slopes.
+- On the lake (Schlossgarten) side, rising from that roof: a round drum ringed by slim columns, with a shallow green copper dome on top, crowned by a small gilded stag.
+- On the Schlossplatz side: a long open arcade of tall round arches in pale stone under its own hipped red-brown tile roof, in front of the hall.
+- A few pale statues on pedestals along the lake edge in front of the dome.
+Everything else (the streets, squares, park, paths, water, trees and every other building) stays EXACTLY as in image 1, pixel for pixel; do not move or restyle anything there. Same camera and scale as image 1; footprint and position exactly as in images 1, 2 and 4 (the photos say nothing about position or size). No text, lettering, banners, posters, logos or signs anywhere, even where the photos show them.
