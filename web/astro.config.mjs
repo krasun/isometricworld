@@ -1,5 +1,5 @@
 // @ts-check
-import { createReadStream, existsSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'astro/config';
 import { HOSTING } from '../pipeline/src/hosting.ts';
@@ -66,9 +66,26 @@ const cityRedirects = () => ({
 	},
 });
 
+/**
+ * The running dev server's URL in data/dev-server.json (removed when it stops): the test and film scripts
+ * (pipeline/src/paths.ts siteUrl) open it when given no URL and SITE_URL is empty, whatever port Astro picked.
+ */
+const DEV_SERVER = fileURLToPath(new URL('../data/dev-server.json', import.meta.url));
+/** @returns {import('astro').AstroIntegration} */
+const devServerUrl = () => ({
+	name: 'dev-server-url',
+	hooks: {
+		'astro:server:start': ({ address }) => {
+			mkdirSync(fileURLToPath(new URL('../data/', import.meta.url)), { recursive: true });
+			writeFileSync(DEV_SERVER, JSON.stringify({ url: `http://localhost:${address.port}/`, pid: process.pid }));
+		},
+		'astro:server:done': () => rmSync(DEV_SERVER, { force: true }),
+	},
+});
+
 // https://astro.build/config
 export default defineConfig({
-	integrations: [cityRedirects()],
+	integrations: [cityRedirects(), devServerUrl()],
 	site: process.env.SITE_DOMAIN ? `https://${process.env.SITE_DOMAIN}` : undefined,
 	vite: {
 		// the browser has no process.env: bake the tile origin into the viewer
