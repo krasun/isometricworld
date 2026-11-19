@@ -58,7 +58,7 @@ const refresh = () => { // the wrangler OAuth token lasts ~1 h; wrangler refresh
 if (!S3 && !token) refresh();
 const RATE = S3 ? Infinity : 3.8; // the Cloudflare API allows ~1200 requests / 5 min per user
 let nextSlot = Date.now();
-const slot = async () => { const t = Math.max(Date.now(), nextSlot); nextSlot = t + 1000 / RATE; await new Promise((r) => setTimeout(r, t - Date.now())); };
+const slot = async () => { const t = Math.max(Date.now(), nextSlot); nextSlot = t + 1000 / RATE; await new Promise((r) => setTimeout(r, Math.max(0, t - Date.now()))); };
 const api = () => `https://api.cloudflare.com/client/v4/accounts/${HOSTING.accountId}/r2/buckets/${BUCKET.name}/objects`;
 const restHeaders = (): Record<string, string> => ({ Authorization: `Bearer ${token}`, ...(BUCKET.jurisdiction ? { "cf-r2-jurisdiction": BUCKET.jurisdiction } : {}) });
 
