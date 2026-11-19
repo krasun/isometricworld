@@ -3,6 +3,10 @@
  *
  *   npm run export -- tlv-core [more areas…] [--data-only]
  *   npm run export -- rothschild tlv-core --parts   # only the tiles around the buildings `scene --parts` swapped
+ *   npm run export -- zagreb                        # a region: the areas it is published with (world.json)
+ *   npm run export -- zagreb --partial              # from the renders/paintings on this machine only (a patch
+ *                                                   # pulled from the archive, archive.ts); every other tile stays
+ *                                                   # as published
  *
  * All areas must belong to one region. Only files that differ from what is published (R2) are
  * written, into the local cache data/web/regions/<region>/ (served by `npm run dev` over production;
@@ -142,6 +146,9 @@ let published: State | null = null;
 let SCOPE: number[][] | null = null;
 /** a repainted window reaches this far past a box (paint --parts repaints every window touching it) */
 const SCOPE_MARGIN = 1024 + 16;
+/** --partial: tiles whose source is not on this machine keep their published pixels (sources map to REMOTE) */
+const PARTIAL = process.argv.includes("--partial");
+const REMOTE = "<published>";
 const hash = (b: Buffer | string) => createHash("sha1").update(b).digest("hex").slice(0, 10);
 const pendingFile = () => join(WEB_CACHE, `${activeRegion()}.state.json`);
 const publishedFile = () => join(WEB_STATE, `${activeRegion()}.json`);
@@ -304,6 +311,16 @@ async function exportLayer(layer: string, sources: Map<Key, string>) {
   let jobs: Array<() => Promise<void>> = [];
   for (const [k, file] of sources) {
     const [tx, ty] = parse(k);
+    if (file === REMOTE) { // --partial: not on this machine, stays as published
+      for (let j = 0; j < SPLIT; j++)
+        for (let i = 0; i < SPLIT; i++) {
+          const x = tx * SPLIT + i, y = ty * SPLIT + j, id = `${NATIVE_Z}/${x}_${y}`;
+          if (!st.hashes[id]) throw new Error(`--partial: ${layer} ${id} is in no published state`);
+          level.add(key(x, y));
+          produced.add(id);
+        }
+      continue;
+    }
     const painted = layer === "map" && file.includes("/paint/");
     const src = sourceHash(file);
     for (let j = 0; j < SPLIT; j++)
@@ -949,7 +966,14 @@ let OUT = ""; // data/web/regions/<region>
 
 async function main() {
   const names = process.argv.slice(2).filter((a) => !a.startsWith("--"));
-  const areas = names.length ? names : ["tlv-core"];
+  const areas: string[] = [];
+  for (const n of names.length ? names : ["tlv-core"]) {
+    if (AREAS[n] || !REGIONS[n]) { areas.push(n); continue; }
+    // a region: the areas its live map was built from, else all of them
+    const r = await fetch(`${HOSTING.origin}/regions/${n}/data/world.json?t=${Date.now()}`);
+    areas.push(...(r.ok ? ((await r.json()) as { areas: Array<{ id: string }> }).areas.map((a) => a.id)
+      : Object.keys(AREAS).filter((a) => AREAS[a].region === n)));
+  }
   const regions = new Set(areas.map((a) => openArea(a).region));
   if (regions.size !== 1) throw new Error(`export one region at a time (got ${[...regions].join(", ")})`);
   OUT = join(WEB_CACHE, "regions", activeRegion());
@@ -989,11 +1013,38 @@ async function main() {
       }
     }
   }
+  const mapOnly = new Map<Key, string>(); // --partial: published map tiles with neither a render nor a painting
+  if (PARTIAL) {
+    const pub = published;
+    if (!pub) throw new Error("--partial: nothing published for this region yet (run a full export first)");
+    // roads, trains and bridge decks (drawn into painted tiles) are built for the whole region: their inputs must be here
+    const missing = areas.filter((a) => !existsSync(join(RAW, a, "roads.json")) || !existsSync(join(DERIVED, a, "ground", "meta.json")) || !existsSync(join(DERIVED, a, "height")));
+    if (missing.length) throw new Error(`--partial: ${missing.join(", ")} lack raw/<area>/roads.json, ground/ or height/ (npm run pull -- ${activeRegion()}, or fetch + ground + render)`);
+    const native = (layer: string) => new Set(Object.keys(pub.layers[layer]?.hashes ?? {}).filter((id) => id.startsWith(`${NATIVE_Z}/`))
+      .map((id) => { const [x, y] = parse(id.slice(`${NATIVE_Z}/`.length)); return key(Math.floor(x / SPLIT), Math.floor(y / SPLIT)); }));
+    // painted on the live map: its stamp has the deck style, or (tiles from before stamps) a painting was its source
+    const painted = new Set(Object.entries(pub.layers.map?.sources ?? {}).filter(([id, s]) => id.startsWith(`${NATIVE_Z}/`) && s.includes("@decks"))
+      .map(([id]) => { const [x, y] = parse(id.slice(`${NATIVE_Z}/`.length)); return key(Math.floor(x / SPLIT), Math.floor(y / SPLIT)); }));
+    for (const rel of Object.keys(pub.src ?? {})) {
+      const m = rel.match(/^([^/]+)\/paint\/(-?\d+_-?\d+)\.png$/);
+      if (m && areas.includes(m[1])) painted.add(m[2] as Key);
+    }
+    const mapNative = native("map"), photoNative = native("photo"), here = { photo: photo.size, art: art.size };
+    for (const k of photoNative) if (!photo.has(k)) photo.set(k, REMOTE);
+    for (const k of painted) if (mapNative.has(k) && !art.has(k)) art.set(k, REMOTE); // a local render never replaces a painting
+    for (const k of mapNative) if (!photo.has(k) && !art.has(k)) mapOnly.set(k, REMOTE);
+    for (const k of [...mapNative, ...photoNative]) {
+      const [tx, ty] = parse(k);
+      x0 = Math.min(x0, tx * CAMERA.tile); y0 = Math.min(y0, ty * CAMERA.tile);
+      x1 = Math.max(x1, (tx + 1) * CAMERA.tile); y1 = Math.max(y1, (ty + 1) * CAMERA.tile);
+    }
+    console.log(`  --partial: ${here.photo} renders and ${here.art} paintings here, the rest (${photo.size - here.photo} rendered, ${art.size - here.art} painted tiles) as published`);
+  }
   const heights = new Heights(areas.map((a) => join(DERIVED, a, "height")));
   await exportRoads(areas, heights); // first: the bridge decks are drawn into the painted tiles
   await exportTrains(areas, heights);
   if (!process.argv.includes("--data-only")) {
-    await exportLayer("map", new Map([...photo, ...art])); // painted wins
+    await exportLayer("map", new Map([...mapOnly, ...photo, ...art])); // painted wins
     await exportLayer("photo", photo);
     for (const layer of Object.keys(index)) writeData(`tiles-${layer}`, JSON.stringify(index[layer]));
   }
