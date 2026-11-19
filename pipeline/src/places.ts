@@ -165,6 +165,9 @@ export const REGIONS: Record<string, Region> = {
       "Korntal-Münchingen", "Kornwestheim", "Remseck am Neckar", "Waiblingen", "Ludwigsburg", "Böblingen",
     ],
     adminLevels: ["6", "8"], // Stuttgart is a city-county (admin_level 6), its neighbours are 8
+    // pigeon flocks (web/src/scripts/sky.ts Pigeons): Schlossplatz, Marktplatz, Karlsplatz (OSM place=square
+    // centroids) and Bad Cannstatt's Wilhelmsplatz (a junction in OSM: at the Wassersäule fountain)
+    pigeons: [[48.7784, 9.17978], [48.7752, 9.17843], [48.77663, 9.1811], [48.80345, 9.21697]],
     credits: [
       "Map data © OpenStreetMap contributors · Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (verändert)",
       "Buildings: LGL LoD2 · Terrain: LGL DGM1, Copernicus DEM © DLR, Airbus DS · Trees: LGL nDOM1",

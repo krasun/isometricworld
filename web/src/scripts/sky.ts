@@ -269,6 +269,9 @@ export class Parrots {
   }
 }
 
+/** pigeon ink width in the bird's drawing units (doubled: the fills cover half), ~6 % of its 0.34 length */
+const PIGEON_INK = 0.04;
+
 interface Wheel { c: [number, number]; u: number; home: number; r: number; ang: number; spin: number; alt: number; timer: number; birds: Array<[number, number, number, number]> }
 
 /**
@@ -326,6 +329,14 @@ export class Pigeons {
         if (!inView(bird.o, view, 30)) continue;
         bird.set();
         const flap = Math.sin(now * 12 + ph * 5), span = 0.14 + 0.2 * Math.abs(flap); // slower, broader wingbeats
+        // ink first, like the cars and trains: the whole silhouette stroked at twice the line width, the fills
+        // below cover its inner half, so one dark rim stays round the bird (no lines between wing, tail and body)
+        ctx.beginPath();
+        for (const s of [-1, 1]) { ctx.moveTo(0.06, s * 0.03); ctx.lineTo(-0.02, s * span); ctx.lineTo(-0.12, s * (span - 0.03)); ctx.lineTo(-0.1, s * 0.03); ctx.closePath(); }
+        ctx.moveTo(-0.1, 0.03); ctx.lineTo(-0.22, 0.05); ctx.lineTo(-0.22, -0.05); ctx.lineTo(-0.1, -0.03); ctx.closePath();
+        ctx.moveTo(0.09, 0); ctx.ellipse(-0.02, 0, 0.11, 0.045, 0, 0, Math.PI * 2);
+        ctx.moveTo(0.12, 0); ctx.arc(0.09, 0, 0.03, 0, Math.PI * 2);
+        ink(ctx, Math.hypot(ctx.getTransform().a, ctx.getTransform().b) * PIGEON_INK / 0.3);
         for (const s of [-1, 1]) {
           ctx.fillStyle = "#9aa1ab"; // blue-grey wings, a darker bar and tips
           ctx.beginPath(); ctx.moveTo(0.06, s * 0.03); ctx.lineTo(-0.02, s * span); ctx.lineTo(-0.12, s * (span - 0.03)); ctx.lineTo(-0.1, s * 0.03); ctx.closePath(); ctx.fill();
