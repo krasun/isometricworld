@@ -25,6 +25,10 @@ const PEOPLE: Record<string, Link[]> = {
   zagreb: [{ text: "Andrej Šimunaj", href: "https://zeropointstudio.io" }],
   wieliczka: [{ text: "Maciek Chmura", href: "https://maciek.cloud/" }],
 };
+/** cities made by someone other than their region's maker (Kraków lies in the Wieliczka region) */
+const CITY_PEOPLE: Record<string, Link[]> = {
+  krakow: [{ text: "Piotr Kulpiński", href: "https://kulpinski.dev" }, { text: "Maciek Chmura", href: "https://maciek.cloud/" }],
+};
 const OSM: Link = { text: "© OpenStreetMap contributors", href: "https://www.openstreetmap.org/copyright" };
 const DEM: Link = { text: "Copernicus DEM © DLR, Airbus DS" };
 const SOURCES: Record<string, Link[]> = {
@@ -44,7 +48,7 @@ const cards = Object.entries(CITIES).map(([slug, c]) => {
   return {
     slug, title: c.title, country: region.country,
     image: pv ? `${tilesOrigin}/regions/${c.region}/${pv.file}` : `/og/${slug}.jpg`, lqip: pv?.lqip,
-    people: PEOPLE[c.region] ?? [], sources: SOURCES[c.region] ?? [OSM, DEM], painted: PAINTED[c.region] ?? true,
+    people: CITY_PEOPLE[slug] ?? PEOPLE[c.region] ?? [], sources: SOURCES[c.region] ?? [OSM, DEM], painted: PAINTED[c.region] ?? true,
   };
 });
 const site = Astro.site ?? Astro.url;

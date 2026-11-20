@@ -112,6 +112,9 @@ export const AREAS: Record<string, Area> = {
    *  the faded map edge (up to ~640 m wide) falls on the villages and Kraków, not on the town; north to past
    *  the A4 (50.000–50.018 N). */
   "wieliczka-town": { title: "Wieliczka", region: "wieliczka", bbox: [49.965, 19.994, 50.024, 20.098] },
+  /** Kraków test patch: the Barbican and Rynek Główny south past Wawel to the Vistula's far bank (~2.2 × 2.6 km), so
+   *  Wawel stays clear of the faded map edge. */
+  "krakow-test": { title: "Kraków · Old Town and Wawel", region: "wieliczka", bbox: [50.0445, 19.9195, 50.0675, 19.9505] },
   ...Object.fromEntries(MINE_LEVELS.map((id) => [`wieliczka-mine-${id}`, { title: `Salt mine · level ${id}`, region: "wieliczka", bbox: MINE_BBOX, mine: id }])),
   /** the first level on Hondius's 1645 plan (mine.ts build1645) */
   "wieliczka-mine-1645": { title: "Salt mine · level I in 1645", region: "wieliczka", bbox: MINE_BBOX, mine: "1645" },

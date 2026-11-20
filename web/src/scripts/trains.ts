@@ -57,7 +57,7 @@ interface Livery { body: RGB; roof: RGB; bands: Array<[number, number, RGB]> }
 /** `tilt`: the body follows the track's grade (a funicular car on its incline); otherwise it stands level */
 interface Car { len: number; wid: number; hei: number; liv: Livery; gap: number; tilt?: boolean }
 /** whose rolling stock (places.ts Region `rail.stock`); default Stuttgart's SSB and DB */
-export type Stock = "zet" | undefined;
+export type Stock = "zet" | "mpk" | undefined;
 
 const RED: RGB = [206, 32, 38], LIGHT: RGB = [208, 210, 214], GLASS: RGB = [34, 40, 52];
 // SSB DT 8 (yellow, navy window band, grey roof), DB ET 430 S-Bahn, DB double-deck regional coaches and
@@ -95,10 +95,38 @@ function zetConsist(line: Line, rand: () => number, add: (n: number, c: Omit<Car
   }
 }
 
+// Kraków. MPK's navy and silver: the low-floor Pesa Krakowiak (42 m, 4 sections) and Stadler Lajkonik and Bombardier
+// NGT6 (26–33 m), the older pairs of Konstal 105Na; regional EMUs white with a navy skirt, long-distance coaches
+// grey with a navy band (approximations of the liveries, not exact)
+const MPK: RGB = [28, 44, 96], SILVER: RGB = [196, 200, 206], KM: RGB = [236, 236, 234];
+const KRAKOWIAK: Livery = { body: MPK, roof: SILVER, bands: [[0.25, 0.65, [62, 66, 74]], [0.9, 2.45, GLASS], [2.45, 2.75, SILVER]] };
+const NGT6: Livery = { body: MPK, roof: SILVER, bands: [[0.8, 0.95, SILVER], [1.0, 2.4, GLASS]] };
+const N105: Livery = { body: MPK, roof: [184, 186, 190], bands: [[0.9, 1.05, SILVER], [1.1, 2.2, GLASS]] };
+const PL_EMU: Livery = { body: KM, roof: LIGHT, bands: [[0.3, 1.0, MPK], [1.4, 2.35, GLASS]] };
+const PL_LOCO: Livery = { body: [176, 180, 186], roof: [150, 152, 158], bands: [[0.3, 0.8, [60, 62, 68]], [1.0, 1.2, MPK], [2.7, 3.3, GLASS]] };
+const PL_COACH: Livery = { body: [196, 200, 206], roof: [170, 174, 180], bands: [[0.5, 0.95, MPK], [1.55, 2.4, GLASS]] };
+
+/** Kraków's stock: kind 4 MPK street trams, mainline trains as Polish regional EMUs and long-distance coaches */
+function mpkConsist(line: Line, rand: () => number, add: (n: number, c: Omit<Car, "gap">, gap: number) => void) {
+  if (line.k === 4) {
+    const r = rand();
+    if (r < 0.4) for (const len of [11.6, 9.4, 9.4, 11.6]) add(1, { len, wid: 2.4, hei: 3.4, liv: KRAKOWIAK }, 0.02); // Krakowiak
+    else if (r < 0.8) for (const len of [9.6, 7.0, 9.6]) add(1, { len, wid: 2.4, hei: 3.3, liv: NGT6 }, 0.02); // NGT6 / Lajkonik
+    else add(2, { len: 13.5, wid: 2.4, hei: 3.1, liv: N105 }, 0.9); // two Konstal 105Na
+  } else if (line.k === 3) {
+    add(1, { len: 19.5, wid: 2.95, hei: 4.2, liv: PL_LOCO }, 1);
+    add(5 + Math.floor(rand() * 3), { len: 26.4, wid: 2.85, hei: 3.9, liv: PL_COACH }, 0.8);
+  } else { // regional EMU, one or two units
+    const units = rand() < 0.35 ? 2 : 1;
+    for (let u = 0; u < units; u++) add(3, { len: 18.5, wid: 2.85, hei: 4, liv: PL_EMU }, 0.5);
+  }
+}
+
 function consist(line: Line, rand: () => number, stock: Stock): Car[] {
   const cars: Car[] = [];
   const add = (n: number, c: Omit<Car, "gap">, gap: number) => { for (let i = 0; i < n; i++) cars.push({ ...c, gap }); };
   if (stock === "zet") zetConsist(line, rand, add);
+  else if (stock === "mpk") mpkConsist(line, rand, add);
   else if (line.k === 0) { // DT 8: 2 cars per unit, single or double traction
     const units = rand() < 0.5 ? 2 : 1;
     for (let u = 0; u < units; u++) { add(2, { len: 19.2, wid: 2.65, hei: 3.4, liv: DT8 }, 0.5); cars.at(-1)!.gap = 1.2; }
@@ -191,8 +219,8 @@ export class Trains {
           leg.dur = tt - leg.t0;
         }
         cycle = n * headway;
-      } else if (stock === "zet" && A.k < 4) {
-        // HŽPP: an exact headway too (see stagger), the slack spent at a turnaround off the map (over the faded
+      } else if (stock && A.k < 4) {
+        // HŽPP, PKP: an exact headway too (see stagger), the slack spent at a turnaround off the map (over the faded
         // edge); a single train (a few a day) so waits out its interval there and passes rarely
         const hw = Math.round(A.interval * 60), off = legs.findIndex((leg) => this.hidden(leg, leg.hops.at(-1)!.s1, L));
         if (off >= 0) {

@@ -6,6 +6,7 @@ import type { Cats } from "./cats.ts";
 import type { Planes, Parrots, Pigeons, Airport, LightAircraft, Signs } from "./sky.ts";
 import type { AirportTraffic } from "./airport.ts";
 import type { Pigeons as PeckingPigeons } from "./pigeons.ts";
+import type { Carriages } from "./carriages.ts";
 import { Foreground, type FgIndex } from "./foreground.ts";
 import type { Mine, MineData } from "./mine.ts";
 import type { Fly } from "./fly.ts";
@@ -146,6 +147,8 @@ let trains: Trains | null = null;
 let traffic: Traffic | null = null, cats: Cats | null = null, parrots: Parrots | null = null, pigeons: Pigeons | null = null, planes: Planes | null = null;
 /** pigeons pecking on a square and taking off (life.pigeons; pigeons.ts), apart from the flocks wheeling over squares (sky.ts) */
 let pecking: PeckingPigeons | null = null;
+/** Kraków's dorożki round Rynek Główny (life.carriages; carriages.ts) */
+let carriages: Carriages | null = null;
 /** what stands higher than a car, drawn back over the vehicles (life.foreground; AVIF only) */
 let foreground: Foreground | null = null;
 if (modern && files["tiles-fg"]) json<FgIndex>(files["tiles-fg"]).then((index) => {
@@ -215,7 +218,8 @@ function loadAnimations() {
     fetch(`${BASE}/data/${files.roads ?? "roads.json"}`).then((r) => (r.ok ? r.json() : [])),
     files.trains ? Promise.all([import("./trains.ts"), fetch(`${BASE}/data/${files.trains}`).then((r) => (r.ok ? r.json() : null))]) : null,
     files.airport ? Promise.all([import("./airport.ts"), fetch(`${BASE}/data/${files.airport}`).then((r) => (r.ok ? r.json() : null))]) : null,
-  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, Pigeons, LightAircraft, Signs }, { decodeRoads }, { Pigeons: Pecking }, data, rail, taxi]) => {
+    REGIONS[REGION]?.life?.carriages ? import("./carriages.ts") : null,
+  ]).then(([{ Traffic }, { Cats }, { Planes, Parrots, Pigeons, LightAircraft, Signs }, { decodeRoads }, { Pigeons: Pecking }, data, rail, taxi, carriagesModule]) => {
     const roads = decodeRoads(data, !files.trains); // no trains: exported before terrain road heights
     if (rail?.[1]) trains = new rail[0].Trains(rail[0].decodeTrains(rail[1]), world.enu2px, [Math.sin(heading), Math.cos(heading)], REGIONS[REGION].rail?.stock);
     // with the taxi network the airliners land, park and take off again; without it they fade out on the runway
@@ -238,6 +242,8 @@ function loadAnimations() {
       };
       pecking = new Pecking(world.enu2px, life.pigeons, ground, [Math.sin(heading), Math.cos(heading)]);
     }
+    if (roads.length && carriagesModule && life?.carriages)
+      carriages = new carriagesModule.Carriages(world.enu2px, life.carriages.loop, life.carriages.count, roads, [Math.sin(heading), Math.cos(heading)]);
     if (roads.length && REGION === "israel-center") { // Tel Aviv's feral parakeets roam over the streets' extent
       const a = [Infinity, Infinity, -Infinity, -Infinity];
       for (const r of roads) for (let i = 0; i < r.s.length; i += 4) {
@@ -257,7 +263,7 @@ function loadAnimations() {
       if (Number.isFinite(u)) roosts.push([e, n, u]); // no street near: the square is outside the exported areas
     }
     if (roosts.length) pigeons = new Pigeons(world.enu2px, roosts);
-    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __pigeons: pigeons, __pecking: pecking, __planes: planes, __lightAircraft: lightAircraft, __airport: airport, __signs: signs });
+    Object.assign(window as object, { __trains: trains, __traffic: traffic, __cats: cats, __parrots: parrots, __pigeons: pigeons, __pecking: pecking, __carriages: carriages, __planes: planes, __lightAircraft: lightAircraft, __airport: airport, __signs: signs });
   });
 }
 setTimeout(loadAnimations, 6000); // slow connection: don't wait for every tile forever
@@ -330,6 +336,10 @@ function frame(t: number) {
   if (cats && above && px >= 0.6) {
     cats.step(dt);
     cats.draw(ctx, toScreen, px, [0, 0, w, hgt]);
+  }
+  if (carriages && above && px >= 0.2) {
+    carriages.step(dt);
+    carriages.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
   if (pecking && above) { // they keep pecking (and taking off) out of sight too: cheap
     pecking.step(dt);
@@ -482,6 +492,8 @@ document.getElementById("credits")!.innerHTML = [
     ? `Made by <a href="https://lukashermann.dev/">Lukas Hermann</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
     : REGION === "zagreb" // the Zagreb region was built by Andrej Šimunaj (ZeroPointStudio)
       ? `Made by <a href="https://zeropointstudio.io">Andrej Šimunaj</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
+      : REGION === "wieliczka" && document.body.dataset.city === "krakow" // Kraków, a city of the Wieliczka region, by Piotr Kulpiński
+        ? `Made by <a href="https://kulpinski.dev">Piotr Kulpiński</a> with <a href="https://maciek.cloud/">Maciek Chmura</a> and <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
       : REGION === "wieliczka" // the Wieliczka region was built by Maciek Chmura
         ? `Made by <a href="https://maciek.cloud/">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
         : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
