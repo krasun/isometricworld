@@ -2,8 +2,9 @@
  * Tilt-shift (places.ts `effects.tiltShift`): the map as a miniature. A sharp band across the middle of the
  * screen, the map blurring more and more towards the top and bottom edges: layers of backdrop blur over the
  * tiles and the overlay, each covering what lies further than its distance from the middle and fading in over
- * a ramp, so the blur grows in steps too soft to see. A button (top right, #corner-buttons) and the M key switch it on and off;
- * the choice is remembered in this browser.
+ * a ramp, so the blur grows in steps too soft to see. Off by default: the backdrop blur repaints every frame and
+ * slows panning and zooming on slower machines. A button (top right, #corner-buttons) and the M key switch it on
+ * and off; the choice is remembered in this browser.
  */
 /** [blur in CSS px, where it starts (share of the screen height from the middle), its ramp (share)] */
 const LAYERS: Array<[number, number, number]> = [[0.8, 0.12, 0.10], [1.6, 0.20, 0.12], [2.8, 0.30, 0.14], [4.2, 0.42, 0.16]];
@@ -11,7 +12,7 @@ const KEY = "tiltShift";
 
 export class TiltShift {
   private parts: Array<{ top: HTMLDivElement; bottom: HTMLDivElement; start: number; ramp: number }> = [];
-  private on = true;
+  private on = false;
   private height = 0;
   private button: HTMLButtonElement;
 
@@ -40,7 +41,7 @@ export class TiltShift {
       ${dots(7.5)}<rect x="5" y="10.5" width="14" height="3" rx="1" fill="currentColor"/>${dots(16.5)}</svg>`;
     this.button.addEventListener("click", () => this.toggle());
     (document.getElementById("corner-buttons") ?? document.body).appendChild(this.button);
-    try { if (localStorage.getItem(KEY) === "off") this.set(false); } catch { /* storage blocked: on */ }
+    try { this.on = localStorage.getItem(KEY) === "on"; } catch { /* storage blocked: off */ }
     this.set(this.on);
   }
 
