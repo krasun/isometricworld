@@ -59,7 +59,7 @@ export interface Region {
   pigeons?: Array<[number, number]>;
   /**
    * Viewer effects (web/src/scripts): tiltShift, the map as a miniature, a sharp band across the middle and the
-   * edges blurred (tiltshift.ts; a button and M switch it); fly, a biplane to fly over the map (fly.ts; a button
+   * edges blurred (tiltshift.ts; off until a button or M switches it on); fly, a biplane to fly over the map (fly.ts; a button
    * and F take off and land); clouds, their shadows drifting over the map (clouds.ts); search, a box finding streets
    * and places by name (search.ts; export.ts writes the index).
    */
