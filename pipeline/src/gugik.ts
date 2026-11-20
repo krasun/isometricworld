@@ -589,7 +589,10 @@ async function sheetAt(model: Model, lat: number, lon: number, cache: Record<str
     for (let attempt = 1; ; attempt++) {
       try {
         const r = await fetch(`https://mapy.geoportal.gov.pl/wss/service/PZGIK/${M}/WMS/SkorowidzeUkladEVRF2007?${q}`, { headers: UA, signal: AbortSignal.timeout(120_000) });
-        const links = [...(await r.text()).matchAll(/https:\/\/opendata\.geoportal\.gov\.pl\/NumDaneWys\/[^"'<> ]+\.asc/g)].map((m) => m[0]);
+        const body = await r.text();
+        // a database outage answers 200 with a ServiceException: not "no sheet here", so never cache it
+        if (!r.ok || body.includes("ServiceException")) throw new Error(`HTTP ${r.status}: ${body.match(/<ServiceException>\s*([^<]{0,120})/)?.[1]?.trim() ?? "no answer"}`);
+        const links = [...body.matchAll(/https:\/\/opendata\.geoportal\.gov\.pl\/NumDaneWys\/[^"'<> ]+\.asc/g)].map((m) => m[0]);
         if (links.length) return (cache[key] = { year, url: links.at(-1)! });
         break;
       } catch (err) {
