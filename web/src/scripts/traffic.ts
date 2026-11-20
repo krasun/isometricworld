@@ -21,7 +21,7 @@
 import { ecefToEnu, llhToEcef } from "../../../pipeline/src/camera.ts";
 
 export interface Road {
-  c: number;        // class 0 motorway … 5 service
+  c: number;        // class 0 motorway … 5 service, 6 closed to cars (kept for ground heights)
   o: number;        // 1 oneway forward, -1 oneway backward, 0 both
   l: number;        // lanes per direction (total if one-way)
   w?: number;       // carriageway width (m), as drawn on the map
@@ -126,7 +126,7 @@ export class Traffic {
     this.shadow = [(0.45 * f[0] + 0.55 * r[0]) / 0.8, (0.45 * f[1] + 0.55 * r[1]) / 0.8];
     for (const r of roads) {
       const n = r.s.length / 4;
-      if (n < 2) continue;
+      if (n < 2 || r.c > 5) continue; // class 6: closed to cars (export.ts isCarFree)
       const cum = new Float32Array(n);
       for (let i = 1; i < n; i++)
         cum[i] = cum[i - 1] + Math.hypot(r.s[i * 4] - r.s[i * 4 - 4], r.s[i * 4 + 1] - r.s[i * 4 - 3]);

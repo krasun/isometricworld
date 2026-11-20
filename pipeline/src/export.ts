@@ -33,7 +33,7 @@
  *
  * Tile (x, y) at zoom z covers global art pixels [x·512·2^(8-z), …); z = 8 is 1:1.
  */
-import { isOneway, roadLanes, roadWidth } from "./roadspec.ts";
+import { isCarFree, isOneway, roadLanes, roadWidth } from "./roadspec.ts";
 import { createHash } from "node:crypto";
 import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -820,7 +820,7 @@ async function exportRoads(areas: string[], heights: Heights) {
     for (const el of els) el.nodes.forEach((n: number, i: number) => use.set(n, (use.get(n) ?? 0) + (i === 0 || i === el.nodes.length - 1 ? 2 : 1)));
     for (const el of els) {
       const t = el.tags ?? {};
-      const cls = CLS[String(t.highway).replace("_link", "")] ?? 5;
+      const cls = isCarFree(t) ? 6 : CLS[String(t.highway).replace("_link", "")] ?? 5;
       const width = roadWidth(t);
       // bridges: on the deck the render builds (bridges.ts), from the whole way's ends, by arc length
       const line: Array<[number, number]> = el.geometry.map((p: any) => { const e = ecefToEnu(llhToEcef(p.lat, p.lon, 0)); return [e[0], e[1]]; });
