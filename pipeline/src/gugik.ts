@@ -588,13 +588,14 @@ async function sheetAt(model: Model, lat: number, lon: number, cache: Record<str
     });
     for (let attempt = 1; ; attempt++) {
       try {
-        const r = await fetch(`https://mapy.geoportal.gov.pl/wss/service/PZGIK/${M}/WMS/SkorowidzeUkladEVRF2007?${q}`, { headers: UA, signal: AbortSignal.timeout(60_000) });
+        const r = await fetch(`https://mapy.geoportal.gov.pl/wss/service/PZGIK/${M}/WMS/SkorowidzeUkladEVRF2007?${q}`, { headers: UA, signal: AbortSignal.timeout(120_000) });
         const links = [...(await r.text()).matchAll(/https:\/\/opendata\.geoportal\.gov\.pl\/NumDaneWys\/[^"'<> ]+\.asc/g)].map((m) => m[0]);
         if (links.length) return (cache[key] = { year, url: links.at(-1)! });
         break;
       } catch (err) {
-        if (attempt === 3) throw err;
-        await new Promise((res) => setTimeout(res, 3000 * attempt));
+        // the index WMS stalls for minutes at a time: wait it out rather than fail the whole fetch
+        if (attempt === 6) throw new Error(`${layer} index at ${lat}, ${lon}: ${(err as Error).message}`);
+        await new Promise((res) => setTimeout(res, 15_000 * attempt));
       }
     }
   }
