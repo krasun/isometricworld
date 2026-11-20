@@ -45,6 +45,9 @@ import { REGIONS } from "./places.ts";
 import { fromUtm, toUtm } from "./utm.ts";
 import { zg3dBuildings } from "./zg3d.ts";
 
+/** a.push(...b) without spreading: a whole city's hedges or meshes overflow the call stack as arguments */
+function pushAll<T>(a: T[], b: Iterable<T>) { for (const x of b) a.push(x); }
+
 type P2 = [number, number];
 const T = CAMERA.tile;
 const FLOOR = 3.2;
@@ -462,7 +465,7 @@ if (LOD2) {
   if (region.sources === "lgl") {
     for (const f of lod2Files(box)) {
       const bs = parseLod2(f.xml, box, GEOID);
-      meshes.push(...bs);
+      pushAll(meshes, bs);
       process.stdout.write(`\r  lod2: ${meshes.length} buildings (${f.name.split("/").pop()})        `);
     }
     process.stdout.write("\n");
@@ -476,7 +479,7 @@ if (LOD2) {
         outlines.push({ id: `osm-${el.type}-${el.id}`, ring: g.map((q: any) => [q.lat, q.lon]), tags: el.tags ?? {} });
     }
     else console.log(`  no ${file}: run fetch for the OSM outlines of buildings the 3D models lack`);
-    meshes.push(...await gugikBuildings(region.teryt ?? [], box, GEOID, outlines));
+    pushAll(meshes, await gugikBuildings(region.teryt ?? [], box, GEOID, outlines));
     ndom = gugikNdom(box);
     toXy = toPuwg; fromXy = fromPuwg;
   }
@@ -564,7 +567,7 @@ if (region.sources === "zg3d") {
     shifts.push(d);
     tlvCover.push(b.footprint); // OSM fills in only buildings ZG3D lacks
   }
-  meshes.push(...bs);
+  pushAll(meshes, bs);
   shifts.sort((a, b) => a - b);
   const q = (f: number) => shifts.length ? shifts[Math.floor(f * (shifts.length - 1))].toFixed(1) : "-";
   console.log(`  zg3d: ${bs.length} buildings; moved to terrain by ${q(0.05)} / ${q(0.5)} / ${q(0.95)} m (5/50/95 %)`);
@@ -867,7 +870,7 @@ const fromPiece = (p: Piece) => ({ id: "landmark", fn: "osm_landmark", roofType:
 for (const rb of rebuilds) {
   const mine = meshes.filter((b) => inside(centre(b.footprint), rb.ring)) as unknown as MeshRef[];
   const pieces = REBUILDS[rb.key]({ ring: rb.ring, parts: parts.filter((p) => inside(centre(p.ring), rb.ring)), meshes: mine });
-  meshes.push(...pieces.map(fromPiece));
+  pushAll(meshes, pieces.map(fromPiece));
   console.log(`  landmark ${rb.key}: ${mine.length} LoD2 mesh(es) -> ${pieces.length} piece(s)`);
 }
 const rebuilt = (r: P2[]) => rebuilds.some((rb) => inside(centre(r), rb.ring)); // their tall parts are done
@@ -878,7 +881,7 @@ for (const tw of tallTowers.filter((tw) => !rebuilt(tw.ring))) {
   for (const b of stump) meshes.splice(meshes.indexOf(b), 1);
   const model = tw.name ? TOWERS[tw.name] : undefined;
   if (model) {
-    meshes.push(...model(centre(tw.ring), base).map(fromPiece));
+    pushAll(meshes, model(centre(tw.ring), base).map(fromPiece));
     const tc = centre(tw.ring); // nDOM reads a slender column (or a drum's rim) as a tree crown
     for (let i = trees.length - 1; i >= 0; i--) {
       const p: P2 = [trees[i][0], trees[i][1]];
@@ -904,7 +907,7 @@ for (const tp of tops) {
   let sx = 0, sy = 0, sn = 0;
   for (const b of meshes) for (let i = 0; i < b.roof.length; i += 3)
     if (b.roof[i + 2] > top - 0.3 && inside([b.roof[i], b.roof[i + 1]], tp.ring)) { sx += b.roof[i]; sy += b.roof[i + 1]; sn++; }
-  meshes.push(...TOPS[tp.name]([sx / sn, sy / sn], top, region.headingDeg).map(fromPiece));
+  pushAll(meshes, TOPS[tp.name]([sx / sn, sy / sn], top, region.headingDeg).map(fromPiece));
   console.log(`  landmark ${tp.name}: on the roof at ${top.toFixed(1)} m`);
 }
 
@@ -912,7 +915,7 @@ for (const tp of tops) {
 for (const ac of arcades) {
   for (const b of meshes.filter((m) => inside(centre(m.footprint), ac.ring))) {
     const extra = arcade(b as any, ARCADES[ac.name]);
-    meshes.push(...extra.map(fromPiece));
+    pushAll(meshes, extra.map(fromPiece));
     if (extra.length) console.log(`  landmark ${ac.name}: colonnade carved`);
   }
   // nDOM reads the colonnade overhang as a row of crowns in front of it: drop crowns at the building
@@ -1083,7 +1086,7 @@ if (STYLED) {
     const model = BRIDGES[e.tags?.wikidata ?? ""];
     if (!model || e.tags.man_made !== "bridge" || !(e.geometry?.length >= 4)) continue;
     const ring = e.geometry.map((q: any) => { const p = toEnu(q.lon, q.lat); return [p[0], p[1]] as P2; });
-    meshes.push(...model(ring, { ground: groundAt, deckAt }).map(fromPiece));
+    pushAll(meshes, model(ring, { ground: groundAt, deckAt }).map(fromPiece));
     console.log(`  bridge ${e.tags.name}: model`);
   }
 }
@@ -1094,7 +1097,7 @@ const dropCrowns = (hit: (p: P2) => boolean) => {
   for (let i = shrubs.length - 1; i >= 0; i--) if (hit([shrubs[i][0], shrubs[i][1]])) shrubs.splice(i, 1);
 };
 for (const { rings, structure, t } of structures) {
-  meshes.push(...structure.model(rings, groundAt, t).map(fromPiece));
+  pushAll(meshes, structure.model(rings, groundAt, t).map(fromPiece));
   dropCrowns((p) => rings.outer.some((r) => inside(p, r)));
   console.log(`  structure ${t.name ?? t.man_made}: model`);
 }
@@ -1178,7 +1181,7 @@ for (const pl of PLACED) {
     const look = lookAt(centre(under.footprint));
     under.look = { ...look, wall: pl.building.wall ?? look.wall, roof: pl.building.roof ?? look.roof, style: pl.building.style ?? look.style };
   }
-  meshes.push(...pl.model(c, base, ground).map(fromPiece));
+  pushAll(meshes, pl.model(c, base, ground).map(fromPiece));
   dropCrowns((p) => Math.hypot(p[0] - c[0], p[1] - c[1]) < pl.clear);
   console.log(`  landmark ${pl.name}: ${note}`);
 }
@@ -1189,7 +1192,7 @@ if (STYLED && styleOf(region.style).powerLines && existsSync(join(raw, "osm-powe
   const ex = [Math.min(...cs.map((c) => c[0])) - 100, Math.min(...cs.map((c) => c[1])) - 100, Math.max(...cs.map((c) => c[0])) + 100, Math.max(...cs.map((c) => c[1])) + 100];
   const { pieces, towers } = powerLines(readJson(join(raw, "osm-power.json")), (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }, groundAt,
     (p) => p[0] >= ex[0] && p[0] <= ex[2] && p[1] >= ex[1] && p[1] <= ex[3]);
-  meshes.push(...pieces.map(fromPiece));
+  pushAll(meshes, pieces.map(fromPiece));
   dropCrowns((p) => towers.some((t) => Math.hypot(p[0] - t[0], p[1] - t[1]) < 4));
   console.log(`  power lines: ${towers.length} pylons, ${pieces.length - 2 * towers.length} spans`);
 }
@@ -1197,7 +1200,7 @@ if (STYLED && styleOf(region.style).powerLines && existsSync(join(raw, "osm-powe
 if (STYLED && styleOf(region.style).playgrounds && existsSync(join(raw, "osm-play.json"))) {
   const layout = playLayout(readJson(join(raw, "osm-play.json")), (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; });
   const pieces = playPieces(layout, groundAt);
-  meshes.push(...pieces.map(fromPiece));
+  pushAll(meshes, pieces.map(fromPiece));
   console.log(`  playgrounds: ${layout.items.length} pieces of equipment`);
 }
 // presets streetLamps, roofsOnPosts (props.ts, osm-furniture.json)
@@ -1229,12 +1232,12 @@ if (STYLED && (STYLE_PRESET.streetLamps || STYLE_PRESET.roofsOnPosts || STYLE_PR
   };
   if (STYLE_PRESET.streetFurniture) {
     const f = streetFurniture(furniture, en, groundAt, inBox, road);
-    meshes.push(...f.pieces.map(fromPiece));
+    pushAll(meshes, f.pieces.map(fromPiece));
     console.log(`  street furniture: ${Object.entries(f.counts).map(([k, v]) => `${v} ${k}`).join(", ")}`);
   }
   if (STYLE_PRESET.streetLamps) {
     const lamps = streetLamps(furniture, en, groundAt, inBox, (p) => road(p, 15)?.q ?? null);
-    meshes.push(...lamps.pieces.map(fromPiece));
+    pushAll(meshes, lamps.pieces.map(fromPiece));
     console.log(`  street lamps: ${lamps.count}`);
   }
   if (STYLE_PRESET.roofsOnPosts) {
@@ -1263,7 +1266,7 @@ if (STYLED && (STYLE_PRESET.streetLamps || STYLE_PRESET.roofsOnPosts || STYLE_PR
       return v.length >= 4 ? v[v.length >> 1] : NaN;
     };
     const roofs = roofsOnPosts(furniture, en, groundAt, inBox, covered, seen);
-    meshes.push(...roofs.map(fromPiece));
+    pushAll(meshes, roofs.map(fromPiece));
     console.log(`  roofs on posts: ${roofs.length / 2}`);
   }
 }
@@ -1280,14 +1283,14 @@ if (STYLED && styleOf(region.style).barriers && existsSync(join(raw, "osm-barrie
   };
   const b = barriers(readJson(join(raw, "osm-barriers.json")), (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; }, groundAt,
     (p) => p[0] >= ex[0] && p[0] <= ex[2] && p[1] >= ex[1] && p[1] <= ex[3], nearBush);
-  meshes.push(...b.pieces.map(fromPiece));
-  shrubs.push(...b.hedges);
+  pushAll(meshes, b.pieces.map(fromPiece));
+  pushAll(shrubs, b.hedges);
   console.log(`  barriers: ${b.pieces.length} fences, walls and rails, ${b.hedges.length} hedge bushes, ${b.km.toFixed(0)} km`);
 }
 // preset parkedCars: cars on the parking lots and bays (parking.ts; the stall lines are on the ground, ground.ts)
 if (STYLED && styleOf(region.style).parkedCars && existsSync(join(raw, "osm-parking.json"))) {
   const layout = parkLayout(readJson(join(raw, "osm-parking.json")), (lon, lat) => { const e = toEnu(lon, lat); return [e[0], e[1]]; });
-  meshes.push(...parkPieces(layout, groundAt).map(fromPiece));
+  pushAll(meshes, parkPieces(layout, groundAt).map(fromPiece));
   console.log(`  parked cars: ${layout.cars.length}`);
 }
 // market umbrellas on named squares (Dolac)
@@ -1298,7 +1301,7 @@ if (region.sources === "zg3d") for (const el of readJson(join(raw, "ground.json"
   const ring = g && g.length >= 4 ? ringFromLonLat(g.map((q: any) => [q.lon, q.lat])) : null;
   if (!ring) continue;
   const ps = umbrellas(ring, groundAt, u, inside);
-  meshes.push(...ps.map(fromPiece));
+  pushAll(meshes, ps.map(fromPiece));
   console.log(`  umbrellas on ${el.tags.name}: ${ps.length ? "placed" : "none fit"}`);
 }
 for (const b of meshes as Mesh[]) {
