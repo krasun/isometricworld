@@ -618,8 +618,10 @@ async function fetchSheets(model: Model, [s, w, n, e]: number[], near: (box: num
   const found = new Map<string, string>(); // url -> year
   for (const lat of steps(s, n, 0.008)) for (const lon of steps(w, e, 0.012)) {
     if (!near([lat - 0.004, lon - 0.006, lat + 0.004, lon + 0.006])) continue;
+    const fresh = !(`${lat.toFixed(4)},${lon.toFixed(4)}` in cache);
     const sheet = await sheetAt(model, lat, lon, cache);
     if (sheet) found.set(sheet.url, sheet.year);
+    if (fresh) await new Promise((res) => setTimeout(res, 500)); // at most ~2 index queries a second: a public service
   }
   writeFileSync(cacheFile, JSON.stringify(cache));
   for (const u of found.keys()) await download(u, join(dir, u.split("/").pop()!));
