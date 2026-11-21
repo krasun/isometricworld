@@ -31,6 +31,9 @@ const { values: args, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     j: { type: "string", default: "3" },
+    // render at most this many tiles, then exit (run again for the rest): a long run's heap grows until garbage
+    // collection takes minutes per tile, so a whole dense area renders in batches of fresh processes
+    limit: { type: "string" },
     only: { type: "string" },
     parts: { type: "boolean", default: false }, // re-render the tiles under the buildings scene.ts swapped (osm-parts.json)
     box: { type: "string" },
@@ -181,8 +184,9 @@ async function main() {
     const [bx0, by0, bx1, by1] = args.box.split(",").map(Number);
     tiles = tiles.filter(([x, y]) => x >= bx0 && x <= bx1 && y >= by0 && y <= by1);
   }
-  const todo = tiles.filter(([x, y]) => args.force || args.parts || !existsSync(join(outDir, "render", `${x}_${y}.png`)));
-  console.log(`${areaName}: ${all.length} tiles, ${todo.length} to render`);
+  const left = tiles.filter(([x, y]) => args.force || args.parts || !existsSync(join(outDir, "render", `${x}_${y}.png`)));
+  const todo = args.limit ? left.slice(0, Number(args.limit)) : left;
+  console.log(`${areaName}: ${all.length} tiles, ${left.length} to render${todo.length < left.length ? `, ${todo.length} in this run` : ""}`);
 
   const manifestPath = join(outDir, "manifest.json");
   if (!existsSync(join(outDir, "ground", "meta.json"))) throw new Error(`run: npm run ground -- ${areaName}`);
