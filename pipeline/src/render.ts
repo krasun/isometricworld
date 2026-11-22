@@ -206,7 +206,7 @@ async function main() {
   const [si, sn] = (args.shard ?? "0/1").split("/").map(Number), per = Math.ceil(left.length / sn);
   const mineToDo = left.slice(si * per, (si + 1) * per);
   const todo = args.limit ? mineToDo.slice(0, Number(args.limit)) : mineToDo;
-  console.log(`${areaName}: ${all.length} tiles, ${left.length} to render${todo.length < left.length ? `, ${todo.length} in this run` : ""}`);
+  console.log(`${areaName}: ${all.length} tiles, ${left.length} to render${todo.length < mineToDo.length ? `, ${todo.length} in this run` : ""}`);
 
   const manifestPath = join(outDir, "manifest.json");
   if (!existsSync(join(outDir, "ground", "meta.json"))) throw new Error(`run: npm run ground -- ${areaName}`);
