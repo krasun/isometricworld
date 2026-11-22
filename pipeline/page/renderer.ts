@@ -1815,9 +1815,14 @@ function placeCamera(tx: number, ty: number) {
 
 /** `casters`: the tile's objects and its neighbours' (render.ts, presets with cast shadows): they shadow this tile too. */
 async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: TileObjects) {
+  const gl = renderer.getContext(), ms: Record<string, number> = {};
+  let tp = performance.now();
+  const lap = (k: string) => { gl.finish(); const n = performance.now(); ms[k] = Math.round(n - tp); tp = n; };
   placeCamera(tx, ty);
   buildObjects((SHADOWS && casters) || data || { b: [], t: [] });
+  lap("objects");
   buildGround(tx, ty, data);
+  lap("ground");
   if (SHADOWS) {
     placeSun(tx, ty);
     groundMesh.visible = false; // the ground receives, it does not cast (hillshade lights the slopes)
@@ -1831,6 +1836,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
     capMesh.visible = !!MINE;
     postMaterial.uniforms.tShadow.value = shadowTarget.depthTexture;
     postMaterial.uniforms.shadows.value = true;
+    lap("shadow");
   }
   if (STYLED) {
     renderer.setRenderTarget(colorTarget);
@@ -1845,6 +1851,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
     renderer.render(scene, camera);
   }
   const color = renderer.domElement.toDataURL("image/png");
+  lap("color");
   let fg: string | undefined;
   if (FOREGROUND && !MINE) {
     renderer.setRenderTarget(null);
@@ -1862,6 +1869,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
     groundMesh.visible = true; decks.visible = true;
     scene.overrideMaterial = null;
     fg = renderer.domElement.toDataURL("image/png");
+    lap("fg");
   }
 
   scene.overrideMaterial = heightMaterial;
@@ -1874,7 +1882,8 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
   renderer.readRenderTargetPixels(heightTarget, 0, 0, HEIGHT_SIZE, HEIGHT_SIZE, buf);
   renderer.setRenderTarget(null);
   scene.overrideMaterial = null;
-  return { color, height: bufToB64(buf), fg };
+  lap("height");
+  return { color, height: bufToB64(buf), fg, ms };
 }
 
 function bufToB64(buf: Uint8Array) {

@@ -34,6 +34,7 @@ const { values: args, positionals } = parseArgs({
     // render at most this many tiles, then exit (run again for the rest): a long run's heap grows until garbage
     // collection takes minutes per tile, so a whole dense area renders in batches of fresh processes
     limit: { type: "string" },
+    shard: { type: "string" },
     only: { type: "string" },
     parts: { type: "boolean", default: false }, // re-render the tiles under the buildings scene.ts swapped (osm-parts.json)
     box: { type: "string" },
@@ -101,15 +102,27 @@ const SHADOWS = REGIONS[area.region].look === "styled" && styleOf(REGIONS[area.r
 function withNeighbours(outDir: string, tx: number, ty: number) {
   const out: Record<string, unknown[]> = { b: [], t: [], m: [], s: [] }, seen = new Set<string>();
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-    const f = join(outDir, "scene", `${tx + dx}_${ty + dy}.json`);
-    if (!existsSync(f)) continue;
-    const bin = JSON.parse(readFileSync(f, "utf8"));
-    for (const k of ["b", "t", "m", "s"]) for (const e of bin[k] ?? []) {
-      const id = `${k}${JSON.stringify(e)}`;
-      if (!seen.has(id)) { seen.add(id); out[k].push(e); }
-    }
+    const bin = keyedBin(join(outDir, "scene", `${tx + dx}_${ty + dy}.json`));
+    if (!bin) continue;
+    for (const [k, id, e] of bin) if (!seen.has(id)) { seen.add(id); out[k].push(e); }
   }
   return out as unknown as TileObjects;
+}
+
+/** Each bin is read for its own tile and its 8 neighbours: keep the parsed bins and their dedupe keys for the next tiles. */
+const binCache = new Map<string, Array<[string, string, unknown]> | null>();
+function keyedBin(f: string) {
+  let bin = binCache.get(f);
+  if (bin !== undefined) return bin;
+  bin = null;
+  if (existsSync(f)) {
+    const raw = JSON.parse(readFileSync(f, "utf8"));
+    bin = [];
+    for (const k of ["b", "t", "m", "s"]) for (const e of raw[k] ?? []) bin.push([k, `${k}${JSON.stringify(e)}`, e]);
+  }
+  binCache.set(f, bin);
+  if (binCache.size > 60) binCache.delete(binCache.keys().next().value!);
+  return bin;
 }
 
 async function renderOne(page: Page, tx: number, ty: number, outDir: string) {
@@ -117,14 +130,18 @@ async function renderOne(page: Page, tx: number, ty: number, outDir: string) {
   const binFile = join(outDir, "scene", `${tx}_${ty}.json`);
   const objects = existsSync(binFile) ? JSON.parse(readFileSync(binFile, "utf8")) : undefined;
   const casters = SHADOWS ? withNeighbours(outDir, tx, ty) : undefined;
-  const r = await page.evaluate(([x, y, o, c]) => window.renderTile(x, y, o, c), [tx, ty, objects, casters] as const);
+  const t1 = Date.now();
+  // one JSON string crosses to the page far faster than Playwright's per-value serialisation of a large object
+  const r = await page.evaluate(([x, y, o, c]) => window.renderTile(x, y, o && JSON.parse(o), c && JSON.parse(c)),
+    [tx, ty, objects && JSON.stringify(objects), casters && JSON.stringify(casters)] as const);
+  const t2 = Date.now();
   const color = Buffer.from(r.color.split(",")[1], "base64");
   await writeAtomic(sharp(color).resize(T, T, { kernel: "lanczos3" }).png({ compressionLevel: 6 }), join(outDir, "render", `${tx}_${ty}.png`));
   // GL rows are bottom-up; flip so row 0 is the top of the tile.
   await writeAtomic(sharp(Buffer.from(r.height, "base64"), { raw: { width: 256, height: 256, channels: 4 } }).flip().png(), join(outDir, "height", `${tx}_${ty}.png`));
   // the foreground mask (life.foreground), at the colour's size: one channel, its edges smoothed by the resize
   if (r.fg) await writeAtomic(sharp(Buffer.from(r.fg.split(",")[1], "base64")).extractChannel(0).resize(T, T, { kernel: "lanczos3" }).png({ compressionLevel: 6 }), join(outDir, "fg", `${tx}_${ty}.png`));
-  console.log(`  ${tx}_${ty}: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  console.log(`  ${tx}_${ty}: ${((Date.now() - t0) / 1000).toFixed(1)}s ${JSON.stringify({ load: t1 - t0, page: t2 - t1, write: Date.now() - t2, ...r.ms })}`);
 }
 
 /** A mine level's tiles: those within 600 art px of its extent (mine.json, ENU), drawn at the terrain's heights. */
@@ -185,7 +202,10 @@ async function main() {
     tiles = tiles.filter(([x, y]) => x >= bx0 && x <= bx1 && y >= by0 && y <= by1);
   }
   const left = tiles.filter(([x, y]) => args.force || args.parts || !existsSync(join(outDir, "render", `${x}_${y}.png`)));
-  const todo = args.limit ? left.slice(0, Number(args.limit)) : left;
+  // --shard=i/n: this process takes the i-th of n contiguous slices, so n processes split one area
+  const [si, sn] = (args.shard ?? "0/1").split("/").map(Number), per = Math.ceil(left.length / sn);
+  const mineToDo = left.slice(si * per, (si + 1) * per);
+  const todo = args.limit ? mineToDo.slice(0, Number(args.limit)) : mineToDo;
   console.log(`${areaName}: ${all.length} tiles, ${left.length} to render${todo.length < left.length ? `, ${todo.length} in this run` : ""}`);
 
   const manifestPath = join(outDir, "manifest.json");
