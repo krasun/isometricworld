@@ -49,8 +49,10 @@ async function download(url: string, file: string, label = url.split("/").pop())
     try {
       const r = await fetch(url, { headers: UA, signal: AbortSignal.timeout(900_000) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      writeFileSync(`${file}.tmp`, Buffer.from(await r.arrayBuffer()));
-      renameSync(`${file}.tmp`, file);
+      // a per-process temp name: two fetches (areas sharing a sheet) never write into one file
+      const tmp = `${file}.${process.pid}.tmp`;
+      writeFileSync(tmp, Buffer.from(await r.arrayBuffer()));
+      renameSync(tmp, file);
       console.log(`  gugik: ${label}`);
       return;
     } catch (err) {
@@ -624,7 +626,11 @@ async function fetchSheets(model: Model, [s, w, n, e]: number[], near: (box: num
     if (fresh) await new Promise((res) => setTimeout(res, 500)); // at most ~2 index queries a second: a public service
   }
   writeFileSync(cacheFile, JSON.stringify(cache));
-  for (const u of found.keys()) await download(u, join(dir, u.split("/").pop()!));
+  // three sheets at a time: one connection to GUGiK gets ~3 MB/s, a sheet is ~150 MB
+  const queue = [...found.keys()];
+  await Promise.all(Array.from({ length: 3 }, async () => {
+    for (let u; (u = queue.shift()); ) await download(u, join(dir, u.split("/").pop()!));
+  }));
   console.log(`  ${model}: ${found.size} sheet(s), ${[...found].map(([u, y]) => `${u.split("/").pop()!.replace(/^\d+_\d+_|\.asc$/g, "")} ${y}`).join(", ")}`);
 }
 
