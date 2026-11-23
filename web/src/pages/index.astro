@@ -27,18 +27,21 @@ const PEOPLE: Record<string, Link[]> = {
 };
 /** cities made by someone other than their region's maker (Kraków lies in the Wieliczka region) */
 const CITY_PEOPLE: Record<string, Link[]> = {
-  krakow: [{ text: "Piotr Kulpiński", href: "https://kulpinski.dev" }, { text: "Maciek Chmura", href: "https://maciek.cloud/" }],
+  krakow: [{ text: "Piotr Kulpiński", href: "https://kulpinski.dev" }],
 };
 const OSM: Link = { text: "© OpenStreetMap contributors", href: "https://www.openstreetmap.org/copyright" };
 const DEM: Link = { text: "Copernicus DEM © DLR, Airbus DS" };
+// GUGiK (PZGiK material, CC BY 4.0) requires its notice wherever the map is published
+const GUGIK: Link = { text: "Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK, CC BY 4.0)", href: "https://www.geoportal.gov.pl/" };
 const SOURCES: Record<string, Link[]> = {
   "israel-center": [OSM, { text: "Tel Aviv-Yafo Municipality", href: "https://opendatasource.tel-aviv.gov.il/" }, DEM],
   stuttgart: [OSM, { text: "LGL Baden-Württemberg, dl-de/by-2-0 (verändert)", href: "https://www.lgl-bw.de" }, DEM],
   zagreb: [OSM, { text: "Grad Zagreb, ZG3D 2022 (7. 5. 2025., Otvorena dozvola, izmijenjeno)", href: "https://data.zagreb.hr/dataset/zg3d-2022-3d-model-gz" }, DEM],
-  // GUGiK (PZGiK material, CC BY 4.0) requires its notice wherever the map is published
-  wieliczka: [OSM, { text: "Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK, CC BY 4.0)", href: "https://www.geoportal.gov.pl/" }, DEM,
+  wieliczka: [OSM, GUGIK, DEM,
     { text: "Salt mine: plan by W. Hondius, 1645 (public domain)", href: "https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg" }],
 };
+/** cities whose card lists other sources than their region's (Kraków's view has no salt mine) */
+const CITY_SOURCES: Record<string, Link[]> = { krakow: [OSM, GUGIK, DEM] };
 const PAINTED: Record<string, boolean> = { "israel-center": true, stuttgart: false, zagreb: true, wieliczka: false };
 
 const worlds = Object.fromEntries(await Promise.all(
@@ -48,7 +51,7 @@ const cards = Object.entries(CITIES).map(([slug, c]) => {
   return {
     slug, title: c.title, country: region.country,
     image: pv ? `${tilesOrigin}/regions/${c.region}/${pv.file}` : `/og/${slug}.jpg`, lqip: pv?.lqip,
-    people: CITY_PEOPLE[slug] ?? PEOPLE[c.region] ?? [], sources: SOURCES[c.region] ?? [OSM, DEM], painted: PAINTED[c.region] ?? true,
+    people: CITY_PEOPLE[slug] ?? PEOPLE[c.region] ?? [], sources: CITY_SOURCES[slug] ?? SOURCES[c.region] ?? [OSM, DEM], painted: PAINTED[c.region] ?? true,
   };
 });
 const site = Astro.site ?? Astro.url;
