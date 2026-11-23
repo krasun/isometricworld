@@ -313,7 +313,7 @@ export const REGIONS: Record<string, Region> = {
     origin: { lat: 49.98236, lon: 20.06018, h: 0 }, // Rynek Górny (centre of its OSM pedestrian area)
     headingDeg: 330, // looks NNW: north near the top, 30° to the old town's N–S / E–W streets; the A4 and Kraków at the back
     country: "Poland",
-    municipalities: ["Wieliczka"],
+    municipalities: ["Wieliczka", "Kraków"],
     credits: [
       "Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK)",
       "Buildings: GUGiK 3D models, BDOT10k, OSM · Roofs: GUGiK orthophoto · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Trees: GUGiK NMPT",
