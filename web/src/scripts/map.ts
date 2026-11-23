@@ -482,8 +482,9 @@ document.getElementById("credits")!.innerHTML = [
         ? [`Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (<a href="https://www.geoportal.gov.pl/">GUGiK</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>)`]
         : [`<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`]),
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
-  // the salt mine's levels (mine.ts): Hondius's 1645 plan; the facts' sources are listed in the mine panel
-  ...(files.mine ? [`Salt mine: plan by <a href="https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg">W. Hondius, 1645</a> (public domain)`] : []),
+  // the salt mine's levels (mine.ts): Hondius's 1645 plan; the facts' sources are listed in the mine panel.
+  // Kraków shares the map but leaves the mine out of its credits, as on its card
+  ...(files.mine && document.body.dataset.city !== "krakow" ? [`Salt mine: plan by <a href="https://commons.wikimedia.org/wiki/File:Wieliczka_Salt_Mines_2.jpg">W. Hondius, 1645</a> (public domain)`] : []),
   // painted regions say so (their credits in places.ts carry the label for clips too)
   ...(REGIONS[REGION].credits.some((c) => /painted with ai/i.test(c)) ? ["Painted with AI"] : []),
   // the method to recreate the derived database (ODbL) and the code
