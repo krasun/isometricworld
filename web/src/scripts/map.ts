@@ -5,7 +5,6 @@ import type { Trains } from "./trains.ts";
 import type { Cats } from "./cats.ts";
 import type { Planes, Parrots, Pigeons, Airport, LightAircraft, Signs } from "./sky.ts";
 import type { AirportTraffic } from "./airport.ts";
-import { TiltShift } from "./tiltshift.ts";
 import type { Pigeons as PeckingPigeons } from "./pigeons.ts";
 import { Foreground, type FgIndex } from "./foreground.ts";
 import type { Mine, MineData } from "./mine.ts";
@@ -304,7 +303,6 @@ function drawBorders(dpr: number) {
   }
 }
 
-const tilt = REGIONS[REGION]?.effects?.tiltShift ? new TiltShift(document.getElementById("map")!) : null;
 let lastT = performance.now();
 function frame(t: number) {
   const dpr = window.devicePixelRatio || 1;
@@ -353,7 +351,6 @@ function frame(t: number) {
   mine?.draw(ctx, toScreen, px, dpr, [0, 0, w, hgt]);
   if (mark && !mine?.underground) drawMark(dpr, t);
   if (showBorders || k / dpr < 0.05) drawBorders(dpr); // borders appear automatically far out
-  tilt?.update();
   lastT = t;
   requestAnimationFrame(frame);
 }
@@ -398,7 +395,6 @@ window.addEventListener("keydown", (e) => {
   if (key === "t") showTraffic = !showTraffic;
   if (key === "p") togglePhoto();
   if (key === "v") document.body.classList.toggle("video");
-  if (key === "m") tilt?.toggle();
 });
 if (new URLSearchParams(location.search).has("video")) document.body.classList.add("video");
 

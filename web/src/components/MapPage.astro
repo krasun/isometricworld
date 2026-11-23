@@ -122,15 +122,14 @@ const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), site).href, 
 				background: rgba(10, 12, 16, 0.42); backdrop-filter: blur(4px); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); pointer-events: none; }
 			body.video #video-credit { display: block; }
 			body.video #credits { display: none; }
-			/* round switches in the top right corner, one under the other in a fixed order: tilt-shift (tiltshift.ts),
-			   the salt mine (mine.ts), the biplane (fly.ts) */
+			/* round switches in the top right corner, one under the other in a fixed order: the salt mine (mine.ts),
+			   the biplane (fly.ts) */
 			#corner-buttons { position: fixed; z-index: 10; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
 				display: flex; flex-direction: column; gap: 8px; }
 			#corner-buttons > button { width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
 				background: rgba(255, 255, 255, 0.85); color: #555; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); touch-action: manipulation; }
 			#corner-buttons > button[aria-pressed="true"] { background: #1f2a37; color: #fff; }
 			#corner-buttons > button:hover { filter: brightness(1.08); }
-			#tilt-toggle { order: 1; }
 			#mine-toggle { order: 2; }
 			#fly-toggle { order: 3; }
 			body.video #corner-buttons { display: none; }
