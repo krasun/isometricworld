@@ -89,6 +89,7 @@ async function openPage(browser: Awaited<ReturnType<typeof chromium.launch>>, di
     if (!existsSync(file)) return route.fulfill({ status: 404 });
     return route.fulfill({ body: readFileSync(file), contentType: type });
   });
+  page.on("console", (m) => { if (m.type() === "warning") console.warn(`  page: ${m.text()}`); });
   page.on("pageerror", (e) => console.error("  [page]", e.message));
   await page.goto(`http://iso.local/?region=${area.region}&ss=${args.ss}&markers=${encodeURIComponent(args.markers!)}${area.mine ? `&mine=${area.mine}` : ""}${args.tex ? "&tex=1" : ""}`);
   await page.waitForFunction(() => window.ready === true, null, { timeout: 30_000 });

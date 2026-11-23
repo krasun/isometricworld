@@ -1779,6 +1779,12 @@ function placeSun(tx: number, ty: number) {
     const g = ground(fx0 + ((fx1 - fx0) * i) / 16, fy0 + ((fy1 - fy0) * j) / 16);
     lo = Math.min(lo, g); hi = Math.max(hi, g);
   }
+  // slide the sun camera along the sun ray to stay 10 km above this tile: its depth range (1 … 20 000 m) then
+  // holds every tile, also those over 10 km from the origin away from the sun (beyond far plane they read as
+  // shadowed). Moving along its own view axis leaves the texel grid where it was.
+  const k = 10000 + SUN.x * (fx0 + fx1) / 2 + SUN.y * (fy0 + fy1) / 2 + SUN.z * (lo + hi) / 2;
+  sunCamera.position.set(SUN.x * k, SUN.y * k, SUN.z * k);
+  sunCamera.updateMatrixWorld(true);
   const r = new THREE.Vector3(), u = new THREE.Vector3(), d = new THREE.Vector3(), p = new THREE.Vector3();
   camera.matrixWorld.extractBasis(r, u, d);
   d.negate(); // a camera looks down its -z
