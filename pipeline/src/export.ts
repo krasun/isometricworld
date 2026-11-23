@@ -543,10 +543,12 @@ async function exportSearch(areas: string[], heights: Heights, [bx0, by0, bx1, b
   if (extract) {
     const boxes = areas.map((a) => AREAS[a].bbox);
     const bbox = [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))];
-    const cache = join(RAW, `search-${activeRegion()}.json`);
-    if (!existsSync(cache)) writeFileSync(cache, JSON.stringify(await localOsm(extract, bbox, FILTERS.search)));
+    // cached for the areas' joint bbox: an export over more areas reads the extract again
+    const cache = join(RAW, `search-${activeRegion()}.json`), key = bbox.join(",");
+    let places = existsSync(cache) ? readJson(cache) : null;
+    if (places?.bbox !== key) writeFileSync(cache, JSON.stringify(places = { bbox: key, ...(await localOsm(extract, bbox, FILTERS.search)) }));
     const seen = new Set<string>();
-    for (const el of readJson(cache).elements as Array<{ type: string; lat?: number; lon?: number; tags: Record<string, string>; geometry?: Array<{ lat: number; lon: number }>; members?: Array<{ geometry?: Array<{ lat: number; lon: number }> }> }>) {
+    for (const el of places.elements as Array<{ type: string; lat?: number; lon?: number; tags: Record<string, string>; geometry?: Array<{ lat: number; lon: number }>; members?: Array<{ geometry?: Array<{ lat: number; lon: number }> }> }>) {
       const g = el.type === "node" ? [{ lat: el.lat!, lon: el.lon! }] : el.geometry ?? (el.members ?? []).flatMap((m) => m.geometry ?? []);
       if (!g.length) continue;
       const lat = g.reduce((s, q) => s + q.lat, 0) / g.length, lon = g.reduce((s, q) => s + q.lon, 0) / g.length;
