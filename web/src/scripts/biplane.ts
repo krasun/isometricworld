@@ -109,7 +109,7 @@ export class Biplane3D {
    * without holding up the frame (three copies them into a buffer on the GPU, then looks at a fence until that is
    * done): they land in `mask` a frame or so later, too soon for the slowly turning plane to show it. One read at a
    * time; a call while one is on its way does nothing. Reading the canvas back instead stalled every frame until the
-   * GPU had finished everything before it, the map's blur (tilt-shift) included.
+   * GPU had finished everything before it.
    */
   requestShadowMask(size: number) {
     if (this.reading) return;

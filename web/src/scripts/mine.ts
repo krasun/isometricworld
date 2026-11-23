@@ -1,8 +1,8 @@
 /**
  * A salt mine's levels under the town (data/mine.<hash>.json from pipeline export.ts; pipeline/src/mine.ts): a lift
  * panel to go down level by level, each level its own transparent tile layer over the dimmed surface, labels for
- * the shafts and the routes' chambers, and what is known, approximate or illustrative on each. A round button under
- * the tilt-shift one opens the panel (closing it goes back up to the surface); ?level=III opens a level; PageDown /
+ * the shafts and the routes' chambers, and what is known, approximate or illustrative on each. A round button in
+ * the top right corner opens the panel (closing it goes back up to the surface); ?level=III opens a level; PageDown /
  * PageUp go down and up.
  */
 type Conf = "known" | "approximate" | "illustrative";
@@ -116,7 +116,7 @@ export class Mine {
       this.buttons.push(b);
     });
     document.getElementById("map")!.appendChild(panel);
-    // the button: crossed hammer and pick, the miners' sign; in the corner column under tilt-shift
+    // the button: crossed hammer and pick, the miners' sign; first in the corner column
     const t = (this.toggleButton = document.createElement("button"));
     t.id = "mine-toggle";
     t.type = "button";
