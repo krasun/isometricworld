@@ -493,7 +493,7 @@ document.getElementById("credits")!.innerHTML = [
     : REGION === "zagreb" // the Zagreb region was built by Andrej Šimunaj (ZeroPointStudio)
       ? `Made by <a href="https://zeropointstudio.io">Andrej Šimunaj</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
       : REGION === "wieliczka" && document.body.dataset.city === "krakow" // Kraków, a city of the Wieliczka region, by Piotr Kulpiński
-        ? `Made by <a href="https://kulpinski.dev">Piotr Kulpiński</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
+        ? `Made by <a href="https://kulpinski.dev">Piotr Kulpiński</a> with <a href="https://maciek.cloud/">Maciek Chmura</a> and <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
       : REGION === "wieliczka" // the Wieliczka region was built by Maciek Chmura
         ? `Made by <a href="https://maciek.cloud/">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
         : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,

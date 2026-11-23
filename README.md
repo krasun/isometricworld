@@ -29,9 +29,10 @@ Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów p
 kartograficznego (GUGiK, CC BY 4.0) · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Salt mine: plan by
 W. Hondius, 1645 (public domain).
 
-Fifth city: **Kraków** (`/krakow`), by [Piotr Kulpiński](https://kulpinski.dev/): the Old Town, Wawel and the
-Vistula in the same region and style as Wieliczka, with MPK's trams on their real lines and dorożki (horse-drawn
-carriages) round Rynek Główny. Same data and credits as Wieliczka.
+Fifth city: **Kraków** (`/krakow`), by [Piotr Kulpiński](https://kulpinski.dev/) with
+[Maciek Chmura](https://maciek.cloud/): the Old Town, Wawel and the Vistula in the same region and style as
+Wieliczka, with MPK's trams on their real lines and dorożki (horse-drawn carriages) round Rynek Główny. Same data
+and credits as Wieliczka.
 
 ## The idea
 
