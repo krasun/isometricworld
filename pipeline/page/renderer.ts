@@ -32,6 +32,7 @@ const SHADOWS = STYLED && STYLE.castShadow !== null;
 /** Ellipsoid height the height pass counts from (heights.ts). */
 const HEIGHT_BASE = REGIONS[REGION].heightBase ?? 0;
 const SS = Number(params.get("ss") ?? 2); // supersampling
+const PROFILE = params.get("profile") === "1"; // renderTile: per-pass timings (render.ts --profile)
 const SIZE = CAMERA.tile * SS;
 const HEIGHT_SIZE = 256;
 /** Ground texture resolution (m per texel); the render samples ~0.125 m across, 0.18 m in depth. */
@@ -1779,6 +1780,12 @@ function placeSun(tx: number, ty: number) {
     const g = ground(fx0 + ((fx1 - fx0) * i) / 16, fy0 + ((fy1 - fy0) * j) / 16);
     lo = Math.min(lo, g); hi = Math.max(hi, g);
   }
+  // slide the sun camera along the sun ray to stay 10 km above this tile: its depth range (1 … 20 000 m) then
+  // holds every tile, also those over 10 km from the origin away from the sun (beyond far plane they read as
+  // shadowed). Moving along its own view axis leaves the texel grid where it was.
+  const k = 10000 + SUN.x * (fx0 + fx1) / 2 + SUN.y * (fy0 + fy1) / 2 + SUN.z * (lo + hi) / 2;
+  sunCamera.position.set(SUN.x * k, SUN.y * k, SUN.z * k);
+  sunCamera.updateMatrixWorld(true);
   const r = new THREE.Vector3(), u = new THREE.Vector3(), d = new THREE.Vector3(), p = new THREE.Vector3();
   camera.matrixWorld.extractBasis(r, u, d);
   d.negate(); // a camera looks down its -z
@@ -1815,9 +1822,15 @@ function placeCamera(tx: number, ty: number) {
 
 /** `casters`: the tile's objects and its neighbours' (render.ts, presets with cast shadows): they shadow this tile too. */
 async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: TileObjects) {
+  // ?profile=1 (render.ts --profile): time each pass; gl.finish() waits for the GPU, so only when asked
+  const gl = renderer.getContext(), ms: Record<string, number> = {};
+  let tp = performance.now();
+  const lap = (k: string) => { if (!PROFILE) return; gl.finish(); const n = performance.now(); ms[k] = Math.round(n - tp); tp = n; };
   placeCamera(tx, ty);
   buildObjects((SHADOWS && casters) || data || { b: [], t: [] });
+  lap("objects");
   buildGround(tx, ty, data);
+  lap("ground");
   if (SHADOWS) {
     placeSun(tx, ty);
     groundMesh.visible = false; // the ground receives, it does not cast (hillshade lights the slopes)
@@ -1831,6 +1844,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
     capMesh.visible = !!MINE;
     postMaterial.uniforms.tShadow.value = shadowTarget.depthTexture;
     postMaterial.uniforms.shadows.value = true;
+    lap("shadow");
   }
   if (STYLED) {
     renderer.setRenderTarget(colorTarget);
@@ -1845,6 +1859,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
     renderer.render(scene, camera);
   }
   const color = renderer.domElement.toDataURL("image/png");
+  lap("color");
   let fg: string | undefined;
   if (FOREGROUND && !MINE) {
     renderer.setRenderTarget(null);
@@ -1862,6 +1877,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
     groundMesh.visible = true; decks.visible = true;
     scene.overrideMaterial = null;
     fg = renderer.domElement.toDataURL("image/png");
+    lap("fg");
   }
 
   scene.overrideMaterial = heightMaterial;
@@ -1874,7 +1890,8 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
   renderer.readRenderTargetPixels(heightTarget, 0, 0, HEIGHT_SIZE, HEIGHT_SIZE, buf);
   renderer.setRenderTarget(null);
   scene.overrideMaterial = null;
-  return { color, height: bufToB64(buf), fg };
+  lap("height");
+  return { color, height: bufToB64(buf), fg, ms };
 }
 
 function bufToB64(buf: Uint8Array) {

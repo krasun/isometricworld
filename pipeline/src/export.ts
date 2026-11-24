@@ -33,7 +33,7 @@
  *
  * Tile (x, y) at zoom z covers global art pixels [x·512·2^(8-z), …); z = 8 is 1:1.
  */
-import { isOneway, roadLanes, roadWidth } from "./roadspec.ts";
+import { isCarFree, isOneway, roadLanes, roadWidth } from "./roadspec.ts";
 import { createHash } from "node:crypto";
 import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -543,10 +543,12 @@ async function exportSearch(areas: string[], heights: Heights, [bx0, by0, bx1, b
   if (extract) {
     const boxes = areas.map((a) => AREAS[a].bbox);
     const bbox = [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))];
-    const cache = join(RAW, `search-${activeRegion()}.json`);
-    if (!existsSync(cache)) writeFileSync(cache, JSON.stringify(await localOsm(extract, bbox, FILTERS.search)));
+    // cached for the areas' joint bbox: an export over more areas reads the extract again
+    const cache = join(RAW, `search-${activeRegion()}.json`), key = bbox.join(",");
+    let places = existsSync(cache) ? readJson(cache) : null;
+    if (places?.bbox !== key) writeFileSync(cache, JSON.stringify(places = { bbox: key, ...(await localOsm(extract, bbox, FILTERS.search)) }));
     const seen = new Set<string>();
-    for (const el of readJson(cache).elements as Array<{ type: string; lat?: number; lon?: number; tags: Record<string, string>; geometry?: Array<{ lat: number; lon: number }>; members?: Array<{ geometry?: Array<{ lat: number; lon: number }> }> }>) {
+    for (const el of places.elements as Array<{ type: string; lat?: number; lon?: number; tags: Record<string, string>; geometry?: Array<{ lat: number; lon: number }>; members?: Array<{ geometry?: Array<{ lat: number; lon: number }> }> }>) {
       const g = el.type === "node" ? [{ lat: el.lat!, lon: el.lon! }] : el.geometry ?? (el.members ?? []).flatMap((m) => m.geometry ?? []);
       if (!g.length) continue;
       const lat = g.reduce((s, q) => s + q.lat, 0) / g.length, lon = g.reduce((s, q) => s + q.lon, 0) / g.length;
@@ -820,7 +822,7 @@ async function exportRoads(areas: string[], heights: Heights) {
     for (const el of els) el.nodes.forEach((n: number, i: number) => use.set(n, (use.get(n) ?? 0) + (i === 0 || i === el.nodes.length - 1 ? 2 : 1)));
     for (const el of els) {
       const t = el.tags ?? {};
-      const cls = CLS[String(t.highway).replace("_link", "")] ?? 5;
+      const cls = isCarFree(t) ? 6 : CLS[String(t.highway).replace("_link", "")] ?? 5;
       const width = roadWidth(t);
       // bridges: on the deck the render builds (bridges.ts), from the whole way's ends, by arc length
       const line: Array<[number, number]> = el.geometry.map((p: any) => { const e = ecefToEnu(llhToEcef(p.lat, p.lon, 0)); return [e[0], e[1]]; });
@@ -1255,6 +1257,7 @@ async function main() {
   }
   const regions = new Set(asked.map((a) => openArea(a).region));
   // a mine's levels are layers of their own, never part of the map; exported whenever they are rendered
+  // (--partial without them keeps the published mine: its levels and mine.json stay in the state)
   const areas = asked.filter((a) => !AREAS[a]?.mine);
   const mineLevels = Object.keys(AREAS).filter((a) => AREAS[a].mine && AREAS[a].region === [...regions][0] && existsSync(join(DERIVED, a, "render")) && existsSync(join(DERIVED, a, "mine.json")));
   if (regions.size !== 1) throw new Error(`export one region at a time (got ${[...regions].join(", ")})`);
@@ -1357,7 +1360,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), airport: dataFile("airport"), ...(mineLevels.length ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}), ...(effects.search ? { search: dataFile("search") } : {}) },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), airport: dataFile("airport"), ...(mineLevels.length || (PARTIAL && dataFile("mine")) ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}), ...(effects.search ? { search: dataFile("search") } : {}) },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {

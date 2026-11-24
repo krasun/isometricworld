@@ -52,7 +52,7 @@ export interface Region {
    * are lines running every `every` min, the others single trains `single` min apart (a few a day: rarely seen).
    */
   rail?: {
-    stock: "zet"; tramInterval: number; interval?: Record<string, number>; night?: string[];
+    stock: "zet" | "mpk"; tramInterval: number; interval?: Record<string, number>; night?: string[];
     mainline?: { line: string; every: number; single: number };
   };
   /** Squares the pigeon flocks wheel over (web/src/scripts/sky.ts Pigeons), lat/lon; Tel Aviv has its parakeets instead. */
@@ -79,6 +79,8 @@ export interface Region {
     foreground?: boolean;
     coaches?: Array<{ name: string; at: [number, number]; heading: number; row: number; count: number; step: number }>;
     pigeons?: Array<{ name: string; at: [number, number]; r: number; count: number }>;
+    /** horse-drawn carriages walking round a closed loop of [lat, lon] (carriages.ts: Kraków's dorożki round Rynek Główny) */
+    carriages?: { loop: Array<[number, number]>; count: number };
   };
   /** Small airfield with light aircraft taking off, flying its routes and landing (optional). web/src/scripts/sky.ts. */
   airfield?: Airfield;
@@ -311,7 +313,7 @@ export const REGIONS: Record<string, Region> = {
     origin: { lat: 49.98236, lon: 20.06018, h: 0 }, // Rynek Górny (centre of its OSM pedestrian area)
     headingDeg: 330, // looks NNW: north near the top, 30° to the old town's N–S / E–W streets; the A4 and Kraków at the back
     country: "Poland",
-    municipalities: ["Wieliczka"],
+    municipalities: ["Wieliczka", "Kraków"],
     credits: [
       "Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK)",
       "Buildings: GUGiK 3D models, BDOT10k, OSM · Roofs: GUGiK orthophoto · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Trees: GUGiK NMPT",
@@ -325,6 +327,9 @@ export const REGIONS: Record<string, Region> = {
     teryt: ["1219", "1261"], // powiat wielicki; Kraków (across the A4, in the ring around the town)
     look: "styled",
     style: "poland",
+    // MPK Kraków's trams and the trains of Koleje Małopolskie and PKP (trains.ts mpkConsist); lines 62, 64 and 69
+    // run at night only; SKA, S and K lines are the agglomeration and regional lines, the rest single trains
+    rail: { stock: "mpk", tramInterval: 10, night: ["62", "64", "69"], mainline: { line: "^(SKA|S|K)\\d", every: 30, single: 240 } },
     effects: { fly: true, clouds: true, search: true },
     life: {
       vehicles: "detailed",
@@ -334,7 +339,28 @@ export const REGIONS: Record<string, Region> = {
         { name: "parking autokarowy, ul. Daniłowicza", at: [49.98425, 20.054817], heading: 0.8, row: 76, count: 7, step: 4.3 },
         { name: "Parking 1 Wieliczka", at: [49.98483, 20.053309], heading: 138.3, row: 180.8, count: 4, step: 6 },
       ],
-      pigeons: [{ name: "Rynek Górny", at: [49.982359, 20.060181], r: 18, count: 26 }], // the paved square, 54 × 52 m
+      pigeons: [
+        { name: "Rynek Górny", at: [49.982359, 20.060181], r: 18, count: 26 }, // the paved square, 54 × 52 m
+        // Kraków's Rynek Główny, round the Cloth Hall
+        { name: "Rynek Główny, Mickiewicz monument", at: [50.06165, 19.93825], r: 18, count: 22 },
+        { name: "Rynek Główny, north of the Cloth Hall", at: [50.06215, 19.93715], r: 16, count: 16 },
+        { name: "Rynek Główny, west side", at: [50.06185, 19.9364], r: 16, count: 14 },
+        { name: "Rynek Główny, by St Adalbert's", at: [50.06105, 19.93715], r: 14, count: 12 },
+      ],
+      // Kraków's dorożki: the living street round Rynek Główny (OSM ways 234875262 + 1173052547), south corner first
+      carriages: {
+        count: 4,
+        loop: [
+          [50.060428, 19.937656], [50.060471, 19.937666], [50.06051, 19.937681], [50.060552, 19.937707],
+          [50.060647, 19.937783], [50.06076, 19.937874], [50.060805, 19.93791], [50.060941, 19.938022],
+          [50.061093, 19.938147], [50.061293, 19.938313], [50.061456, 19.938439], [50.061615, 19.938551],
+          [50.062013, 19.938882], [50.062323, 19.937974], [50.062684, 19.936909], [50.062013, 19.936319],
+          [50.0614, 19.935769], [50.061084, 19.936708], [50.060976, 19.937009], [50.060928, 19.937125],
+          [50.060889, 19.937205], [50.060857, 19.937261], [50.060828, 19.937305], [50.060762, 19.937405],
+          [50.060696, 19.937487], [50.060648, 19.937529], [50.0606, 19.937569], [50.06056, 19.937596],
+          [50.060513, 19.937624], [50.06047, 19.937641],
+        ],
+      },
     },
     // gmina Wieliczka (OSM relation 2662713, admin_level 7: the town and its villages) and Kraków (449696,
     // north of the A4), cut further by the areas: the town (relation 2751961) and the A4 stay clear of the
@@ -348,6 +374,7 @@ export const CITIES: Record<string, City> = {
   stuttgart: { title: "Stuttgart", region: "stuttgart", center: [48.7784, 9.18], widthM: 3000 },
   zagreb: { title: "Zagreb", region: "zagreb", center: [45.8131, 15.9772], widthM: 3000 },
   wieliczka: { title: "Wieliczka", region: "wieliczka", center: [49.9825, 20.0585], widthM: 2000 },
+  krakow: { title: "Kraków", region: "wieliczka", center: [50.0585, 19.9365], widthM: 1600 },
 };
 
 export const DEFAULT_CITY = "tel-aviv-yafo";

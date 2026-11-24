@@ -49,8 +49,10 @@ async function download(url: string, file: string, label = url.split("/").pop())
     try {
       const r = await fetch(url, { headers: UA, signal: AbortSignal.timeout(900_000) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      writeFileSync(`${file}.tmp`, Buffer.from(await r.arrayBuffer()));
-      renameSync(`${file}.tmp`, file);
+      // a per-process temp name: two fetches (areas sharing a sheet) never write into one file
+      const tmp = `${file}.${process.pid}.tmp`;
+      writeFileSync(tmp, Buffer.from(await r.arrayBuffer()));
+      renameSync(tmp, file);
       console.log(`  gugik: ${label}`);
       return;
     } catch (err) {
@@ -588,13 +590,17 @@ async function sheetAt(model: Model, lat: number, lon: number, cache: Record<str
     });
     for (let attempt = 1; ; attempt++) {
       try {
-        const r = await fetch(`https://mapy.geoportal.gov.pl/wss/service/PZGIK/${M}/WMS/SkorowidzeUkladEVRF2007?${q}`, { headers: UA, signal: AbortSignal.timeout(60_000) });
-        const links = [...(await r.text()).matchAll(/https:\/\/opendata\.geoportal\.gov\.pl\/NumDaneWys\/[^"'<> ]+\.asc/g)].map((m) => m[0]);
+        const r = await fetch(`https://mapy.geoportal.gov.pl/wss/service/PZGIK/${M}/WMS/SkorowidzeUkladEVRF2007?${q}`, { headers: UA, signal: AbortSignal.timeout(120_000) });
+        const body = await r.text();
+        // a database outage answers 200 with a ServiceException: not "no sheet here", so never cache it
+        if (!r.ok || body.includes("ServiceException")) throw new Error(`HTTP ${r.status}: ${body.match(/<ServiceException>\s*([^<]{0,120})/)?.[1]?.trim() ?? "no answer"}`);
+        const links = [...body.matchAll(/https:\/\/opendata\.geoportal\.gov\.pl\/NumDaneWys\/[^"'<> ]+\.asc/g)].map((m) => m[0]);
         if (links.length) return (cache[key] = { year, url: links.at(-1)! });
         break;
       } catch (err) {
-        if (attempt === 3) throw err;
-        await new Promise((res) => setTimeout(res, 3000 * attempt));
+        // the index WMS stalls for minutes at a time: wait it out rather than fail the whole fetch
+        if (attempt === 6) throw new Error(`${layer} index at ${lat}, ${lon}: ${(err as Error).message}`);
+        await new Promise((res) => setTimeout(res, 15_000 * attempt));
       }
     }
   }
@@ -614,11 +620,17 @@ async function fetchSheets(model: Model, [s, w, n, e]: number[], near: (box: num
   const found = new Map<string, string>(); // url -> year
   for (const lat of steps(s, n, 0.008)) for (const lon of steps(w, e, 0.012)) {
     if (!near([lat - 0.004, lon - 0.006, lat + 0.004, lon + 0.006])) continue;
+    const fresh = !(`${lat.toFixed(4)},${lon.toFixed(4)}` in cache);
     const sheet = await sheetAt(model, lat, lon, cache);
     if (sheet) found.set(sheet.url, sheet.year);
+    if (fresh) await new Promise((res) => setTimeout(res, 500)); // at most ~2 index queries a second: a public service
   }
   writeFileSync(cacheFile, JSON.stringify(cache));
-  for (const u of found.keys()) await download(u, join(dir, u.split("/").pop()!));
+  // three sheets at a time: one connection to GUGiK gets ~3 MB/s, a sheet is ~150 MB
+  const queue = [...found.keys()];
+  await Promise.all(Array.from({ length: 3 }, async () => {
+    for (let u; (u = queue.shift()); ) await download(u, join(dir, u.split("/").pop()!));
+  }));
   console.log(`  ${model}: ${found.size} sheet(s), ${[...found].map(([u, y]) => `${u.split("/").pop()!.replace(/^\d+_\d+_|\.asc$/g, "")} ${y}`).join(", ")}`);
 }
 
