@@ -33,6 +33,9 @@ Fifth city: **Kraków** (`/krakow`), by [Piotr Kulpiński](https://kulpinski.dev
 Vistula in the same region and style as Wieliczka, with MPK's trams on their real lines and dorożki (horse-drawn
 carriages) round Rynek Główny. Same data and credits as Wieliczka.
 
+Elsewhere: **[Bratislava](https://bratislava.jantursky.com/)**, a fork on its own site: the whole city from
+OpenStreetMap and Copernicus terrain, styled, with a landmarks guide and a flight over the city.
+
 ## The idea
 
 Real cities as an isometric illustration, painted with AI, that you can pan and zoom like a map, with every building,

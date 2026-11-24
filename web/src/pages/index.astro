@@ -46,14 +46,21 @@ const PAINTED: Record<string, boolean> = { "israel-center": true, stuttgart: fal
 
 const worlds = Object.fromEntries(await Promise.all(
   [...new Set(Object.values(CITIES).map((c) => c.region))].map(async (r) => [r, await loadWorld(r)] as const)));
-const cards = Object.entries(CITIES).map(([slug, c]) => {
+/** cities built with this project and hosted by their makers: the card opens their site in a new tab */
+const EXTERNAL = [
+  { slug: "bratislava", title: "Bratislava", country: "Slovakia", href: "https://bratislava.jantursky.com/",
+    image: "/og/bratislava.jpg", lqip: undefined, people: [] as Link[], sources: [OSM, DEM], painted: false },
+];
+const cards = [...Object.entries(CITIES).map(([slug, c]) => {
   const region = REGIONS[c.region], pv = worlds[c.region]?.previews?.[slug]?.land;
   return {
-    slug, title: c.title, country: region.country,
+    slug, title: c.title, country: region.country, href: `/${slug}`,
     image: pv ? `${tilesOrigin}/regions/${c.region}/${pv.file}` : `/og/${slug}.jpg`, lqip: pv?.lqip,
     people: CITY_PEOPLE[slug] ?? PEOPLE[c.region] ?? [], sources: CITY_SOURCES[slug] ?? SOURCES[c.region] ?? [OSM, DEM], painted: PAINTED[c.region] ?? true,
   };
-});
+}), ...EXTERNAL.map((c) => ({ ...c, external: true }))] as { href: string; external?: boolean; slug: string; title: string; country: string;
+  image: string; lqip?: string; people: Link[]; sources: Link[]; painted: boolean }[];
+const host = (href: string) => new URL(href).host;
 const site = Astro.site ?? Astro.url;
 const ogImage = new URL("/og/index.jpg", site).href;
 ---
@@ -88,14 +95,17 @@ const ogImage = new URL("/og/index.jpg", site).href;
 		<main>
 			{cards.map((c) => (
 				<article class="card">
-					<a class="cover" href={`/${c.slug}`} aria-label={`Open ${c.title}`}>
+					<a class="cover" href={c.href} aria-label={c.external ? `Open ${c.title} on ${host(c.href)} (new tab)` : `Open ${c.title}`}
+						{...(c.external ? { target: "_blank", rel: "noopener" } : {})}>
 						<div class={c.lqip ? "img" : "img og"} style={c.lqip ? `background-image: url(${c.lqip})` : undefined}>
 							<img src={c.image} alt={`${c.title}, isometric city map`} loading="lazy" decoding="async" />
+							{c.external && <span class="badge">External site ↗</span>}
 						</div>
 					</a>
 					<div class="body">
-						<h2><a href={`/${c.slug}`}>{c.title}</a></h2>
+						<h2><a href={c.href} {...(c.external ? { target: "_blank", rel: "noopener" } : {})}>{c.title}{c.external && <span class="ext" aria-hidden="true"> ↗</span>}</a></h2>
 						<p class="country">{c.country}</p>
+						{c.external && <p class="site">On <a href={c.href} target="_blank" rel="noopener">{host(c.href)}</a>, a separate site built with this project</p>}
 						{c.people.length > 0 && (
 							<p class="made">Made by {c.people.map((p, i) => <>{i > 0 && (i === c.people.length - 1 ? " with " : ", ")}{p.href ? <a href={p.href}>{p.text}</a> : p.text}</>)}</p>
 						)}
@@ -132,6 +142,11 @@ const ogImage = new URL("/og/index.jpg", site).href;
 			/* no published preview yet: the social card, cropped past its baked-in title and credits */
 			.img.og img { object-position: 100% 50%; transform: scale(1.45); transform-origin: 75% 45%; }
 			.card:hover .img.og img { transform: scale(1.5); }
+			.img { position: relative; }
+			.badge { position: absolute; top: 10px; right: 10px; padding: 4px 9px; border-radius: 999px; background: rgba(14, 15, 18, 0.82);
+				border: 1px solid rgba(255, 255, 255, 0.18); color: var(--text); font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+			.ext { color: var(--muted); font-weight: 400; }
+			.site { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
 			.body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 6px; }
 			h2 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
 			h2 a { color: var(--text); }
