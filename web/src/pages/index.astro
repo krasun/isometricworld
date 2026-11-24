@@ -1,5 +1,5 @@
 ---
-/** / : every city as a card (its opening view, its makers and its data sources) at its place on a map; a card opens /<city-slug>. */
+/** / : every city as a card (its opening view, its makers and its data sources), A to Z, with a search; a card opens /<city-slug>. */
 import { CITIES, REGIONS } from "../../../pipeline/src/places.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { HOSTING } from "../../../pipeline/src/hosting.ts";
@@ -48,69 +48,23 @@ const worlds = Object.fromEntries(await Promise.all(
   [...new Set(Object.values(CITIES).map((c) => c.region))].map(async (r) => [r, await loadWorld(r)] as const)));
 /** cities built with this project and hosted by their makers: the card opens their site in a new tab */
 const EXTERNAL = [
-  { slug: "bratislava", title: "Bratislava", country: "Slovakia", href: "https://bratislava.jantursky.com/", center: [48.1435, 17.1077] as [number, number],
+  { slug: "bratislava", title: "Bratislava", country: "Slovakia", href: "https://bratislava.jantursky.com/",
     image: "/og/bratislava.jpg", lqip: undefined, people: [{ text: "Ján Turský", href: "https://jantursky.com/" }] as Link[], sources: [OSM, DEM], painted: false },
 ];
 const cards = [...Object.entries(CITIES).map(([slug, c]) => {
   const region = REGIONS[c.region], pv = worlds[c.region]?.previews?.[slug]?.land;
   return {
-    slug, title: c.title, country: region.country, href: `/${slug}`, center: c.center as [number, number],
+    slug, title: c.title, country: region.country, href: `/${slug}`,
     image: pv ? `${tilesOrigin}/regions/${c.region}/${pv.file}` : `/og/${slug}.jpg`, lqip: pv?.lqip,
     people: CITY_PEOPLE[slug] ?? PEOPLE[c.region] ?? [], sources: CITY_SOURCES[slug] ?? SOURCES[c.region] ?? [OSM, DEM], painted: PAINTED[c.region] ?? true,
   };
-}), ...EXTERNAL.map((c) => ({ ...c, external: true }))] as { href: string; center: [number, number]; external?: boolean; slug: string; title: string; country: string;
+}), ...EXTERNAL.map((c) => ({ ...c, external: true }))] as { href: string; external?: boolean; slug: string; title: string; country: string;
   image: string; lqip?: string; people: Link[]; sources: Link[]; painted: boolean }[];
 const host = (href: string) => new URL(href).host;
 
-// The cards laid out like a map: each at its city's place (lat/lon, equirectangular at 47° N), distances from the
-// middle of Europe shrunk (square root) so Tel Aviv comes closer, then nudged apart until no two cards overlap.
-// Wide screens only; narrow ones get a column, north to south.
-const W = 1160, CARD = 236, GAP = 22, PAD = 18;
-const COS = Math.cos((47 * Math.PI) / 180), MID = [15 * COS, -47];
-const warp = (lat: number, lon: number): [number, number] => {
-  const dx = lon * COS - MID[0], dy = -lat - MID[1], d = Math.hypot(dx, dy) || 1, k = Math.sqrt(d) / d;
-  return [dx * k, dy * k];
-};
-const geo = cards.map((c) => warp(...c.center));
-const gx0 = Math.min(...geo.map((g) => g[0])), gx1 = Math.max(...geo.map((g) => g[0])), gy0 = Math.min(...geo.map((g) => g[1]));
-const unit = (W - 2 * PAD - CARD) / (gx1 - gx0);
-const toPx = ([x, y]: [number, number]): [number, number] => [PAD + CARD / 2 + (x - gx0) * unit, PAD + 160 + (y - gy0) * unit];
-// a card's height: the cover (5:4) and the text, ~34 characters a line in the sources
-const cardH = (c: (typeof cards)[number]) => CARD * 0.8 + 112 + (c.external ? 36 : 0) + 17 * [...c.sources.map((s) => s.text), ...(c.painted ? ["Painted with AI"] : [])].reduce((n, t) => n + Math.ceil(t.length / 34), 0);
-const boxes = cards.map((c, i) => { const [x, y] = toPx(geo[i]); return { ax: x, ay: y, x, y, w: CARD, h: cardH(c) }; });
-for (let it = 0; it < 600; it++) {
-  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
-    const a = boxes[i], b = boxes[j];
-    const ox = (a.w + b.w) / 2 + GAP - Math.abs(b.x - a.x), oy = (a.h + b.h) / 2 + GAP - Math.abs(b.y - a.y);
-    if (ox <= 0 || oy <= 0) continue;
-    // apart along the line between their places, so each keeps its side of the other (Wieliczka south-east of Kraków)
-    let ux = b.ax - a.ax, uy = b.ay - a.ay;
-    const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l;
-    if (!ux && !uy) ux = 1;
-    const k = 0.5 * Math.min(ox / Math.max(Math.abs(ux), 1e-3), oy / Math.max(Math.abs(uy), 1e-3));
-    a.x -= ux * k; a.y -= uy * k; b.x += ux * k; b.y += uy * k;
-  }
-  for (const b of boxes) {
-    if (it < 450) { b.x += (b.ax - b.x) * 0.02; b.y += (b.ay - b.y) * 0.02; } // drawn back to its place, then left to settle
-    b.x = Math.max(PAD + b.w / 2, Math.min(W - PAD - b.w / 2, b.x));
-  }
-}
-const top = Math.min(...boxes.map((b) => b.y - b.h / 2)) - PAD;
-for (const b of boxes) { b.y -= top; b.ay -= top; }
-const H = Math.ceil(Math.max(...boxes.map((b) => b.y + b.h / 2), ...boxes.map((b) => b.ay)) + PAD);
-// graticule every 5°, through the same warp (it bends: the map is shrunk round its middle)
-const lineOf = (pts: Array<[number, number]>) => pts.map(([lat, lon]) => { const [x, y] = toPx(warp(lat, lon)); return `${x.toFixed(1)},${(y - top).toFixed(1)}`; }).join(" ");
-const range = (a: number, b: number, s: number) => Array.from({ length: Math.floor((b - a) / s) + 1 }, (_, i) => a + i * s);
-const graticule = [
-  ...range(25, 60, 5).map((lat) => ({ label: `${lat}° N`, pts: lineOf(range(-10, 45, 1).map((lon) => [lat, lon])) })),
-  ...range(-5, 40, 5).map((lon) => ({ label: `${lon}° E`, pts: lineOf(range(25, 60, 1).map((lat) => [lat, lon])) })),
-];
-// where a card left its place, a line from the place to the card's nearest edge
-const pins = boxes.map((b) => {
-  const ex = Math.max(b.x - b.w / 2, Math.min(b.x + b.w / 2, b.ax)), ey = Math.max(b.y - b.h / 2, Math.min(b.y + b.h / 2, b.ay));
-  return { x: b.ax, y: b.ay, ex, ey, off: Math.hypot(ex - b.ax, ey - b.ay) > 6 };
-});
-const north = cards.map((c, i) => ({ c, i })).sort((a, b) => b.c.center[0] - a.c.center[0]);
+// A to Z by city name; the search matches the name, the country and the makers, accents ignored
+const fold = (t: string) => t.normalize("NFD").replace(/\p{M}/gu, "").replace(/ł/g, "l").replace(/Ł/g, "L").toLowerCase();
+const sorted = [...cards].sort((a, b) => a.title.localeCompare(b.title, "en"));
 const site = Astro.site ?? Astro.url;
 const ogImage = new URL("/og/index.jpg", site).href;
 ---
@@ -142,41 +96,60 @@ const ogImage = new URL("/og/index.jpg", site).href;
 			<h1>Isometric World</h1>
 			<p>Cities painted from open data. Pick one and scroll around.</p>
 		</header>
-		<main style={`--h: ${H}`}>
-			<div class="atlas">
-				<svg class="graticule" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-					{graticule.map((g) => <polyline points={g.pts} />)}
-					{pins.map((p) => p.off && <line class="lead" x1={p.x} y1={p.y} x2={p.ex} y2={p.ey} />)}
-					{pins.map((p) => <circle class="pin" cx={p.x} cy={p.y} r="4" />)}
-				</svg>
-				{north.map(({ c, i }) => (
-					<article class="card" style={`--x: ${(boxes[i].x - CARD / 2).toFixed(1)}; --y: ${(boxes[i].y - boxes[i].h / 2).toFixed(1)}`}>
-						<a class="cover" href={c.href} aria-label={c.external ? `Open ${c.title} on ${host(c.href)} (new tab)` : `Open ${c.title}`}
-							{...(c.external ? { target: "_blank", rel: "noopener" } : {})}>
-							<div class={c.lqip ? "img" : "img og"} style={c.lqip ? `background-image: url(${c.lqip})` : undefined}>
-								<img src={c.image} alt={`${c.title}, isometric city map`} loading="lazy" decoding="async" />
-								{c.external && <span class="badge">External site ↗</span>}
-							</div>
-						</a>
-						<div class="body">
-							<h2><a href={c.href} {...(c.external ? { target: "_blank", rel: "noopener" } : {})}>{c.title}{c.external && <span class="ext" aria-hidden="true"> ↗</span>}</a></h2>
-							<p class="country">{c.country}</p>
-							{c.external && <p class="site">On <a href={c.href} target="_blank" rel="noopener">{host(c.href)}</a>, a separate site built with this project</p>}
-							{c.people.length > 0 && (
-								<p class="made">Made by {c.people.map((p, i) => <>{i > 0 && (i === c.people.length - 1 ? " with " : ", ")}{p.href ? <a href={p.href}>{p.text}</a> : p.text}</>)}</p>
-							)}
-							<ul class="sources">
-								{c.sources.map((s) => <li>{s.href ? <a href={s.href}>{s.text}</a> : s.text}</li>)}
-								{c.painted && <li>Painted with AI</li>}
-							</ul>
+		<div class="search">
+			<input id="q" type="search" placeholder="Search cities" aria-label="Search cities" autocomplete="off" spellcheck="false" />
+		</div>
+		<main id="cards">
+			{sorted.map((c) => (
+				<article class="card" data-q={fold([c.title, c.slug, c.country, ...c.people.map((p) => p.text)].join(" "))}>
+					<a class="cover" href={c.href} aria-label={c.external ? `Open ${c.title} on ${host(c.href)} (new tab)` : `Open ${c.title}`}
+						{...(c.external ? { target: "_blank", rel: "noopener" } : {})}>
+						<div class={c.lqip ? "img" : "img og"} style={c.lqip ? `background-image: url(${c.lqip})` : undefined}>
+							<img src={c.image} alt={`${c.title}, isometric city map`} loading="lazy" decoding="async" />
+							{c.external && <span class="badge">External site ↗</span>}
 						</div>
-					</article>
-				))}
-			</div>
+					</a>
+					<div class="body">
+						<h2><a href={c.href} {...(c.external ? { target: "_blank", rel: "noopener" } : {})}>{c.title}{c.external && <span class="ext" aria-hidden="true"> ↗</span>}</a></h2>
+						<p class="country">{c.country}</p>
+						{c.external && <p class="site">On <a href={c.href} target="_blank" rel="noopener">{host(c.href)}</a>, a separate site built with this project</p>}
+						{c.people.length > 0 && (
+							<p class="made">Made by {c.people.map((p, i) => <>{i > 0 && (i === c.people.length - 1 ? " with " : ", ")}{p.href ? <a href={p.href}>{p.text}</a> : p.text}</>)}</p>
+						)}
+						<ul class="sources">
+							{c.sources.map((s) => <li>{s.href ? <a href={s.href}>{s.text}</a> : s.text}</li>)}
+							{c.painted && <li>Painted with AI</li>}
+						</ul>
+					</div>
+				</article>
+			))}
+			<p class="none" id="none" hidden>No city matches.</p>
 		</main>
 		<footer>
 			<a href="https://github.com/krasun/isometricworld">Source</a> · Data credits on each card and on every map
 		</footer>
+
+		<script is:inline>
+			(() => {
+				const q = document.getElementById("q"), none = document.getElementById("none"), cards = [...document.querySelectorAll(".card")];
+				const fold = (t) => t.normalize("NFD").replace(/\p{M}/gu, "").replace(/ł/g, "l").replace(/Ł/g, "L").toLowerCase().trim();
+				const apply = () => {
+					const words = fold(q.value).split(/\s+/).filter(Boolean);
+					let shown = 0;
+					for (const c of cards) { const hit = words.every((w) => c.dataset.q.includes(w)); c.hidden = !hit; shown += hit; }
+					none.hidden = shown > 0;
+				};
+				q.addEventListener("input", apply);
+				q.addEventListener("keydown", (e) => {
+					if (e.key === "Escape") { q.value = ""; apply(); }
+					if (e.key === "Enter") { const first = cards.find((c) => !c.hidden); first?.querySelector("a.cover")?.click(); }
+				});
+				document.addEventListener("keydown", (e) => {
+					if (e.key === "/" && document.activeElement !== q) { e.preventDefault(); q.focus(); }
+				});
+				apply();
+			})();
+		</script>
 
 		<style is:global>
 			:root { --bg: #0e0f12; --card: #17191e; --line: #262932; --text: #e6e6e6; --muted: #9aa0aa; --link: #8ab4ff; }
@@ -188,23 +161,16 @@ const ogImage = new URL("/og/index.jpg", site).href;
 			header { padding-top: 48px; padding-bottom: 24px; }
 			h1 { margin: 0; font-size: clamp(28px, 5vw, 44px); letter-spacing: -0.02em; }
 			header p { margin: 8px 0 0; color: var(--muted); font-size: 16px; }
-			/* the map: laid out at 1160 design px (--u = one of them), scaled to the width */
-			main { container-type: inline-size; padding-bottom: 32px; }
-			.atlas { --u: calc(100cqw / 1160); position: relative; height: calc(var(--u) * var(--h)); }
-			.graticule { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
-			.graticule polyline { fill: none; stroke: #1f222a; stroke-width: 1; vector-effect: non-scaling-stroke; }
-			.graticule .lead { stroke: #4a4f5a; stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
-			.graticule .pin { fill: var(--link); stroke: var(--bg); stroke-width: 2; vector-effect: non-scaling-stroke; }
-			.card { position: absolute; left: calc(var(--u) * var(--x)); top: calc(var(--u) * var(--y)); width: calc(var(--u) * 236);
-				background: var(--card); border: 1px solid var(--line); border-radius: calc(var(--u) * 14); overflow: hidden; display: flex; flex-direction: column;
+			.search { max-width: 1160px; margin: 0 auto; padding: 0 max(16px, env(safe-area-inset-right)) 20px max(16px, env(safe-area-inset-left)); }
+			.search input { width: 100%; max-width: 360px; box-sizing: border-box; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line);
+				background: var(--card); color: var(--text); font: inherit; font-size: 16px; outline: none; }
+			.search input::placeholder { color: var(--muted); }
+			.search input:focus { border-color: #3a3f4b; }
+			main { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; padding-bottom: 32px; }
+			.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column;
 				transition: transform 0.18s ease, border-color 0.18s ease; }
-			.card:hover { z-index: 1; }
-			/* narrow screens: a column, north to south */
-			@media (max-width: 900px) {
-				.atlas { --u: 1px; height: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
-				.graticule { display: none; }
-				.card { position: static; width: auto; }
-			}
+			.card[hidden] { display: none; }
+			.none { color: var(--muted); margin: 0; }
 			.card:hover { transform: translateY(-2px); border-color: #3a3f4b; }
 			.cover { display: block; }
 			.img { aspect-ratio: 5 / 4; background: #1b1d22 center / cover; overflow: hidden; }
@@ -218,12 +184,12 @@ const ogImage = new URL("/og/index.jpg", site).href;
 				border: 1px solid rgba(255, 255, 255, 0.18); color: var(--text); font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
 			.ext { color: var(--muted); font-weight: 400; }
 			.site { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
-			.body { padding: calc(var(--u) * 12) calc(var(--u) * 14) calc(var(--u) * 14); display: flex; flex-direction: column; gap: calc(var(--u) * 5); }
-			h2 { margin: 0; font-size: calc(var(--u) * 20); letter-spacing: -0.01em; }
+			.body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 6px; }
+			h2 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
 			h2 a { color: var(--text); }
-			.country { margin: 0; color: var(--muted); font-size: calc(var(--u) * 12); text-transform: uppercase; letter-spacing: 0.06em; }
-			.made { margin: calc(var(--u) * 4) 0 0; font-size: calc(var(--u) * 13.5); }
-			.sources { list-style: none; margin: calc(var(--u) * 6) 0 0; padding: calc(var(--u) * 8) 0 0; border-top: 1px solid var(--line); font-size: calc(var(--u) * 11.5); line-height: 1.45; color: var(--muted); }
+			.country { margin: 0; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; }
+			.made { margin: 6px 0 0; font-size: 14px; }
+			.sources { list-style: none; margin: 8px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.5; color: var(--muted); }
 			.sources a { color: var(--muted); text-decoration: underline; text-decoration-color: #4a4f5a; }
 			footer { padding-top: 8px; padding-bottom: calc(32px + env(safe-area-inset-bottom)); color: var(--muted); font-size: 13px; }
 			@media (prefers-reduced-motion: reduce) { .card, .img img { transition: none; } }
