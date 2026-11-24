@@ -29,11 +29,14 @@ Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów p
 kartograficznego (GUGiK, CC BY 4.0) · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Salt mine: plan by
 W. Hondius, 1645 (public domain).
 
-Fifth city: **Kraków** (`/krakow`), by [Piotr Kulpiński](https://kulpinski.dev/): the Old Town, Wawel and the
-Vistula in the same region and style as Wieliczka, with MPK's trams on their real lines and dorożki (horse-drawn
-carriages) round Rynek Główny. Same data and credits as Wieliczka.
+[![Kraków](video/krakow.gif)](https://isometricworld.dmytrokrasun.com/krakow)
 
-Elsewhere: **[Bratislava](https://bratislava.jantursky.com/)**, a fork on its own site: the whole city from
+Fifth city: **[Kraków](https://isometricworld.dmytrokrasun.com/krakow)** (`/krakow`), by [Piotr Kulpiński](https://kulpinski.dev/): the whole city, from
+the Old Town and Wawel to Nowa Huta, on the same map and in the same style as Wieliczka, from the same GUGiK data,
+with MPK's trams on their real lines and dorożki (horse-drawn carriages) round Rynek Główny. Full-quality clip:
+[`video/krakow.mp4`](video/krakow.mp4). Same credits as Wieliczka, without the salt mine's plan.
+
+Elsewhere: **[Bratislava](https://bratislava.jantursky.com/)**, by [Ján Turský](https://jantursky.com/), a fork on its own site: the whole city from
 OpenStreetMap and Copernicus terrain, styled, with a landmarks guide and a flight over the city.
 
 ## The idea
