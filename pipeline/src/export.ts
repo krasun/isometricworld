@@ -417,7 +417,10 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
   const root = join(OUT, "tiles", layer), st = (state.layers[layer] ??= { sources: {}, hashes: {} }), produced = new Set<string>();
   index[layer] = {};
   const maskOf = (file: string) => file.replace(/\/render\/([^/]+)$/, "/fg/$1");
-  const srcs = [...renders].filter(([, f]) => existsSync(maskOf(f)));
+  const srcs = [...renders].filter(([, f]) => f !== REMOTE && existsSync(maskOf(f)));
+  // --partial: render tiles not on this machine keep their published fg tiles; a level out that mixes them with
+  // local ones is rebuilt from their published z(NATIVE_Z - 1) tile
+  const remote = new Set([...renders].filter(([, f]) => f === REMOTE).map(([k]) => k));
   const A = CAMERA.tile, stampOf = new Map<Key, string>();
   for (const [k, f] of srcs) {
     const [tx, ty] = parse(k), grids: string[] = [];
@@ -427,6 +430,7 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
     }
     stampOf.set(k, hash(`fg1:${sourceHash(f)}:${sourceHash(maskOf(f))}:${grids.join(",")}@${FORMAT}${QUALITY}`));
   }
+  const pubHash = (z: number, x: number, y: number) => st.hashes[`${z}/${x}_${y}`];
   // a render tile as RGBA, its alpha the mask faded at the map's edge (a few kept: the levels out reuse them)
   const cache = new Map<Key, Promise<Buffer>>();
   const source = (k: Key) => {
@@ -434,6 +438,10 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
     if (b) { cache.delete(k); cache.set(k, b); return b; }
     b = (async () => {
       const f = renders.get(k)!, [tx, ty] = parse(k);
+      if (f === REMOTE) { // its published tile one level out, back at the render's size (only shrunk further from here)
+        if (!pubHash(NATIVE_Z - 1, tx, ty)) return Buffer.alloc(A * A * 4); // nothing tall there
+        return sharp(await readTile(layer, NATIVE_Z - 1, tx, ty)).ensureAlpha().resize(A, A, { kernel: "lanczos3" }).raw().toBuffer();
+      }
       const rgb = await sharp(f).removeAlpha().raw().toBuffer(), mask = await sharp(maskOf(f)).extractChannel(0).raw().toBuffer();
       const out = Buffer.alloc(A * A * 4);
       for (let p = 0; p < A * A; p++) { out[p * 4] = rgb[p * 3]; out[p * 4 + 1] = rgb[p * 3 + 1]; out[p * 4 + 2] = rgb[p * 3 + 2]; out[p * 4 + 3] = mask[p]; }
@@ -468,6 +476,18 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
   };
   const raw = (b: Buffer, size: number) => sharp(b, { raw: { width: size, height: size, channels: 4 } });
   const jobs: Array<() => Promise<void>> = [];
+  /** a published tile kept as it is (--partial) */
+  const keepPublished = (z: number, x: number, y: number) => {
+    const id = `${z}/${x}_${y}`;
+    if (!(id in st.sources)) return;
+    produced.add(id);
+    if (st.hashes[id]) (index[layer][z] ??= {})[key(x, y)] = st.hashes[id];
+  };
+  for (const k of remote) {
+    const [tx, ty] = parse(k);
+    for (let j = 0; j < SPLIT; j++) for (let i = 0; i < SPLIT; i++) keepPublished(NATIVE_Z, tx * SPLIT + i, ty * SPLIT + j);
+    keepPublished(NATIVE_Z - 1, tx, ty);
+  }
   // native zoom: each render tile split in four; one level out: the render tile halved
   for (const [k] of srcs) {
     const [tx, ty] = parse(k), stamp = stampOf.get(k)!;
@@ -479,9 +499,12 @@ async function exportForeground(renders: Map<Key, string>, layer = "fg", minZ = 
   // further out: n × n render tiles shrunk into one
   for (let z = NATIVE_Z - 2; z >= minZ; z--) {
     const n = 2 ** (NATIVE_Z - 1 - z), parents = new Map<Key, Key[]>();
-    for (const [k] of srcs) { const [tx, ty] = parse(k), p = key(Math.floor(tx / n), Math.floor(ty / n)); (parents.get(p) ?? parents.set(p, []).get(p)!).push(k); }
+    const remoteKids = [...remote].filter((k) => { const [tx, ty] = parse(k); return `${NATIVE_Z - 1}/${tx}_${ty}` in st.sources; });
+    for (const k of [...srcs.map(([k]) => k), ...remoteKids]) { const [tx, ty] = parse(k), p = key(Math.floor(tx / n), Math.floor(ty / n)); (parents.get(p) ?? parents.set(p, []).get(p)!).push(k); }
     for (const [p, kids] of parents) {
-      const [px, py] = parse(p), stamp = hash(kids.map((k) => `${k}:${stampOf.get(k)}`).sort().join(","));
+      const [px, py] = parse(p);
+      if (kids.every((k) => remote.has(k))) { keepPublished(z, px, py); continue; }
+      const stamp = hash(kids.map((k) => { const [tx, ty] = parse(k); return `${k}:${remote.has(k) ? `pub:${pubHash(NATIVE_Z - 1, tx, ty) ?? "-"}` : stampOf.get(k)}`; }).sort().join(","));
       jobs.push(() => put(z, px, py, stamp, async () => {
         // far out (a mine's levels go to z3): each render tile shrunk first, the n × n canvas would be too big
         const C = n > 4 ? TS / n : A, S = C * n, big = Buffer.alloc(S * S * 4);
@@ -574,6 +597,7 @@ async function exportHeights(renders: Map<Key, string>) {
   const layer = "height", st = (state.layers[layer] ??= { sources: {}, hashes: {} }), produced = new Set<string>();
   let encoded = 0;
   await pool([...renders].map(([k, f]) => async () => {
+    if (f === REMOTE) { if (st.hashes[k]) produced.add(k); return; } // --partial: stays as published
     const file = f.replace(/\/render\/([^/]+)$/, "/height/$1");
     if (!existsSync(file)) return;
     const stamp = `h1:${sourceHash(file)}`;
