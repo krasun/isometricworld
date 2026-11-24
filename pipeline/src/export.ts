@@ -1257,6 +1257,7 @@ async function main() {
   }
   const regions = new Set(asked.map((a) => openArea(a).region));
   // a mine's levels are layers of their own, never part of the map; exported whenever they are rendered
+  // (--partial without them keeps the published mine: its levels and mine.json stay in the state)
   const areas = asked.filter((a) => !AREAS[a]?.mine);
   const mineLevels = Object.keys(AREAS).filter((a) => AREAS[a].mine && AREAS[a].region === [...regions][0] && existsSync(join(DERIVED, a, "render")) && existsSync(join(DERIVED, a, "mine.json")));
   if (regions.size !== 1) throw new Error(`export one region at a time (got ${[...regions].join(", ")})`);
@@ -1359,7 +1360,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), airport: dataFile("airport"), ...(mineLevels.length ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}), ...(effects.search ? { search: dataFile("search") } : {}) },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), airport: dataFile("airport"), ...(mineLevels.length || (PARTIAL && dataFile("mine")) ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}), ...(effects.search ? { search: dataFile("search") } : {}) },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {
