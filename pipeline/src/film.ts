@@ -58,7 +58,8 @@ type Shot = { at: [number, number]; px?: boolean; scale: number; hold?: number; 
  * - loop: the clip ends by flying back to the first pose, its last frame one step before the first (seamless
  *   on X, which loops videos); the title fades out again before the return.
  */
-type Film = { shots: Shot[]; planeShot?: number; settle?: true; moveZoomOut?: number; loop?: true };
+/** `groundH`: the shots' ground height (ellipsoid m) when the city lies off the region's typical one (Kraków in the Wieliczka region) */
+type Film = { shots: Shot[]; planeShot?: number; settle?: true; moveZoomOut?: number; loop?: true; groundH?: number };
 const FILMS: Record<string, Film> = {
   "tel-aviv-yafo": { planeShot: 2, shots: [
   { at: [32.0988, 34.7990], scale: 0.62, hold: 1.1, note: "Yarkon Park: the river bends, jacarandas, flame trees" },
@@ -103,12 +104,12 @@ const FILMS: Record<string, Film> = {
     { at: [49.98445, 20.0521], scale: 0.7, hold: 1.2, note: "the graduation tower (tężnia) and its lookout" },
     { at: [49.9825, 20.0585], scale: 0.12, hold: 2.4, out: 0, title: true, note: "the town on its hills (title)" },
   ] },
-  // the README clip (--city krakow --seconds 12): Rynek Główny, the Barbican, Wawel, Kazimierz, the Old Town and the Vistula
-  krakow: { settle: true, moveZoomOut: 0.4, shots: [
-    { at: [50.0617, 19.9373], scale: 0.8, hold: 1.4, note: "Rynek Główny: the Cloth Hall, pigeons, dorożki on their round" },
-    { at: [50.0655, 19.9417], scale: 0.8, hold: 1.2, note: "the Barbican, the Florian Gate and the Planty" },
-    { at: [50.0540, 19.9354], scale: 0.6, hold: 1.4, note: "Wawel Castle above the Vistula" },
+  // the README clip (--city krakow --seconds 12): Rynek Główny, the Barbican, Kazimierz, the Vistula, the Old Town
+  krakow: { settle: true, moveZoomOut: 0.4, groundH: 248, shots: [ // the Old Town ~208 m a.s.l. + geoid
+    { at: [50.0611, 19.9363], scale: 0.8, hold: 1.4, note: "Rynek Główny: the Cloth Hall, the Town Hall Tower, pigeons, dorożki on their round" },
+    { at: [50.0655, 19.9417], scale: 0.8, hold: 1.2, note: "the Planty by the Barbican" },
     { at: [50.0515, 19.9446], scale: 0.7, hold: 1.2, note: "Kazimierz: Plac Nowy and its trams" },
+    { at: [50.0471, 19.9467], scale: 0.6, hold: 1.4, note: "the Vistula: the Bernatek footbridge to Podgórze" },
     { at: [50.0585, 19.9365], scale: 0.12, hold: 2.4, out: 0, title: true, note: "the Old Town in its Planty ring, the Vistula (title)" },
   ] },
   // before/after: the same path rendered from production and from the dev cache (--city stuttgart --film stuttgart-before-after)
@@ -130,7 +131,7 @@ const PLANE_SHOT = FILM.planeShot; // the airliner crosses the frame centre duri
 // ---- camera path ------------------------------------------------------------------------------
 type P = [number, number, number]; // x, y (global art px), u = ln scale
 // shot scales are for a 1080 px wide frame: other widths keep the same width of city in view
-const keys: P[] = SHOTS.map(({ at, px, scale }) => { const [x, y] = px ? at : llhToPixel(at[0], at[1], GROUND_H); return [x, y, Math.log((scale * SIZE) / 1080)]; });
+const keys: P[] = SHOTS.map(({ at, px, scale }) => { const [x, y] = px ? at : llhToPixel(at[0], at[1], FILM.groundH ?? GROUND_H); return [x, y, Math.log((scale * SIZE) / 1080)]; });
 /** tangent at key i: Catmull-Rom; zero at poses when the film settles (no overshoot where the route turns) */
 function tangent(i: number): P {
   const n = keys.length - 1;
