@@ -76,17 +76,19 @@ const gx0 = Math.min(...geo.map((g) => g[0])), gx1 = Math.max(...geo.map((g) => 
 const unit = (W - 2 * PAD - CARD) / (gx1 - gx0);
 const toPx = ([x, y]: [number, number]): [number, number] => [PAD + CARD / 2 + (x - gx0) * unit, PAD + 160 + (y - gy0) * unit];
 // a card's height: the cover (5:4) and the text, ~34 characters a line in the sources
-const cardH = (c: (typeof cards)[number]) => CARD * 0.8 + 112 + 17 * [...c.sources.map((s) => s.text), ...(c.painted ? ["Painted with AI"] : [])].reduce((n, t) => n + Math.ceil(t.length / 34), 0);
+const cardH = (c: (typeof cards)[number]) => CARD * 0.8 + 112 + (c.external ? 36 : 0) + 17 * [...c.sources.map((s) => s.text), ...(c.painted ? ["Painted with AI"] : [])].reduce((n, t) => n + Math.ceil(t.length / 34), 0);
 const boxes = cards.map((c, i) => { const [x, y] = toPx(geo[i]); return { ax: x, ay: y, x, y, w: CARD, h: cardH(c) }; });
 for (let it = 0; it < 600; it++) {
   for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
     const a = boxes[i], b = boxes[j];
-    let dx = b.x - a.x, dy = b.y - a.y;
-    if (!dx && !dy) { dx = b.ax - a.ax || 1; dy = b.ay - a.ay; }
-    const ox = (a.w + b.w) / 2 + GAP - Math.abs(dx), oy = (a.h + b.h) / 2 + GAP - Math.abs(dy);
+    const ox = (a.w + b.w) / 2 + GAP - Math.abs(b.x - a.x), oy = (a.h + b.h) / 2 + GAP - Math.abs(b.y - a.y);
     if (ox <= 0 || oy <= 0) continue;
-    // apart along the axis that needs the shorter push
-    if (ox < oy) { const s = Math.sign(dx) * ox * 0.5; a.x -= s; b.x += s; } else { const s = Math.sign(dy) * oy * 0.5; a.y -= s; b.y += s; }
+    // apart along the line between their places, so each keeps its side of the other (Wieliczka south-east of Kraków)
+    let ux = b.ax - a.ax, uy = b.ay - a.ay;
+    const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l;
+    if (!ux && !uy) ux = 1;
+    const k = 0.5 * Math.min(ox / Math.max(Math.abs(ux), 1e-3), oy / Math.max(Math.abs(uy), 1e-3));
+    a.x -= ux * k; a.y -= uy * k; b.x += ux * k; b.y += uy * k;
   }
   for (const b of boxes) {
     if (it < 450) { b.x += (b.ax - b.x) * 0.02; b.y += (b.ay - b.y) * 0.02; } // drawn back to its place, then left to settle
@@ -149,14 +151,17 @@ const ogImage = new URL("/og/index.jpg", site).href;
 				</svg>
 				{north.map(({ c, i }) => (
 					<article class="card" style={`--x: ${(boxes[i].x - CARD / 2).toFixed(1)}; --y: ${(boxes[i].y - boxes[i].h / 2).toFixed(1)}`}>
-						<a class="cover" href={`/${c.slug}`} aria-label={`Open ${c.title}`}>
+						<a class="cover" href={c.href} aria-label={c.external ? `Open ${c.title} on ${host(c.href)} (new tab)` : `Open ${c.title}`}
+							{...(c.external ? { target: "_blank", rel: "noopener" } : {})}>
 							<div class={c.lqip ? "img" : "img og"} style={c.lqip ? `background-image: url(${c.lqip})` : undefined}>
 								<img src={c.image} alt={`${c.title}, isometric city map`} loading="lazy" decoding="async" />
+								{c.external && <span class="badge">External site ↗</span>}
 							</div>
 						</a>
 						<div class="body">
-							<h2><a href={`/${c.slug}`}>{c.title}</a></h2>
+							<h2><a href={c.href} {...(c.external ? { target: "_blank", rel: "noopener" } : {})}>{c.title}{c.external && <span class="ext" aria-hidden="true"> ↗</span>}</a></h2>
 							<p class="country">{c.country}</p>
+							{c.external && <p class="site">On <a href={c.href} target="_blank" rel="noopener">{host(c.href)}</a>, a separate site built with this project</p>}
 							{c.people.length > 0 && (
 								<p class="made">Made by {c.people.map((p, i) => <>{i > 0 && (i === c.people.length - 1 ? " with " : ", ")}{p.href ? <a href={p.href}>{p.text}</a> : p.text}</>)}</p>
 							)}
@@ -186,7 +191,7 @@ const ogImage = new URL("/og/index.jpg", site).href;
 			/* the map: laid out at 1160 design px (--u = one of them), scaled to the width */
 			main { container-type: inline-size; padding-bottom: 32px; }
 			.atlas { --u: calc(100cqw / 1160); position: relative; height: calc(var(--u) * var(--h)); }
-			.graticule { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+			.graticule { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
 			.graticule polyline { fill: none; stroke: #1f222a; stroke-width: 1; vector-effect: non-scaling-stroke; }
 			.graticule .lead { stroke: #4a4f5a; stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
 			.graticule .pin { fill: var(--link); stroke: var(--bg); stroke-width: 2; vector-effect: non-scaling-stroke; }
