@@ -40,5 +40,6 @@ export const isStone = (t: Record<string, string>) =>
  */
 export function isCarFree(t: Record<string, string>) {
   const access = t.motor_vehicle ?? t.motorcar ?? t.vehicle ?? t.access;
-  return ["no", "private", "permissive", "agricultural", "forestry"].includes(access) || (t.highway === "living_street" && isStone(t));
+  // not "private" or "permissive": driveways, estate roads and car-park aisles still carry cars
+  return ["no", "agricultural", "forestry"].includes(access) || (t.highway === "living_street" && isStone(t));
 }

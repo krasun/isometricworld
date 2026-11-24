@@ -51,9 +51,12 @@ function flattenRoofs(r: Road): Road {
  * visible from the camera, for things that move on the ground next to the roads (carriages).
  * Null when no road is that close.
  */
-export function groundLookup(roads: Road[], maxM = 40) {
+export function groundLookup(roads: Road[], maxM = 40, box?: [number, number, number, number]) {
   const cell = maxM, grid = new Map<string, number[]>(); // flat [e, n, u, vis] per cell
+  // `box` [e0, n0, e1, n1]: only the samples within maxM of it (a whole city's roads are millions of samples)
+  const [e0, n0, e1, n1] = box ? [box[0] - maxM, box[1] - maxM, box[2] + maxM, box[3] + maxM] : [-Infinity, -Infinity, Infinity, Infinity];
   for (const r of roads) for (let i = 0; i < r.s.length; i += 4) {
+    if (r.s[i] < e0 || r.s[i] > e1 || r.s[i + 1] < n0 || r.s[i + 1] > n1) continue;
     const key = `${Math.floor(r.s[i] / cell)},${Math.floor(r.s[i + 1] / cell)}`;
     let g = grid.get(key);
     if (!g) grid.set(key, (g = []));

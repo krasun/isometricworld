@@ -103,6 +103,14 @@ const FILMS: Record<string, Film> = {
     { at: [49.98445, 20.0521], scale: 0.7, hold: 1.2, note: "the graduation tower (tężnia) and its lookout" },
     { at: [49.9825, 20.0585], scale: 0.12, hold: 2.4, out: 0, title: true, note: "the town on its hills (title)" },
   ] },
+  // the README clip (--city krakow --seconds 12): Rynek Główny, St Mary's, Wawel, Kazimierz, the Old Town and the Vistula
+  krakow: { settle: true, moveZoomOut: 0.4, shots: [
+    { at: [50.0617, 19.9373], scale: 0.8, hold: 1.4, note: "Rynek Główny: the Cloth Hall, pigeons, dorożki on their round" },
+    { at: [50.0616, 19.9394], scale: 0.85, hold: 1.2, note: "St Mary's Basilica and its two towers" },
+    { at: [50.0540, 19.9354], scale: 0.6, hold: 1.4, note: "Wawel: the castle and the cathedral above the Vistula" },
+    { at: [50.0515, 19.9446], scale: 0.7, hold: 1.2, note: "Kazimierz: Plac Nowy and its trams" },
+    { at: [50.0585, 19.9365], scale: 0.12, hold: 2.4, out: 0, title: true, note: "the Old Town in its Planty ring, the Vistula (title)" },
+  ] },
   // before/after: the same path rendered from production and from the dev cache (--city stuttgart --film stuttgart-before-after)
   "stuttgart-before-after": { shots: [
     { at: [48.7792, 9.1812], scale: 0.62, hold: 5.0, note: "Schlossplatz: Neues Schloss, Königsbau, Kunstgebäude, Landtag, Staatstheater" },

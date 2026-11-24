@@ -34,7 +34,10 @@ const { values: args, positionals } = parseArgs({
     // render at most this many tiles, then exit (run again for the rest): a long run's heap grows until garbage
     // collection takes minutes per tile, so a whole dense area renders in batches of fresh processes
     limit: { type: "string" },
+    // --shard=i/n: take the i-th of n contiguous slices of the tiles left, so n processes split one area (run
+    // them together once; with --limit a later batch re-slices what is left)
     shard: { type: "string" },
+    profile: { type: "boolean", default: false }, // log per-pass GPU timings per tile (slower: waits for the GPU)
     only: { type: "string" },
     parts: { type: "boolean", default: false }, // re-render the tiles under the buildings scene.ts swapped (osm-parts.json)
     box: { type: "string" },
@@ -91,7 +94,7 @@ async function openPage(browser: Awaited<ReturnType<typeof chromium.launch>>, di
   });
   page.on("console", (m) => { if (m.type() === "warning") console.warn(`  page: ${m.text()}`); });
   page.on("pageerror", (e) => console.error("  [page]", e.message));
-  await page.goto(`http://iso.local/?region=${area.region}&ss=${args.ss}&markers=${encodeURIComponent(args.markers!)}${area.mine ? `&mine=${area.mine}` : ""}${args.tex ? "&tex=1" : ""}`);
+  await page.goto(`http://iso.local/?region=${area.region}&ss=${args.ss}&markers=${encodeURIComponent(args.markers!)}${area.mine ? `&mine=${area.mine}` : ""}${args.tex ? "&tex=1" : ""}${args.profile ? "&profile=1" : ""}`);
   await page.waitForFunction(() => window.ready === true, null, { timeout: 30_000 });
   return page;
 }
@@ -142,7 +145,7 @@ async function renderOne(page: Page, tx: number, ty: number, outDir: string) {
   await writeAtomic(sharp(Buffer.from(r.height, "base64"), { raw: { width: 256, height: 256, channels: 4 } }).flip().png(), join(outDir, "height", `${tx}_${ty}.png`));
   // the foreground mask (life.foreground), at the colour's size: one channel, its edges smoothed by the resize
   if (r.fg) await writeAtomic(sharp(Buffer.from(r.fg.split(",")[1], "base64")).extractChannel(0).resize(T, T, { kernel: "lanczos3" }).png({ compressionLevel: 6 }), join(outDir, "fg", `${tx}_${ty}.png`));
-  console.log(`  ${tx}_${ty}: ${((Date.now() - t0) / 1000).toFixed(1)}s ${JSON.stringify({ load: t1 - t0, page: t2 - t1, write: Date.now() - t2, ...r.ms })}`);
+  console.log(`  ${tx}_${ty}: ${((Date.now() - t0) / 1000).toFixed(1)}s${args.profile ? ` ${JSON.stringify({ load: t1 - t0, page: t2 - t1, write: Date.now() - t2, ...r.ms })}` : ""}`);
 }
 
 /** A mine level's tiles: those within 600 art px of its extent (mine.json, ENU), drawn at the terrain's heights. */
@@ -203,11 +206,11 @@ async function main() {
     tiles = tiles.filter(([x, y]) => x >= bx0 && x <= bx1 && y >= by0 && y <= by1);
   }
   const left = tiles.filter(([x, y]) => args.force || args.parts || !existsSync(join(outDir, "render", `${x}_${y}.png`)));
-  // --shard=i/n: this process takes the i-th of n contiguous slices, so n processes split one area
-  const [si, sn] = (args.shard ?? "0/1").split("/").map(Number), per = Math.ceil(left.length / sn);
-  const mineToDo = left.slice(si * per, (si + 1) * per);
-  const todo = args.limit ? mineToDo.slice(0, Number(args.limit)) : mineToDo;
-  console.log(`${areaName}: ${all.length} tiles, ${left.length} to render${todo.length < mineToDo.length ? `, ${todo.length} in this run` : ""}`);
+  const [si, sn] = (args.shard ?? "0/1").split("/").map(Number);
+  if (!(Number.isInteger(si) && Number.isInteger(sn) && sn >= 1 && si >= 0 && si < sn)) throw new Error(`--shard ${args.shard}: want i/n with 0 <= i < n`);
+  const per = Math.ceil(left.length / sn), shardTodo = left.slice(si * per, (si + 1) * per);
+  const todo = args.limit ? shardTodo.slice(0, Number(args.limit)) : shardTodo;
+  console.log(`${areaName}: ${all.length} tiles, ${left.length} to render${todo.length < left.length ? `, ${todo.length} in this run` : ""}`);
 
   const manifestPath = join(outDir, "manifest.json");
   if (!existsSync(join(outDir, "ground", "meta.json"))) throw new Error(`run: npm run ground -- ${areaName}`);

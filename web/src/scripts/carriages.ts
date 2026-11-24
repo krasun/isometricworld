@@ -28,8 +28,9 @@ export class Carriages {
   private seed = 5;
 
   constructor(private M: number[][], loop: Array<[number, number]>, count: number, roads: Road[], private camFwd: [number, number]) {
-    const ground = groundLookup(roads, 30);
     const enu = loop.map(([lat, lon]) => ecefToEnu(llhToEcef(lat, lon, 0)));
+    const es = enu.map((p) => p[0]), ns = enu.map((p) => p[1]);
+    const ground = groundLookup(roads, 30, [Math.min(...es), Math.min(...ns), Math.max(...es), Math.max(...ns)]);
     for (let i = 0; i < enu.length; i++) {
       const a = enu[i], b = enu[(i + 1) % enu.length], d = Math.hypot(b[0] - a[0], b[1] - a[1]);
       for (let t = 0; t < d; t += STEP) {

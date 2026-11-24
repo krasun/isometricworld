@@ -32,6 +32,7 @@ const SHADOWS = STYLED && STYLE.castShadow !== null;
 /** Ellipsoid height the height pass counts from (heights.ts). */
 const HEIGHT_BASE = REGIONS[REGION].heightBase ?? 0;
 const SS = Number(params.get("ss") ?? 2); // supersampling
+const PROFILE = params.get("profile") === "1"; // renderTile: per-pass timings (render.ts --profile)
 const SIZE = CAMERA.tile * SS;
 const HEIGHT_SIZE = 256;
 /** Ground texture resolution (m per texel); the render samples ~0.125 m across, 0.18 m in depth. */
@@ -1821,9 +1822,10 @@ function placeCamera(tx: number, ty: number) {
 
 /** `casters`: the tile's objects and its neighbours' (render.ts, presets with cast shadows): they shadow this tile too. */
 async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: TileObjects) {
+  // ?profile=1 (render.ts --profile): time each pass; gl.finish() waits for the GPU, so only when asked
   const gl = renderer.getContext(), ms: Record<string, number> = {};
   let tp = performance.now();
-  const lap = (k: string) => { gl.finish(); const n = performance.now(); ms[k] = Math.round(n - tp); tp = n; };
+  const lap = (k: string) => { if (!PROFILE) return; gl.finish(); const n = performance.now(); ms[k] = Math.round(n - tp); tp = n; };
   placeCamera(tx, ty);
   buildObjects((SHADOWS && casters) || data || { b: [], t: [] });
   lap("objects");
