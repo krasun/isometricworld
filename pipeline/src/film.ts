@@ -2,9 +2,10 @@
  * Social clip: a smooth, deterministic camera flight over the live viewer, rendered frame by frame
  * (no screen recording, so no dropped frames) and encoded with ffmpeg.
  *
- *   npx tsx src/film.ts [url] [out.mp4] [--city tel-aviv-yafo] [--fps 60] [--size 1080 | WxH] [--seconds 14] [--blur 1] [--grain 5] [--preview]
+ *   npx tsx src/film.ts [url] [out.mp4] [--city tel-aviv-yafo] [--film <FILMS key, default: the city>] [--fps 60] [--size 1080 | WxH] [--seconds 14] [--blur 1] [--grain 5] [--preview]
  *
- * - --city picks the shot list (FILMS) and the title; the clip opens /<city> on the site.
+ * - --city picks the shot list (FILMS) and the title; the clip opens /<city> on the site. --film <name> picks
+ *   another shot list of that city (e.g. --city zagreb --film zagreb-readme).
  *
  * - The camera follows a Catmull-Rom spline through SHOTS in (x, y, ln scale), resting at each pose
  *   (with a slow push in) and easing between them. Moves advance by *perceived* motion (screen px
@@ -25,7 +26,7 @@ import { CITIES, DEFAULT_CITY, REGIONS } from "./places.ts";
 const args = process.argv.slice(2);
 const flag = (name: string, def: number) => { const i = args.indexOf(`--${name}`); return i >= 0 ? Number(args[i + 1]) : def; };
 const preview = args.includes("--preview");
-const VALUED = ["--fps", "--size", "--seconds", "--blur", "--grain", "--city"];
+const VALUED = ["--fps", "--size", "--seconds", "--blur", "--grain", "--city", "--film"];
 const pos = args.filter((a, i) => !a.startsWith("--") && !VALUED.includes(args[i - 1]));
 const SLUG = (() => { const i = args.indexOf("--city"); return i >= 0 ? args[i + 1] : DEFAULT_CITY; })(), CITY = CITIES[SLUG];
 if (!CITY) throw new Error(`unknown city ${SLUG}`);
@@ -44,11 +45,22 @@ const GRAIN = preview ? 0 : flag("grain", 5); // film grain strength (ffmpeg noi
 
 /**
  * Camera keyframes: lat/lon (or global art px) + scale (output px per art px; 1 = native detail)
- * + hold (seconds the camera rests there, gently drifting in; omitted = fly through without stopping).
+ * + hold (seconds the camera rests there, gently drifting in; omitted = fly through without stopping)
+ * + out (how far the move into this shot zooms out on the way, in ln scale; default the film's moveZoomOut)
+ * + title (the city name shows over this pose; default the last pose).
  */
-type Shot = { at: [number, number]; px?: boolean; scale: number; hold?: number; note: string };
-/** Per city: the shots, and the shot whose hold an airliner crosses (none: no plane placed). */
-const FILMS: Record<string, { shots: Shot[]; planeShot?: number }> = {
+type Shot = { at: [number, number]; px?: boolean; scale: number; hold?: number; note: string; out?: number; title?: true };
+/**
+ * Per city: the shots, and the shot whose hold an airliner crosses (none: no plane placed). Options:
+ * - settle: the camera comes to rest exactly on each pose (no overshoot where the route turns back) and every
+ *   pose starts at its own framing (the slow push-in of a hold eases back out during the next move);
+ * - moveZoomOut: every move zooms out by this much (ln scale) half-way and back in, so flights read calmer;
+ * - loop: the clip ends by flying back to the first pose, its last frame one step before the first (seamless
+ *   on X, which loops videos); the title fades out again before the return.
+ */
+/** `groundH`: the shots' ground height (ellipsoid m) when the city lies off the region's typical one (Kraków in the Wieliczka region) */
+type Film = { shots: Shot[]; planeShot?: number; settle?: true; moveZoomOut?: number; loop?: true; groundH?: number };
+const FILMS: Record<string, Film> = {
   "tel-aviv-yafo": { planeShot: 2, shots: [
   { at: [32.0988, 34.7990], scale: 0.62, hold: 1.1, note: "Yarkon Park: the river bends, jacarandas, flame trees" },
   { at: [10050, -4400], px: true, scale: 0.95, hold: 1.0, note: "Namir Rd crossing the Yarkon: traffic on the bridge and the Rokach junction" },
@@ -64,25 +76,74 @@ const FILMS: Record<string, { shots: Shot[]; planeShot?: number }> = {
     { at: [48.7965, 9.2230], scale: 0.3, note: "wide: up the river to Bad Cannstatt" },
     { at: [48.7922, 9.2320], scale: 0.6, hold: 2.0, note: "the Neckarpark: the stadium and its pitches (title)" },
   ] },
+  // the launch clip (--seconds 26), a loop: Gornji grad, Kaptol, Glavni kolodvor, the HNK, Jarun, the city with the
+  // title, then back to St Mark's. Landmarks are in art px at their own height (the old town stands ~40 m above
+  // groundH; pipeline/.scratch/landmark-px*.ts).
+  zagreb: { settle: true, moveZoomOut: 0.4, loop: true, shots: [
+    { at: [-227, -1888], px: true, scale: 0.95, hold: 1.5, note: "St Mark's Church: the tiled roof with the two coats of arms" },
+    { at: [1024, -651], px: true, scale: 0.85, hold: 1.3, note: "Zagreb Cathedral on Kaptol: the two spires" },
+    { at: [-1415, 1892], px: true, scale: 0.6, hold: 1.3, note: "Glavni kolodvor, King Tomislav Square and the Art Pavilion" },
+    { at: [-2768, -277], px: true, scale: 0.85, hold: 1.2, note: "the Croatian National Theatre (HNK)" },
+    { at: [-12182, 1050], px: true, scale: 0.09, note: "wide: over Trešnjevka towards the lake" },
+    { at: [-21596, 2377], px: true, scale: 0.12, hold: 1.4, out: 0, note: "Jarun: the whole lake, its islands and the regatta course" },
+    { at: [45.8000, 15.9750], scale: 0.042, hold: 2.6, out: 0, title: true, note: "the city from the Sava to the foot of Medvednica (title)" },
+  ] },
+  // the README clip (--city zagreb --film zagreb-readme --seconds 12), like the other cities': no loop
+  "zagreb-readme": { settle: true, moveZoomOut: 0.4, shots: [
+    { at: [-1415, 1892], px: true, scale: 0.6, hold: 1.3, note: "Glavni kolodvor, King Tomislav Square and the Art Pavilion" },
+    { at: [-2768, -277], px: true, scale: 0.85, hold: 1.2, note: "the Croatian National Theatre (HNK)" },
+    { at: [-12182, 1050], px: true, scale: 0.09, note: "wide: over Trešnjevka towards the lake" },
+    { at: [-21596, 2377], px: true, scale: 0.12, hold: 1.4, out: 0, note: "Jarun: the whole lake, its islands and the regatta course" },
+    { at: [45.8000, 15.9750], scale: 0.042, hold: 2.6, out: 0, title: true, note: "the city from the Sava to the foot of Medvednica (title)" },
+  ] },
+  // the README clip (--city wieliczka --seconds 12): the Rynek, the castle, the mine's shafts, the graduation tower, the town
+  wieliczka: { settle: true, moveZoomOut: 0.4, shots: [
+    { at: [49.9821, 20.0603], scale: 0.85, hold: 1.4, note: "Rynek Górny: pigeons on the square, Szyb Regis behind it" },
+    { at: [49.9840, 20.0589], scale: 0.85, hold: 1.2, note: "the salt works castle (Zamek Żupny) and its tower" },
+    { at: [49.9836, 20.0550], scale: 0.7, hold: 1.3, note: "Szyb Daniłowicza, the mine's entrance, coaches in their parks" },
+    { at: [49.98445, 20.0521], scale: 0.7, hold: 1.2, note: "the graduation tower (tężnia) and its lookout" },
+    { at: [49.9825, 20.0585], scale: 0.12, hold: 2.4, out: 0, title: true, note: "the town on its hills (title)" },
+  ] },
+  // the README clip (--city krakow --seconds 12): Rynek Główny, the Barbican, Kazimierz, the Vistula, the Old Town
+  krakow: { settle: true, moveZoomOut: 0.4, groundH: 248, shots: [ // the Old Town ~208 m a.s.l. + geoid
+    { at: [50.0611, 19.9363], scale: 0.8, hold: 1.4, note: "Rynek Główny: the Cloth Hall, the Town Hall Tower, pigeons, dorożki on their round" },
+    { at: [50.0655, 19.9417], scale: 0.8, hold: 1.2, note: "the Planty by the Barbican" },
+    { at: [50.0515, 19.9446], scale: 0.7, hold: 1.2, note: "Kazimierz: Plac Nowy and its trams" },
+    { at: [50.0471, 19.9467], scale: 0.6, hold: 1.4, note: "the Vistula: the Bernatek footbridge to Podgórze" },
+    { at: [50.0585, 19.9365], scale: 0.12, hold: 2.4, out: 0, title: true, note: "the Old Town in its Planty ring, the Vistula (title)" },
+  ] },
+  // before/after: the same path rendered from production and from the dev cache (--city stuttgart --film stuttgart-before-after)
+  "stuttgart-before-after": { shots: [
+    { at: [48.7792, 9.1812], scale: 0.62, hold: 5.0, note: "Schlossplatz: Neues Schloss, Königsbau, Kunstgebäude, Landtag, Staatstheater" },
+    { at: [2040, 0], px: true, scale: 0.62, hold: 5.0, note: "Hauptbahnhof: the Bonatz building, the tracks, the S21 site" },
+    { at: [48.7950, 9.1960], scale: 0.3, note: "wide: through the Schlossgarten and Rosensteinpark" },
+    { at: [48.8050, 9.2045], scale: 0.55, hold: 5.0, note: "the Wilhelma (title)" },
+  ] },
 };
-const FILM = FILMS[SLUG];
-if (!FILM) throw new Error(`no shots for ${SLUG} (FILMS in film.ts)`);
-const SHOTS = FILM.shots;
+const FILM_NAME = (() => { const i = args.indexOf("--film"); return i >= 0 ? args[i + 1] : SLUG; })();
+const FILM = FILMS[FILM_NAME];
+if (!FILM) throw new Error(`no shots for ${FILM_NAME} (FILMS in film.ts)`);
+// a loop ends on (one frame before) the first pose: it is appended as a pose without a hold
+const SHOTS: Shot[] = FILM.loop ? [...FILM.shots, { ...FILM.shots[0], hold: 0, out: 0, title: undefined }] : FILM.shots;
 const HOLD_ZOOM = 0.035;  // ln-scale drift during each hold (a slow push in, so poses never freeze)
 const PLANE_SHOT = FILM.planeShot; // the airliner crosses the frame centre during this shot's hold
 
 // ---- camera path ------------------------------------------------------------------------------
 type P = [number, number, number]; // x, y (global art px), u = ln scale
 // shot scales are for a 1080 px wide frame: other widths keep the same width of city in view
-const keys: P[] = SHOTS.map(({ at, px, scale }) => { const [x, y] = px ? at : llhToPixel(at[0], at[1], GROUND_H); return [x, y, Math.log((scale * SIZE) / 1080)]; });
-function spline(t: number): P { // uniform Catmull-Rom, t in [0, keys.length - 1]
-  const n = keys.length - 1, i = Math.min(Math.floor(t), n - 1), f = t - i;
-  const p0 = keys[Math.max(i - 1, 0)], p1 = keys[i], p2 = keys[i + 1], p3 = keys[Math.min(i + 2, n)];
+const keys: P[] = SHOTS.map(({ at, px, scale }) => { const [x, y] = px ? at : llhToPixel(at[0], at[1], FILM.groundH ?? GROUND_H); return [x, y, Math.log((scale * SIZE) / 1080)]; });
+/** tangent at key i: Catmull-Rom; zero at poses when the film settles (no overshoot where the route turns) */
+function tangent(i: number): P {
+  const n = keys.length - 1;
+  if (FILM.settle && SHOTS[i].hold !== undefined) return [0, 0, 0];
+  const a = keys[Math.max(i - 1, 0)], b = keys[Math.min(i + 1, n)];
+  return [(b[0] - a[0]) / 2, (b[1] - a[1]) / 2, (b[2] - a[2]) / 2];
+}
+function spline(t: number): P { // cubic Hermite through the keys (uniform Catmull-Rom by default), t in [0, keys.length - 1]
+  const n = keys.length - 1, i = Math.min(Math.floor(t), n - 1), f = t - i, f2 = f * f, f3 = f2 * f;
+  const p1 = keys[i], p2 = keys[i + 1], m1 = tangent(i), m2 = tangent(i + 1);
   const out = [0, 0, 0] as P;
-  for (let d = 0; d < 3; d++) {
-    const a = p0[d], b = p1[d], c = p2[d], e = p3[d];
-    out[d] = 0.5 * (2 * b + (-a + c) * f + (2 * a - 5 * b + 4 * c - e) * f * f + (-a + 3 * b - 3 * c + e) * f * f * f);
-  }
+  for (let d = 0; d < 3; d++) out[d] = (2 * f3 - 3 * f2 + 1) * p1[d] + (f3 - 2 * f2 + f) * m1[d] + (-2 * f3 + 3 * f2) * p2[d] + (f3 - f2) * m2[d];
   return out;
 }
 // perceived arc length along the spline: pan in screen widths + zoom in e-folds (weighted)
@@ -119,17 +180,39 @@ function cameraAt(t: number): P {
   let acc = 0, zoomed = 0;
   for (const g of segs) {
     if (t <= acc + g.dur || g === segs.at(-1)) {
-      const q = Math.min(1, Math.max(0, (t - acc) / g.dur));
+      const q = g.dur > 0 ? Math.min(1, Math.max(0, (t - acc) / g.dur)) : 1;
       if (g.kind === "hold") { const p = spline(g.key); return [p[0], p[1], p[2] + zoomed + HOLD_ZOOM * drift(q)]; }
       const a = S[g.from * PER] + (S[g.to * PER] - S[g.from * PER]) * ease(q), p = spline(arcToT(a));
-      return [p[0], p[1], p[2] + zoomed];
+      const back = FILM.settle ? HOLD_ZOOM * (1 - ease(q)) : 0; // the last hold's push-in eases out again
+      const out = (SHOTS[g.to].out ?? FILM.moveZoomOut ?? 0) * Math.sin(Math.PI * q) ** 2; // out and back in, no jolt
+      return [p[0], p[1], p[2] + zoomed + back - out];
     }
-    if (g.kind === "hold") zoomed += HOLD_ZOOM;
+    if (g.kind === "hold" && !FILM.settle) zoomed += HOLD_ZOOM;
     acc += g.dur;
   }
   return keys.at(-1)!;
 }
 const holdMid = (() => { let acc = 0; for (const g of segs) { if (g.kind === "hold" && g.key === PLANE_SHOT) return acc + g.dur / 2; acc += g.dur; } return SECONDS / 2; })();
+
+// --plan: check the camera path without a browser: the timeline, then every frame's on-screen motion. A reversal
+// (the picture moving back against its own direction) or a sudden change of speed is the jitter you'd see.
+if (args.includes("--plan")) {
+  const motionOf = (a: P, b: P) => [(b[0] - a[0]) * Math.exp(a[2]), (b[1] - a[1]) * Math.exp(a[2]), (b[2] - a[2]) * SIZE / 2];
+  let acc = 0;
+  for (const g of segs) { console.log(`${acc.toFixed(2)}s ${g.kind} ${g.dur.toFixed(2)}s${g.kind === "hold" ? ` ${SHOTS[g.key].note}` : ""}`); acc += g.dur; }
+  const N = Math.round(SECONDS * 60), v: number[][] = [];
+  for (let f = 0; f < N; f++) v.push(motionOf(cameraAt(f / 60), cameraAt((f + 1) / 60)));
+  let reversals = 0, worst = 0, at = 0;
+  for (let f = 1; f < N; f++) {
+    const a = v[f - 1], b = v[f], sa = Math.hypot(...a), sb = Math.hypot(...b);
+    if (sa > 0.5 && sb > 0.5 && (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (sa * sb) < 0) reversals++;
+    const jump = Math.abs(sb - sa); if (jump > worst) { worst = jump; at = f / 60; }
+  }
+  const first = cameraAt(0), end = cameraAt(SECONDS), last = cameraAt(SECONDS - 1 / 60);
+  console.log(`reversals ${reversals} · largest speed change ${worst.toFixed(2)} px/frame between frames (at ${at.toFixed(2)} s) · peak ${Math.max(...v.map((x) => Math.hypot(...x))).toFixed(0)} px/frame`);
+  if (FILM.loop) console.log(`loop: end vs first ${Math.hypot(end[0] - first[0], end[1] - first[1]).toFixed(3)} px, ln scale ${(end[2] - first[2]).toFixed(4)}; last frame ${Math.hypot(...motionOf(last, first)).toFixed(2)} px from the first`);
+  process.exit(0);
+}
 
 // ---- browser ----------------------------------------------------------------------------------
 const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: CHROME_ARGS });
@@ -226,7 +309,14 @@ const put = async (png: Buffer) => { if (!ff.stdin.write(png)) await new Promise
 // Optional motion blur: every output frame is the average of BLUR sub-frames spread over the frame
 // interval (360° shutter). Fewer distinct captures when the camera moves slowly (each repeated so
 // ffmpeg still averages BLUR), a single one while it rests.
-const TITLE_IN = SECONDS - SHOTS.at(-1)!.hold! - 0.15, TITLE_FADE = 0.7; // during the arrival at the last pose
+// the title fades in while arriving at its pose (default the last) and, in a loop, out again as the camera leaves
+const TITLE_SHOT = SHOTS.findIndex((s) => s.title) >= 0 ? SHOTS.findIndex((s) => s.title) : poses.at(-1)!, TITLE_FADE = 0.7, TITLE_OUT_FADE = 0.6;
+const [TITLE_IN, TITLE_OUT] = (() => {
+  let acc = 0;
+  for (const g of segs) { if (g.kind === "hold" && g.key === TITLE_SHOT) return [acc - 0.15, FILM.loop ? acc + g.dur - 0.35 : Infinity]; acc += g.dur; }
+  return [SECONDS, Infinity];
+})();
+const titleAt = (T: number) => Math.min(1, Math.max(0, (T - TITLE_IN) / TITLE_FADE)) * (1 - Math.min(1, Math.max(0, (T - TITLE_OUT) / TITLE_OUT_FADE)));
 const t0 = Date.now();
 let rendered = 0;
 for (let f = 0; f < frames; f++) {
@@ -234,7 +324,7 @@ for (let f = 0; f < frames; f++) {
   const m = motion(cameraAt(T), cameraAt(T + 1 / FPS)); // px per frame
   const K = Math.min(BLUR, m < 0.6 ? 1 : m < 3 ? 2 : m < 8 ? 4 : 8);
   for (let j = 0; j < K; j++) {
-    const png = await render(cameraAt(T + j / (K * FPS)), 1 / (K * FPS), Math.min(1, Math.max(0, (T - TITLE_IN) / TITLE_FADE)));
+    const png = await render(cameraAt(T + j / (K * FPS)), 1 / (K * FPS), titleAt(T));
     rendered++;
     for (let r = 0; r < BLUR / K; r++) await put(png);
   }

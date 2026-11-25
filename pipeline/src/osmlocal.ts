@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { LOOKS, TOWERS } from "./landmarks.ts";
+import { LOOKS, STRUCTURES, TOWERS } from "./landmarks.ts";
 import { RAW } from "./paths.ts";
 
 type Tags = Record<string, string>;
@@ -18,8 +18,8 @@ interface LatLon { lat: number; lon: number }
 
 const DIR = join(RAW, "osm");
 
-/** Download the extract once (re-download: delete the file). */
-async function extract(url: string) {
+/** Download the extract once (re-download: delete the file); returns its path. */
+export async function downloadExtract(url: string) {
   mkdirSync(DIR, { recursive: true });
   const file = join(DIR, url.split("/").pop()!);
   if (existsSync(file)) return file;
@@ -40,12 +40,21 @@ function tagsOf(s: string): Tags {
   return t;
 }
 
-/** Every element of the extract inside bbox [s, w, n, e] that passes the filter, as Overpass JSON. */
-export async function localOsm(url: string, [s, w, n, e]: number[], filter: OsmFilter) {
-  const pbf = await extract(url);
+/**
+ * Every element of the extract inside bbox [s, w, n, e] that passes the filter, as Overpass JSON.
+ * `prefilter` (osmium tags-filter expressions, e.g. "r/boundary=administrative") thins a large box first.
+ * `complete`: the relation types whose members the cut completes beyond the box (osmium's default: multipolygon).
+ */
+export async function localOsm(url: string, [s, w, n, e]: number[], filter: OsmFilter, prefilter?: string[], complete = "multipolygon") {
+  const pbf = await downloadExtract(url);
   const cut = join(DIR, `cut-${process.pid}.osm.pbf`);
-  // smart: complete ways and multipolygon members, like Overpass returns them with `geom`
-  execFileSync("osmium", ["extract", "-b", `${w},${s},${e},${n}`, "--strategy", "smart", "-O", "-o", cut, pbf], { stdio: "ignore" });
+  // smart: complete ways and the members of `complete` relations, like Overpass returns them with `geom`
+  execFileSync("osmium", ["extract", "-b", `${w},${s},${e},${n}`, "--strategy", "smart", "-S", `types=${complete}`, "-O", "-o", cut, pbf], { stdio: "ignore" });
+  if (prefilter) {
+    const thin = join(DIR, `thin-${process.pid}.osm.pbf`);
+    execFileSync("osmium", ["tags-filter", cut, ...prefilter, "-O", "-o", thin], { stdio: "ignore" });
+    renameSync(thin, cut);
+  }
   const opl = execFileSync("osmium", ["add-locations-to-ways", "--keep-untagged-nodes", "-f", "opl,add_metadata=false", "-o", "-", cut],
     { maxBuffer: 2 ** 31 - 1 }).toString("utf8");
   rmSync(cut);
@@ -97,18 +106,55 @@ const LEISURE = /^(park|garden|pitch|playground|stadium|track|golf_course|swimmi
 const NATURAL = /^(water|beach|sand|scrub|grassland|wood|wetland|coastline|bare_rock|heath)$/;
 export const FILTERS = {
   trees: ((type, t) => type === "node" && t.natural === "tree") as OsmFilter,
-  /** trees + buildings (and parts) tagged with roof/wall colour or material (LoD2 regions take only the looks from OSM) */
-  treesAndLooks: ((type, t) => (type === "node" && t.natural === "tree") || (type !== "node" && !!(t.building || t["building:part"])
-    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (type === "way" && (t.name ?? "") in TOWERS) || t.amenity === "fountain") as OsmFilter,
-  /** rail route relations (S-Bahn, regional, long distance, Stadtbahn) and the tracks they run on, tunnels included */
+  /** every building (regions whose buildings come from OSM) */
+  buildings: ((type, t) => type !== "node" && !!t.building) as OsmFilter,
+  /** what the styled look takes from OSM: buildings (and parts) with roof/wall colour or material, min_height or a
+   *  tower, and the landmarks of landmarks.ts by name */
+  looks: ((type, t) => (type !== "node" && !!(t.building || t["building:part"])
+    && !!(t["roof:colour"] || t["roof:material"] || t["building:colour"] || t["building:material"] || t.min_height || /tower/.test(t.man_made ?? "") || (t.name ?? "") in LOOKS)) || (t.name ?? "") in TOWERS
+    || (type !== "node" && STRUCTURES.some((s) => s.match(t)))) as OsmFilter,
+  /** fountains: a surface model reads their sculptures as tree crowns */
+  fountains: ((_type, t) => t.amenity === "fountain") as OsmFilter,
+  /**
+   * rail route relations (S-Bahn, regional, long distance, Stadtbahn) and the tracks they run on, tunnels included;
+   * funicular tracks too (Zagreb's Uspinjača has no route relation: its two cars shuttle on the ways themselves)
+   */
   rails: ((type, t) => (type === "relation" && /^(train|light_rail|subway|tram)$/.test(t.route ?? ""))
-    || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge)$/.test(t.railway ?? ""))) as OsmFilter,
-  buildingsAndTrees: ((type, t) => (type !== "node" && !!t.building) || (type === "node" && t.natural === "tree")) as OsmFilter,
+    || (type === "way" && /^(rail|light_rail|subway|tram|narrow_gauge|funicular)$/.test(t.railway ?? ""))) as OsmFilter,
   roads: ((type, t) => type === "way" && ROAD.test(t.highway ?? "") && t.area !== "yes") as OsmFilter,
+  /** street furniture and roofs on posts (presets streetLamps, roofsOnPosts …) */
+  furniture: ((type, t) => (type === "node" && (/^(street_lamp|traffic_signals|bus_stop)$/.test(t.highway ?? "")
+      || /^(bench|waste_basket|shelter)$/.test(t.amenity ?? "") || t.man_made === "flagpole" || /^(column|billboard)$/.test(t.advertising ?? "")
+      || /^(wayside_shrine|wayside_cross|memorial)$/.test(t.historic ?? "")))
+    || (type === "way" && (/^(roof|carport)$/.test(t.building ?? "") || t.amenity === "shelter"))) as OsmFilter,
+  /** fences, walls, hedges and rails as lines (preset barriers) */
+  barriers: ((type, t) => type === "way" && /^(fence|wall|hedge|retaining_wall|guard_rail|noise_barrier|city_wall)$/.test(t.barrier ?? "")) as OsmFilter,
+  /** parking lots, bays and stalls (preset parkedCars) */
+  parking: ((type, t) => type !== "node" && (t.amenity === "parking" || t.amenity === "parking_space")) as OsmFilter,
+  /** watercourses drawn as lines (preset waterDetail) */
+  waterways: ((type, t) => type === "way" && /^(river|stream|canal|ditch|drain)$/.test(t.waterway ?? "")) as OsmFilter,
+  /** named places for the viewer's search (export.ts exportSearch): settlements and districts, sights and landmarks,
+   *  public buildings, parks, stations, shafts, ponds, woods, cemeteries */
+  search: ((_type, t) => !!t.name && (
+    /^(city|town|village|hamlet|suburb|neighbourhood|quarter|isolated_dwelling)$/.test(t.place ?? "")
+    || /^(place_of_worship|townhall|school|kindergarten|college|university|hospital|clinic|library|theatre|cinema|museum|arts_centre|community_centre|police|fire_station|post_office|marketplace|bus_station|swimming_pool|fountain)$/.test(t.amenity ?? "")
+    || (!!t.tourism && t.tourism !== "information") || (!!t.historic && !/^(wayside_cross|wayside_shrine|memorial|boundary_stone)$/.test(t.historic))
+    || /^(park|stadium|sports_centre|water_park|nature_reserve|garden)$/.test(t.leisure ?? "")
+    || /^(station|halt)$/.test(t.railway ?? "") || /^(mineshaft|tower|water_tower)$/.test(t.man_made ?? "")
+    || /^(peak|water|wood)$/.test(t.natural ?? "") || t.landuse === "cemetery"
+    || /^(church|chapel|cathedral|castle|palace)$/.test(t.building ?? ""))) as OsmFilter,
+  /** the salt mine's shafts, its outline and the underground reserve (mine.ts) */
+  mine: ((_type, t) => t.man_made === "mineshaft" || t.historic === "mine" || t.historic === "mine_shaft"
+    || (t.leisure === "nature_reserve" && t.location === "underground")) as OsmFilter,
+  /** playgrounds and their equipment (preset playgrounds) */
+  play: ((_type, t) => t.leisure === "playground" || !!t.playground) as OsmFilter,
+  /** high-voltage power lines and their towers and portals (preset powerLines) */
+  power: ((type, t) => (type === "way" && t.power === "line") || (type === "node" && /^(tower|portal)$/.test(t.power ?? ""))) as OsmFilter,
   ground: ((type, t) =>
     (type === "way" && !!t.highway && !/yes|building_passage/.test(t.tunnel ?? ""))
     || (type === "way" && !!t["area:highway"])
     || (type === "way" && /^(rail|light_rail|tram)$/.test(t.railway ?? "") && t.tunnel !== "yes")
+    || (type === "way" && t.railway === "platform")
     || !!t.landuse || LEISURE.test(t.leisure ?? "") || NATURAL.test(t.natural ?? "") || !!t.water
     || t.waterway === "riverbank" || /^(parking|school|university|college|hospital|grave_yard)$/.test(t.amenity ?? "")
     || /^(pier|breakwater|groyne|bridge)$/.test(t.man_made ?? "") || t.place === "square"

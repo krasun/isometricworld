@@ -72,6 +72,7 @@ const ogImage = __OG_CARDS__.includes(ogFile) ? new URL(`/og/${ogFile}`, site).h
 	</head>
 	<body data-city={city} data-region={c.region}>
 		<div id="map"></div>
+		<div id="corner-buttons"></div>
 		{pv && (
 			/* the opening view as one image (and a blurred inline version until it loads); map.ts fades it out
 			   once the tiles are in. Laid out like the viewer opens the city: full width, centred vertically. */
@@ -126,6 +127,17 @@ const ogImage = __OG_CARDS__.includes(ogFile) ? new URL(`/og/${ogFile}`, site).h
 				background: rgba(10, 12, 16, 0.42); backdrop-filter: blur(4px); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); pointer-events: none; }
 			body.video #video-credit { display: block; }
 			body.video #credits { display: none; }
+			/* round switches in the top right corner, one under the other in a fixed order: the salt mine (mine.ts),
+			   the biplane (fly.ts) */
+			#corner-buttons { position: fixed; z-index: 10; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
+				display: flex; flex-direction: column; gap: 8px; }
+			#corner-buttons > button { width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+				background: rgba(255, 255, 255, 0.85); color: #555; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); touch-action: manipulation; }
+			#corner-buttons > button[aria-pressed="true"] { background: #1f2a37; color: #fff; }
+			#corner-buttons > button:hover { filter: brightness(1.08); }
+			#mine-toggle { order: 2; }
+			#fly-toggle { order: 3; }
+			body.video #corner-buttons { display: none; }
 		</style>
 
 		<script>

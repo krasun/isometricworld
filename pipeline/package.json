@@ -5,13 +5,17 @@
   "scripts": {
     "render": "tsx src/render.ts",
     "paint": "tsx src/paint.ts",
+    "landmark": "tsx src/landmark.ts",
     "export": "tsx src/export.ts",
     "boundaries": "tsx src/boundaries.ts",
     "typecheck": "tsc --noEmit",
     "fetch": "tsx src/fetch.ts",
     "scene": "tsx src/scene.ts",
     "ground": "tsx src/ground.ts",
+    "mine": "tsx src/mine.ts",
     "publish": "tsx src/publish.ts",
+    "archive": "tsx src/archive.ts",
+    "pull": "tsx src/archive.ts pull",
     "og": "tsx src/og.ts"
   },
   "dependencies": {

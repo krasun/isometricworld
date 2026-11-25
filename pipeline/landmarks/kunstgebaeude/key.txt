@@ -1,0 +1,3 @@
+This is a map of the Schlossplatz in Stuttgart with the Kunstgebäude (pale stone hall with a green copper roof, a columned drum and dome with a golden stag, and a round-arched arcade with a red tile roof).
+- KEEP, pixel for pixel exactly as they are: the whole Kunstgebäude (dome, drum, green roofs, arcade with its red roof, walls down to its foot, the statues next to it).
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the lake, park, paths, squares, streets, trees and every other building, including the Neues Schloss and the Königsbau.

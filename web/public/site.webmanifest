@@ -1,7 +1,7 @@
 {
   "name": "Isometric World",
   "short_name": "Isometric World",
-  "description": "Hand-painted isometric city maps from open data.",
+  "description": "Isometric city maps from open data, painted with AI.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0e0f12",

@@ -1,0 +1,9 @@
+Paint image 1 as a clean, SIMPLE isometric illustration in EXACTLY the style of image 3 and of image 1 itself: flat-shaded 3D blocks with a thin dark outline along every edge, each surface one flat colour, low-poly faceted tree crowns with a dark outline, soft even daylight.
+
+The subject is the Neues Schloss in Stuttgart (1746–1807), the baroque palace on the Schlossplatz. In image 1 it is only a plain massing model. Repaint THIS building as it really is (see the photos, images 5–8; image 5 looks down on its roof):
+- Three long wings in a U around a deep paved cour d'honneur that opens onto the Schlossplatz, with a pavilion at the end of each side wing; two to three storeys.
+- Walls of warm salmon-ochre render with pale sandstone window frames, pilasters and cornices; the centre block and the pavilions in plain sandstone.
+- Steep dark slate-grey mansard roofs with many small dormers capped in green copper, and thin copper-green ridge and cornice lines.
+- In the middle of the centre block: a pediment with a coat of arms and a green copper dome with a small gilded crown on top. A stone balustrade with small statues along the roof edge of the centre block.
+- On the garden side of the centre block a twin outdoor staircase; the cour d'honneur is a light paved court with a low wrought-iron fence and gate piers to the Schlossplatz.
+Everything else (the streets, squares, park, paths, water, trees and every other building) stays EXACTLY as in image 1, pixel for pixel; do not move or restyle anything there. Same camera and scale as image 1; footprint and position exactly as in images 1, 2 and 4 (the photos say nothing about position or size). No text, lettering, banners, posters, logos or signs anywhere, even where the photos show them.

@@ -18,10 +18,30 @@ export function outlineLatLon(region = activeRegion()): Pt[][] | null {
   if (!o) return null;
   if (!R.osmExtract) throw new Error(`${region}: outline needs osmExtract`);
   const rings: Pt[][] = [];
-  for (const id of o.relations) rings.push(...relationRings(R.osmExtract, id));
+  for (const id of o.relations) rings.push(...relationRings(R.osmExtract, id).map((r) => o.clip ? clipRing(r, o.clip) : r));
   for (const r of rings) if (r.length > 1 && r[0][0] === r.at(-1)![0] && r[0][1] === r.at(-1)![1]) r.pop(); // GeoJSON repeats the first vertex
+  for (let i = rings.length - 1; i >= 0; i--) if (rings[i].length < 3) rings.splice(i, 1); // wholly outside the clip
   for (const [s, w, n, e] of o.add ?? []) rings.push([[s, w], [s, e], [n, e], [n, w]]);
   return rings;
+}
+
+/** Sutherland–Hodgman: a [lat, lon] ring cut to a box [s, w, n, e] (concave rings keep zero-width seams on the cut). */
+function clipRing(ring: Pt[], [s, w, n, e]: [number, number, number, number]): Pt[] {
+  const planes: Array<[number, number, 1 | -1]> = [[0, s, 1], [0, n, -1], [1, w, 1], [1, e, -1]]; // axis, value, keep side
+  let out = ring;
+  for (const [ax, v, side] of planes) {
+    const src = out, inside = (p: Pt) => (p[ax] - v) * side >= 0;
+    out = [];
+    for (let i = 0; i < src.length; i++) {
+      const a = src[i], b = src[(i + 1) % src.length];
+      if (inside(a)) out.push(a);
+      if (inside(a) !== inside(b)) {
+        const t = (v - a[ax]) / (b[ax] - a[ax]);
+        out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+      }
+    }
+  }
+  return out;
 }
 
 function relationRings(extract: string, id: number): Pt[][] {

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 export const PIPELINE = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const ROOT = join(PIPELINE, "..");
-export const DATA = join(ROOT, "data");
+export const DATA = process.env.DATA_DIR || join(ROOT, "data"); // override: test runs against a scratch copy
 export const RAW = join(DATA, "raw");
 export const DERIVED = join(DATA, "derived");
 /** Built map data waiting to be published (served by the dev server over production); emptied by publish. */
@@ -15,11 +15,19 @@ export const WEB_STATE = join(DATA, "web-state");
 if (existsSync(join(ROOT, ".env"))) process.loadEnvFile(join(ROOT, ".env"));
 /** Chromium/Chrome for the renderer and the test scripts, and its launch flags (GPU backend etc.). */
 export const CHROME = process.env.CHROME_PATH || "/usr/bin/chromium";
-/** The running site the test/film scripts open: their URL argument, else SITE_URL (e.g. the dev server). */
+/**
+ * The running site the test/film scripts open: their URL argument, else SITE_URL, else the dev server that is
+ * running now (web/astro.config.mjs writes its URL to data/dev-server.json on start).
+ */
 export function siteUrl(arg?: string): string {
   const url = arg || process.env.SITE_URL;
-  if (!url) throw new Error("pass the site URL (the dev server prints it: http://localhost:<port>/) or set SITE_URL in .env");
-  return url;
+  if (url) return url;
+  const f = join(DATA, "dev-server.json");
+  if (existsSync(f)) {
+    const { url: dev, pid } = JSON.parse(readFileSync(f, "utf8")) as { url: string; pid: number };
+    try { process.kill(pid, 0); return dev; } catch { /* stopped without cleaning up */ }
+  }
+  throw new Error("no site URL: start the dev server (npm run dev), pass its URL, or set SITE_URL in .env");
 }
 export const CHROME_ARGS = (process.env.CHROME_ARGS || "--enable-gpu").split(/\s+/).filter(Boolean);
 

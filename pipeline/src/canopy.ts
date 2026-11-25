@@ -11,13 +11,16 @@ type P2 = [number, number];
 export interface Crown { e: number; n: number; r: number; h: number }
 
 /**
- * @param at       nDOM pixel (UTM metres, integer pixel south-west corner -> height above ground, NaN outside)
+ * @param at       nDOM pixel (projected metres, integer pixel south-west corner -> height above ground, NaN outside)
  * @param bbox     [s, w, n, e] lat/lon of the area (+ margin)
- * @param blocked  UTM footprints (buildings) where the nDOM is roof, not tree
+ * @param blocked  footprints (buildings, projected metres) where the nDOM is roof, not tree
+ * @param toXy     the nDOM's projection: lat/lon -> easting, northing (default UTM32)
+ * Crowns come back in the same projected metres.
  */
-export function crowns(at: (x: number, y: number) => number, bbox: number[], blocked: P2[][]): Crown[] {
+export function crowns(at: (x: number, y: number) => number, bbox: number[], blocked: P2[][],
+  toXy: (lat: number, lon: number) => [number, number] = toUtm): Crown[] {
   const [S, W, N, E] = bbox;
-  const corners = [[S, W], [S, E], [N, W], [N, E]].map(([la, lo]) => toUtm(la, lo));
+  const corners = [[S, W], [S, E], [N, W], [N, E]].map(([la, lo]) => toXy(la, lo));
   const x0 = Math.floor(Math.min(...corners.map((c) => c[0]))), y0 = Math.floor(Math.min(...corners.map((c) => c[1])));
   const nx = Math.ceil(Math.max(...corners.map((c) => c[0]))) - x0, ny = Math.ceil(Math.max(...corners.map((c) => c[1]))) - y0;
   const chm = new Float32Array(nx * ny);

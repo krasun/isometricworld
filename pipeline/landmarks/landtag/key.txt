@@ -1,0 +1,3 @@
+This is a map of the Schlossgarten in Stuttgart with the Landtag (a square modernist box of dark bronze glass with a flat roof and round skylights).
+- KEEP, pixel for pixel exactly as they are: the whole Landtag box (roof, skylights, glass walls, the dark shadow line at its foot) and the three flagpoles.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: lawns, paths, streets, trees, water and every other building, including the Neues Schloss, the Kunstgebäude and the opera.

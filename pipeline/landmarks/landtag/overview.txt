@@ -1,0 +1,8 @@
+Paint image 1 as a clean, SIMPLE isometric illustration in EXACTLY the style of image 3 and of image 1 itself: flat-shaded 3D blocks with a thin dark outline along every edge, each surface one flat colour, low-poly faceted tree crowns with a dark outline, soft even daylight.
+
+The subject is the Landtag of Baden-Württemberg (1961) in the Schlossgarten in Stuttgart, behind the Neues Schloss. In image 1 it is only a plain massing model. Repaint THIS building as it really is (see the photos, images 5–7; image 5 looks down on its roof):
+- A square, strictly modernist box: the two upper storeys are a continuous curtain wall of dark bronze-brown glass with thin dark vertical mullions on all four sides; the ground floor is set back and glazed, so the box seems to float over a dark shadow line.
+- A flat dark grey roof with a neat ring of small round light-coloured skylights near its middle.
+- Lawn around it; on the side toward the lake three tall, thin flagpoles without flags.
+- The low flat-roofed Bürger- und Medienzentrum next to it is mostly underground: a flat paved or green roof with a glazed edge, nothing tall.
+Everything else (the streets, squares, park, paths, water, trees and every other building) stays EXACTLY as in image 1, pixel for pixel; do not move or restyle anything there. Same camera and scale as image 1; footprint and position exactly as in images 1, 2 and 4 (the photos say nothing about position or size). No text, lettering, banners, posters, logos or signs anywhere, even where the photos show them.

@@ -1,0 +1,3 @@
+This is a map of the Mineralbad Berg in Stuttgart: the white two-storey L-shaped bath building around a turquoise outdoor pool.
+- KEEP, pixel for pixel exactly as they are: the bath building (roofs, walls, gallery, down to its foot), the pool with its stone deck and fountain, the sunbeds, and the lawns and hedges inside the bath grounds right around the pool.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the surrounding park and its paths, the railway, the lakes, all streets, every other building and all trees outside the bath grounds.
