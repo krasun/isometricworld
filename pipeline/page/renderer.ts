@@ -1182,23 +1182,11 @@ function siteFence(o: Out, mesh: number[], panels: Array<[P2, P2]>) {
  * block, square lattice mast, slewing deck with the cab, an A-frame head with pendant ties to a triangular
  * lattice jib and a flat counter-jib carrying concrete counterweights; trolley and hook on the jib.
  */
-function crane(o: Out, { x, y, a, h }: Crane) {
-  const YEL = [0.93, 0.72, 0.13], GREY = [0.62, 0.62, 0.6], z0 = ground(x, y);
-  const cu = Math.cos(a), sn = Math.sin(a);
-  /** local (along jib, across, up from the ground) to world */
-  const P = (u: number, v: number, w: number) => [x + u * cu - v * sn, y + u * sn + v * cu, z0 + w];
-  const M = 1.0, CH = 0.3, LACE = 0.14; // mast half-width, chord and lacing widths
+function crane(o: Out, { x, y, a }: Crane) {
+  const GREY = [0.62, 0.62, 0.6], z0 = ground(x, y);
   prism(o, x, y, z0, 5, 5, 1.4, 1.4, a, GREY); // ballast block
-  // mast: four chords, rings and zigzag lacing on each face
-  const corners = [[-M, -M], [M, -M], [M, M], [-M, M]];
-  for (const [u, v] of corners) bar(o, P(u, v, 1.4), P(u, v, h), CH, YEL);
-  for (let w = 1.4, k = 0; w < h - 0.1; w += 2 * M, k++) for (let i = 0; i < 4; i++) {
-    const [u0, v0] = corners[i], [u1, v1] = corners[(i + 1) % 4], w1 = Math.min(h, w + 2 * M);
-    bar(o, P(u0, v0, w), P(u1, v1, w), LACE, YEL);
-    bar(o, P(k % 2 ? u0 : u1, k % 2 ? v0 : v1, w), P(k % 2 ? u1 : u0, k % 2 ? v1 : v0, w1), LACE, YEL);
-  }
-  // the slewing top (deck, cab, jibs, A-frame, trolley and hook) turns live on the map: web/src/scripts/cranes.ts,
-  // from export.ts exportCranes
+  // the mast and the slewing top are drawn live on the map (crisp at every zoom): web/src/scripts/cranes.ts, from
+  // export.ts exportCranes
 }
 function pointInRing(x: number, y: number, ring: P2[]) {
   let c = false;

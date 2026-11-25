@@ -28,7 +28,7 @@ const JW = 0.8, JH = 1.6, M = 1.0; // jib half-width and height, mast half-width
 /** where the hook is: slew angle, trolley radius, hook height above the base; the load on it (-1: none) */
 interface Pose { th: number; r: number; z: number; load: number }
 interface Seg { t0: number; dur: number; a: Pose; b: Pose }
-interface Crane { o: Vec3; h: number; jib: number; counter: number; segs: Seg[]; cycle: number; phase: number }
+interface Crane { o: Vec3; a0: number; h: number; jib: number; counter: number; segs: Seg[]; cycle: number; phase: number }
 
 const ease = (f: number) => f * f * (3 - 2 * f);
 
@@ -76,7 +76,7 @@ export class Cranes {
         go({ z: travel, load: -1 }, 5 + 25 * rnd());
       }
       go({ th: th0 + Math.round((at.th - th0) / (2 * Math.PI)) * 2 * Math.PI, r: reach(0.4) }, 3); // back where the loop starts
-      return { o: [e, n, u], h, jib, counter, segs, cycle: t, phase: rnd() * t };
+      return { o: [e, n, u], a0: th0, h, jib, counter, segs, cycle: t, phase: rnd() * t };
     });
   }
 
@@ -101,10 +101,11 @@ export class Cranes {
       if (reach < 6 || o[0] < view[0] - reach || o[1] < view[1] - reach || o[0] > view[2] + reach || o[1] > view[3] + reach) continue;
       const p = this.pose(c), cu = Math.cos(p.th), sn = Math.sin(p.th);
       const P = (u: number, v: number, w: number): Vec3 => [c.o[0] + u * cu - v * sn, c.o[1] + u * sn + v * cu, c.o[2] + w];
-      const top = c.h + 1, detail = perM > 1.6;
+      const top = c.h + 1, detail = perM > 4; // the lattice once a 0.3 m chord is 1.2 px (outlined); below, solid outlined bands
       const jb = (u: number, side: number) => P(u, side * JW, top), jt = (u: number) => P(u, 0, top + JH * Math.max(0.35, 1 - (u / c.jib) * 0.65));
-      const bars: Array<{ a: Vec3; b: Vec3; w: number; col: RGB }> = [], boxes: Array<{ q: Vec3; s: Vec3; col: RGB }> = [];
-      const bar = (a: Vec3, b: Vec3, w: number, col = YEL) => bars.push({ a, b, w, col });
+      // main members (min: their least width in px) stay solid and outlined at every zoom, like the mast on the tile
+      const bars: Array<{ a: Vec3; b: Vec3; w: number; col: RGB; min: number }> = [], boxes: Array<{ q: Vec3; s: Vec3; col: RGB }> = [];
+      const bar = (a: Vec3, b: Vec3, w: number, col = YEL, min = 0) => bars.push({ a, b, w, col, min });
       const box = (q: Vec3, s: Vec3, col: RGB) => boxes.push({ q, s, col }); // q: centre of the base; s: along, across, up
 
       // the jib's shadow on the ground (the site is flat round the crane): jib, counter-jib, cable
@@ -115,6 +116,11 @@ export class Cranes {
       let s0 = shadow(P(-c.counter, 0, top)), s1 = shadow(P(c.jib, 0, top));
       ctx.moveTo(s0[0], s0[1]); ctx.lineTo(s1[0], s1[1]);
       ctx.stroke();
+      ctx.lineWidth = Math.max(1, 2 * M * perM); // the mast's
+      ctx.beginPath();
+      s0 = shadow(c.o); s1 = shadow(P(0, 0, c.h));
+      ctx.moveTo(s0[0], s0[1]); ctx.lineTo(s1[0], s1[1]);
+      ctx.stroke();
       ctx.lineWidth = Math.max(0.7, 0.15 * perM);
       ctx.beginPath();
       s0 = shadow(P(p.r, 0, top)); s1 = shadow(P(p.r, 0, p.z));
@@ -122,11 +128,24 @@ export class Cranes {
       ctx.stroke();
       ctx.globalAlpha = 1;
 
+      // the mast (fixed, square to the jib's rest angle a0): four chords, rings and zigzag lacing; far, one band
+      const ca = Math.cos(c.a0), sa = Math.sin(c.a0);
+      const Q = (u: number, v: number, w: number): Vec3 => [c.o[0] + u * ca - v * sa, c.o[1] + u * sa + v * ca, c.o[2] + w];
+      if (detail) {
+        const K = [[-M, -M], [M, -M], [M, M], [-M, M]];
+        for (const [u, v] of K) bar(Q(u, v, 1.4), Q(u, v, c.h), 0.3);
+        for (let w = 1.4, k = 0; w < c.h - 0.1; w += 2 * M, k++) for (let i = 0; i < 4; i++) {
+          const [u0, v0] = K[i], [u1, v1] = K[(i + 1) % 4], w1 = Math.min(c.h, w + 2 * M);
+          bar(Q(u0, v0, w), Q(u1, v1, w), 0.14);
+          bar(Q(k % 2 ? u0 : u1, k % 2 ? v0 : v1, w), Q(k % 2 ? u1 : u0, k % 2 ? v1 : v0, w1), 0.14);
+        }
+      } else bar(Q(0, 0, 1.4), Q(0, 0, c.h), 2 * M, YEL, 2.6);
       // slewing deck and cab
       box(P(0, 0, c.h), [3.2, 3.2, 1.0], YEL);
       box(P(2.2, 1.4, c.h - 0.2), [2.2, 1.6, 2.2], CAB);
       // jib: two bottom chords, a top chord, lacing every 2.5 m (when close enough to see it)
-      bar(jb(1.6, -1), jb(c.jib, -1), 0.3); bar(jb(1.6, 1), jb(c.jib, 1), 0.3); bar(jt(1.6), jt(c.jib), 0.3);
+      if (detail) { bar(jb(1.6, -1), jb(c.jib, -1), 0.3); bar(jb(1.6, 1), jb(c.jib, 1), 0.3); bar(jt(1.6), jt(c.jib), 0.3); }
+      else bar(P(1.6, 0, top + JH * 0.4), P(c.jib, 0, top + JH * 0.2), 1.4, YEL, 2.6); // far: the jib as one band
       if (detail) for (let u = 1.6, k = 0; u < c.jib; u += 2.5, k++) {
         const u1 = Math.min(c.jib, u + 2.5);
         bar(jb(u, -1), jb(u, 1), 0.14);
@@ -134,13 +153,14 @@ export class Cranes {
         bar(jb(k % 2 ? u : u1, 1), jt(k % 2 ? u1 : u), 0.14);
       }
       // counter-jib, its weights and the winch
-      bar(P(-1.6, -JW, top), P(-c.counter, -JW, top), 0.3); bar(P(-1.6, JW, top), P(-c.counter, JW, top), 0.3);
+      if (detail) { bar(P(-1.6, -JW, top), P(-c.counter, -JW, top), 0.3); bar(P(-1.6, JW, top), P(-c.counter, JW, top), 0.3); }
+      else bar(P(-1.6, 0, top), P(-c.counter, 0, top), 1.4, YEL, 2.6);
       if (detail) for (let u = 1.6; u < c.counter; u += 2.5) bar(P(-u, -JW, top), P(-u, JW, top), 0.14);
       box(P(-c.counter + 1.6, 0, top - 2.6), [2.6, 2.4, 2.8], GREY);
       box(P(-c.counter * 0.55, 0, top), [2.0, 1.4, 1.1], WINCH);
       // A-frame head and the pendant ties
       const apex = P(0, 0, top + 7);
-      for (const u of [-1.2, 1.2]) for (const v of [-JW, JW]) bar(P(u, v, top), apex, 0.3);
+      for (const u of [-1.2, 1.2]) for (const v of [-JW, JW]) bar(P(u, v, top), apex, 0.3, YEL, detail ? 0 : 1.4);
       bar(apex, jt(c.jib * 0.62), 0.08, DARK); bar(apex, P(-c.counter + 1, 0, top), 0.08, DARK);
       // trolley, cable, hook block, the load slung under it
       box(P(p.r, 0, top - 1.0), [1.4, 1.8, 0.5], DARK);
@@ -156,10 +176,10 @@ export class Cranes {
       type Item = { d: number; draw: () => void };
       const items: Item[] = [];
       const ink = Math.max(0.6, Math.min(2.2, 0.3 * perM)), dot = (q: Vec3) => q[0] * L[0] + q[1] * L[1] + q[2] * L[2];
-      for (const { a, b, w, col } of bars) items.push({ d: (dot(a) + dot(b)) / 2, draw: () => {
-        const pa = proj(a), pb = proj(b), lw = Math.max(0.6, w * perM);
+      for (const { a, b, w, col, min } of bars) items.push({ d: (dot(a) + dot(b)) / 2, draw: () => {
+        const pa = proj(a), pb = proj(b), lw = Math.max(0.6, min, w * perM);
         ctx.beginPath(); ctx.moveTo(pa[0], pa[1]); ctx.lineTo(pb[0], pb[1]);
-        if (lw > 1.2) { ctx.strokeStyle = "#1c1f24"; ctx.lineWidth = lw + ink; ctx.stroke(); }
+        if (lw > 1.2 || min) { ctx.strokeStyle = "#1c1f24"; ctx.lineWidth = lw + Math.max(ink, 1.2); ctx.lineCap = "butt"; ctx.stroke(); }
         ctx.strokeStyle = rgb(col, 1); ctx.lineWidth = lw; ctx.stroke();
       } });
       for (const { q, s, col } of boxes) {
