@@ -75,7 +75,7 @@ console.log(`  upload through ${S3 ? "R2's S3 API (R2_ACCESS_KEY_ID)" : "the Clo
 // The Cloudflare API allows ~1200 requests / 5 min per user: pace uploads at ~3.8/s, back off on 429.
 const RATE = S3 ? Infinity : 3.8;
 let nextSlot = Date.now();
-const slot = async () => { const t = Math.max(Date.now(), nextSlot); nextSlot = t + 1000 / RATE; await new Promise((r) => setTimeout(r, t - Date.now())); };
+const slot = async () => { const t = Math.max(Date.now(), nextSlot); nextSlot = t + 1000 / RATE; await new Promise((r) => setTimeout(r, Math.max(0, t - Date.now()))); };
 
 const TYPES: Record<string, string> = { avif: "image/avif", webp: "image/webp", json: "application/json" };
 const api = `https://api.cloudflare.com/client/v4/accounts/${HOSTING.accountId}/r2/buckets/${HOSTING.bucket}/objects/`;
@@ -145,4 +145,4 @@ console.log(`  ${HOSTING.origin}/regions/${region}/${probe}: ${r.status}`);
 
 mkdirSync(WEB_STATE, { recursive: true });
 if (finalState) renameSync(pending, publishedStateFile(region));
-if (!args.includes("--keep")) { rmSync(dir, { recursive: true, force: true }); console.log(`  cache emptied: ${dir}`); }
+if (!args.includes("--keep")) { rmSync(dir, { recursive: true, force: true, maxRetries: 5 }); console.log(`  cache emptied: ${dir}`); }

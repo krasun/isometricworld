@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { ecefToEnu, llhToEcef } from "./camera.ts";
 import { type Lod2Building, hashAlong, triangulate, type V3 } from "./lod2.ts";
 import { RAW, readJson } from "./paths.ts";
-import { fromTm } from "./utm.ts";
+import { fromTm, type Tm } from "./utm.ts";
 
 type P2 = [number, number];
 type BBox = [number, number, number, number];
@@ -74,7 +74,8 @@ function readShp(zip: string): Buffer {
 }
 
 /** HTRS96/TM (central meridian 16.5°, scale 0.9999) easting, northing -> lon, lat; a WGS84 dataset passes as is */
-const htrs = (e: number, n: number): [number, number] => { const [lat, lon] = fromTm(e, n, 16.5, 0.9999); return [lon, lat]; };
+const HTRS96: Tm = { k0: 0.9999, lon0: 16.5, fe: 500000, fn: 0 };
+const htrs = (e: number, n: number): [number, number] => { const [lat, lon] = fromTm(e, n, HTRS96); return [lon, lat]; };
 const projected = (zip: string) => /HTRS96_Croatia_TM/.test(execFileSync("unzip", ["-p", zip, "*.prj"]).toString());
 /** index box [s, w, n, e]; projected ones hold [northing, easting] bounds: their corners in lat/lon */
 function boxLatLon(b: BBox): BBox {
@@ -289,5 +290,5 @@ function building(id: string, polys: V3[][][], center: [number, number], geoid: 
   if (!candidates.length) return null;
   const misfit = (c: P2[]) => roofArea > 1 ? Math.abs(Math.log(Math.abs(area2(c)) / roofArea)) : -c.length;
   const footprint = candidates.reduce((best, c) => misfit(c) < misfit(best) ? c : best);
-  return { id, fn: "zg3d", roofType: flat ? "1000" : "3100", height: zmax - base, base, roof, wall, footprint, center, utm: [] };
+  return { id, fn: "zg3d", roofType: flat ? "1000" : "3100", height: zmax - base, base, roof, wall, footprint, center, xy: [] };
 }

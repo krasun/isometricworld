@@ -2,24 +2,42 @@
 
 Isometric maps of real cities, built from open data. Everything is TypeScript.
 
-![Tel Aviv-Yafo](video/tel-aviv-yafo.gif)
+[![Tel Aviv-Yafo](video/tel-aviv-yafo.gif)](https://isometricworld.dmytrokrasun.com/tel-aviv-yafo)
 
-First city: **Tel Aviv-Yafo** (`/tel-aviv-yafo` on the dev server), from Jaffa to Yarkon Park and
+First city: **[Tel Aviv-Yafo](https://isometricworld.dmytrokrasun.com/tel-aviv-yafo)** (`/tel-aviv-yafo` on the dev server), from Jaffa to Yarkon Park and
 Ramat Gan, including the sea, painted with AI (OpenAI's image model through the Codex CLI). Full-quality clip: [`video/tel-aviv-yafo.mp4`](video/tel-aviv-yafo.mp4).
 
-![Stuttgart](video/stuttgart.gif)
+[![Stuttgart](video/stuttgart.gif)](https://isometricworld.dmytrokrasun.com/stuttgart)
 
-Second city: **Stuttgart** (`/stuttgart`), by [Lukas Hermann](https://lukashermann.dev/): the city and the towns
+Second city: **[Stuttgart](https://isometricworld.dmytrokrasun.com/stuttgart)** (`/stuttgart`), by [Lukas Hermann](https://lukashermann.dev/): the city and the towns
 around it from LGL Baden-Württemberg open data, drawn procedurally instead of painted. Full-quality clip:
 [`video/stuttgart.mp4`](video/stuttgart.mp4).
 
-![Zagreb](video/zagreb.gif)
+[![Zagreb](video/zagreb.gif)](https://isometricworld.dmytrokrasun.com/zagreb)
 
-Third city: **Zagreb** (`/zagreb`), by [Andrej Šimunaj](https://zeropointstudio.io): the whole city (its 17
-districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted with AI (OpenAI's and Google's image models through fal.ai). Live at
-[isometricworld.dmytrokrasun.com/zagreb](https://isometricworld.dmytrokrasun.com/zagreb) and on Andrej's site,
-[zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io). Full-quality clip:
+Third city: **[Zagreb](https://isometricworld.dmytrokrasun.com/zagreb)** (`/zagreb`), by [Andrej Šimunaj](https://zeropointstudio.io): the whole city (its 17
+districts) from the City of Zagreb's ZG3D LoD2 model, with urban Zagreb painted with AI (OpenAI's and Google's image models through fal.ai). Also on Andrej's
+site, [zagreb.zeropointstudio.io](https://zagreb.zeropointstudio.io). Full-quality clip:
 [`video/zagreb.mp4`](video/zagreb.mp4).
+
+[![Wieliczka](video/wieliczka.gif)](https://isometricworld.dmytrokrasun.com/wieliczka)
+
+Fourth city: **[Wieliczka](https://isometricworld.dmytrokrasun.com/wieliczka)** (`/wieliczka`), by [Maciek Chmura](https://maciek.cloud/): the town near Kraków from
+GUGiK, Poland's national open geodata, drawn procedurally instead of painted, with its salt mine's levels under
+the town and a biplane to fly over it. Full-quality clip: [`video/wieliczka.mp4`](video/wieliczka.mp4).
+Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i
+kartograficznego (GUGiK, CC BY 4.0) · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Salt mine: plan by
+W. Hondius, 1645 (public domain).
+
+[![Kraków](video/krakow.gif)](https://isometricworld.dmytrokrasun.com/krakow)
+
+Fifth city: **[Kraków](https://isometricworld.dmytrokrasun.com/krakow)** (`/krakow`), by [Piotr Kulpiński](https://kulpinski.dev/): the whole city, from
+the Old Town and Wawel to Nowa Huta, on the same map and in the same style as Wieliczka, from the same GUGiK data,
+with MPK's trams on their real lines and dorożki (horse-drawn carriages) round Rynek Główny. Full-quality clip:
+[`video/krakow.mp4`](video/krakow.mp4). Same credits as Wieliczka, without the salt mine's plan.
+
+Elsewhere: **[Bratislava](https://bratislava.jantursky.com/)**, by [Ján Turský](https://jantursky.com/), a fork on its own site: the whole city from
+OpenStreetMap and Copernicus terrain, styled, with a landmarks guide and a flight over the city.
 
 ## The idea
 
@@ -84,7 +102,7 @@ Map data is not in git or `web/public`. It lives in the R2 bucket `isometricworl
 see `.env.example`; read by `pipeline/src/hosting.ts`).
 
 ```
-data/derived/<area>/{render,paint,height}   sources (local only; expensive: back them up)
+data/derived/<area>/{render,paint,height}   sources (local; archived in isometricworld-archive, see Archive)
         │ npm run export -- <areas>          only tiles whose source changed (state: data/web-state/<region>.json)
         ▼
 data/web/regions/<region>/                  local cache = unpublished changes
@@ -122,6 +140,41 @@ R2 isometricworldtiles/regions/<region>/    production (dev and deployed builds 
   `--keep` leaves the cache in place, `--yes` skips the question.
 - The bucket is public, read-only (CORS: any origin, GET/HEAD), so a production build works from any host or
   local port. In dev, `/regions/*` goes through the dev server: the local cache first, then proxied from R2.
+
+### Archive (R2)
+
+The pipeline's own files (`data/derived/`: renders, height passes, painted windows and tiles; `data/raw/`:
+fetched sources) are archived in a second, private bucket, `isometricworld-archive` (Infrequent Access,
+`pipeline/src/archive.ts`). No machine is then the only copy of the paintings, and a later repaint downloads
+and uploads only the part it touches.
+
+```sh
+npm run archive -- <region>          # upload what is new or changed (all areas of the region); `shared`: the rest of data/raw
+npm run archive -- <region> --verify # every entry is in the bucket with its size; 40 random files downloaded and hashed
+npm run pull -- <region> shared      # the small files: manifests, ground, height passes, scene, raw sources, paint.json…
+npm run pull -- <region> --near <lat>,<lon> --radius 1   # + renders, paintings and windows of a patch
+npm run pull -- <region> --all       # everything (--history adds windows-replaced/, paint-withdrawn/, work/)
+npm run archive -- --tar <url> --sha256 <hex>   # stream a contributor's tar of data/… into the archive, no local copy
+```
+
+- Content-addressed: `objects/<sha256>` holds each distinct file once (windows shared between areas, hard links),
+  `manifests/<region>.json` maps every path under `data/` to `[sha256, size, mtime]`, and each upload leaves a
+  dated copy in `manifests/<region>/`. Nothing is overwritten or deleted: a repainted window is a new object.
+- `pull` hash-checks every file, restores mtimes (paint and export compare them), links identical files instead
+  of downloading them twice, and never replaces a local file that differs from the archive (`--force` does).
+- **Repainting a few buildings** on a machine without the region:
+  ```sh
+  npm run pull -- zagreb shared --near 45.81,15.977 --radius 1   # the patch: the windows paint --near repaints, their neighbours, every window under their tiles
+  npm run paint -- zagreb-core --near 45.81,15.977 --radius 1
+  npm run export -- zagreb --partial    # re-encodes only the tiles whose render/painting is here; the rest stays as published
+  npm run publish -- zagreb             # only the changed tiles
+  npm run archive -- zagreb             # only the new windows and paintings
+  ```
+  `--partial` still builds roads, trains and bridge decks for the whole region, from the small files `pull`
+  brings (`raw/<area>/roads.json`, `ground/`, `height/`). A region with only tiles in the archive (Zagreb's
+  backup had no `raw/` and `ground/`) needs `npm run fetch` and `npm run ground` for each area first.
+- Same auth as publish; with an R2 access key (`R2_ACCESS_KEY_ID`) it runs 16 at a time instead of ~4 files/s.
+  `ARCHIVE_BUCKET` points it elsewhere.
 
 ### Contributing a city
 
@@ -180,6 +233,7 @@ npm -w pipeline exec tsx src/traffictest.ts http://localhost:<port>/ 5     # 5 s
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/tel-aviv-yafo.mp4  # 14 s 1080² 60 fps clip for X (--preview: quick 6 fps check; --blur 8: motion blur)
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/stuttgart.mp4 --city stuttgart --seconds 4.5  # shots per city: FILMS in film.ts
 npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/zagreb.mp4 --city zagreb --film zagreb-readme --seconds 12  # --film: another shot list
+npm -w pipeline exec tsx src/film.ts http://localhost:<port>/ ../video/wieliczka.mp4 --city wieliczka --seconds 12
 npm -w pipeline exec tsx src/beforeafter.ts before.mp4 after.mp4 ../video/stuttgart-before-after.mp4 --holds 0,7.35,19  # wipe: production vs dev cache (--film stuttgart-before-after; steps in beforeafter.ts)
 ```
 
@@ -207,17 +261,68 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
 | paint | `pipeline/src/paint.ts` | Codex CLI image generation (ChatGPT login, no API key). Each window gets four images: the render, the height map, the style reference (`pipeline/style/reference.png`) and the tree species sheet (`pipeline/style/trees.png`: ficus, tipuana, jacaranda, flame tree, olive, Aleppo pine, eucalyptus, date and fan palms; the render colour-codes each crown's species, mostly one species per ~40 m patch). Windows are 1024 px with stride 896, painted in rings from the centre; each continues its painted neighbours. With `PAINT_BACKEND=fal` (`FAL_KEY`) the windows go to an image model on fal.ai instead, many at once (`-j`), each call's billed cost logged to `paint-spend.jsonl` and capped by `PAINT_BUDGET_USD`. Open sea reuses one validated sea texture. Any window with a black band or patch is repainted, and every restart re-checks finished windows. Negative window numbers need `--window=-7,4`. To fix something on a seam, delete the neighbour sharing it first (each window copies its painted neighbours' edge strips, so a repaint would copy the old mistake back). When tiles are assembled, deep water in every window is shifted to the median deep-sea colour, fading in from the coast, so the sea has no window-sized patches. `--older=<ISO time>` repaints windows painted before that time (after a style change) alongside a normal run. `--assemble` only rebuilds the art tiles. |
 | export | `pipeline/src/export.ts` | Builds the `map` layer (paints, renders where unpainted) and the `photo` layer (renders) as an AVIF pyramid, only the tiles whose source changed since the published state, into the local cache. Every tile's content hash goes into `tiles-<layer>.<hash>.json` (the viewer requests `?v=<hash>`). Each city's opening view is saved as a small preview image (`preview/`), shown until the tiles are in. Roads go out columnar and delta-coded. OSM borders are projected onto the real terrain height from the height pass. OSM road bridges (layer > 0) are drawn over the painted tiles in the painted road style, so a bridge deck always lies on top of any rails or lanes Codex drew across it. |
 | publish | `pipeline/src/publish.ts` | Uploads the cache to the R2 bucket (tiles and previews first, `world.json` last), checks every upload, records the published state, empties the cache. |
-| web | `web/src/scripts/map.ts`, `traffic.ts`, `cats.ts`, `sky.ts` | OpenSeadragon deep zoom: a sparse pyramid with a tile index (no 404s), level blending, and zoom limited to the metro. A canvas overlay draws borders, labels, and simulated cars and buses on OSM roads (split at every shared node): lanes within the drawn asphalt, car following with safe gaps, junctions taken in turns by approach, drifting cruise speeds; hidden behind buildings using the height pass and under bridges (higher OSM layer). A few street cats (~1 per 900 m of street) sit and stroll on the pavements when zoomed in close; small flocks of green parakeets dart over the streets, and every ~2 min an airliner comes in from the sea on the Ben Gurion approach and fades out inland. Keys: **B** borders · **T** traffic · **P** raw render · **I** about · **V** video mode (`?video`). `/#metro` shows the whole metro. |
+| web | `web/src/scripts/map.ts`, `traffic.ts`, `cats.ts`, `sky.ts` | OpenSeadragon deep zoom: a sparse pyramid with a tile index (no 404s), level blending, and zoom limited to the metro. A canvas overlay draws borders, labels, and simulated cars and buses on OSM roads (split at every shared node): lanes within the drawn asphalt, car following with safe gaps, junctions taken in turns by approach, drifting cruise speeds; hidden behind buildings using the height pass and under bridges (higher OSM layer). A few street cats (~1 per 900 m of street) sit and stroll on the pavements when zoomed in close; small flocks of green parakeets dart over the streets, and every ~2 min an airliner comes in from the sea on the Ben Gurion approach and fades out inland. Regions can opt into more life (`life` in `places.ts`): detailed vehicles (body and cabin with windows and lights, vans, buses with their window band, shadows cast like the styled render's), coach parks of a tourist site (rows of parked coaches as on the orthophoto, coaches driving to and from them along the road graph by Dijkstra distances; `traffic.ts`), and pigeons on a square (walking, pecking, taking off as a flock; `pigeons.ts`). With `life.foreground` the render also writes a mask of what stands higher than a car (crowns, walls and roofs over ~2.5 m); export cuts those pixels out of the render as the `fg` tile layer (transparent elsewhere, z5–8), and the viewer draws it back over the vehicles where they are (`foreground.ts`), so they pass under trees and behind houses partly covered instead of fading out. Regions can opt into viewer effects (`effects` in `places.ts`): a biplane to fly over the map (`fly.ts`: arrows or WASD bank it into turns and change its speed, a finger or the mouse held on the map steers it there, the map follows; a 3D model built in `biplane.ts` with three.js, loaded at the first take-off, seen through the map's camera and lit by its sun, an object of the map at 2.5× life size flying 45 m up, smoke puffs behind; its shadow lies over roofs, walls and crowns, read from the render's height pass, which export writes as `tiles/height/` for regions with a biplane, `heights.ts`). Round buttons in the top right corner, one under the other, switch them. More effects: cloud shadows drifting over the map (`clouds.ts`), and a search box finding streets and places by name with `/` (`search.ts`; export writes `data/search`: named roads and the named places of the region's OSM extract). Keys: **B** borders · **T** traffic · **P** raw render · **I** about · **V** video mode (`?video`) · **F** fly (Esc lands). `/#metro` shows the whole metro. |
 
-**Stuttgart** (region `stuttgart`, `sources: "lgl"`) differs from Tel Aviv:
+**Stuttgart** (region `stuttgart`, `sources: "lgl"`, `look: "styled"`) differs from Tel Aviv:
 
 - Data: LGL Baden-Württemberg open data (dl-de/by-2.0, `lgl.ts`): LoD2 buildings with real roofs (`lod2.ts`),
   DGM1 bare-earth terrain, and tree crowns found in the nDOM1 surface model (`canopy.ts`).
 - OSM comes from a Geofabrik extract via osmium (`osmExtract`, `osmlocal.ts`; `brew install osmium-tool`),
   not from Overpass.
-- Look: the renderer draws a styled look itself (facade and roof materials, hillshade, outlines, ambient
-  occlusion, paper grain; `STYLED` in `renderer.ts`). Selected patches of the centre are painted over it from
-  aerial photos (below); export shows paint where it exists and the styled render everywhere else.
+- Look: not painted (`look: "styled"`, independent of `sources`). The renderer draws a styled look itself
+  (facade and roof materials, hillshade, outlines, ambient occlusion, paper grain; `STYLED` in `renderer.ts`).
+  Variants of it are presets in `pipeline/src/styles.ts` (`style`; Stuttgart uses the default "stuttgart"):
+  cast sun shadows, wall palettes per building style, and `monumental` walls for chosen building kinds
+  (churches in "poland": laid out on each LoD2 wall from its own extent, not a floor grid: pilasters, one tall
+  arched window per bay, cornice, oculus and portal in the gable, towers in storeys with a clock and belfry).
+  Where the source says what a building is used for and how many storeys it has (GUGiK: BDOT10k), its walls
+  follow that rather than chance: window rows by storeys, shop fronts where there is a shop, loggias on blocks
+  of flats, garage, shed and hall doors, a market's panels, sign band and entrance (`facadeFlags` in
+  `scene.ts`, `wallFacts` in `renderer.ts`); a measured roof colour is never replaced by a made-up green roof.
+  `eaves` (on in "poland"): LoD2 roofs end flush with the walls, so each pitched roof plane is carried past its
+  eaves (≈ 0.5 m) and gables (≈ 0.3 m), with a gutter under the eaves and downpipes at their ends and corners.
+  `trunks`: broadleaf crowns stand on a trunk. `streetDetail`: pavements only where OSM's `sidewalk*` tags put
+  them, separately mapped sidewalks drawn as kerbed pavement, and road and path surfaces (paving, setts,
+  gravel, dirt, grass, concrete) from OSM `surface` (`ground.ts`, `page/ground.ts`). `lawns`: lawns and
+  gardens where the orthophoto is green, traced as smooth outlines over plain residential land (`lawns.ts`),
+  and a grass texture fixed to the map on lawns, parks, meadows and the like. `richTrees` (`page/trees.ts`):
+  crowns of several lobes in a few variants, a Central European species mix with its own shapes, colours and
+  bark (limes, oaks, birches, fruit trees, poplars, willows, tiered spruces, umbrella pines, thujas), and
+  foliage shading (clumps of leaves, a darker underside); each keeps the top the surface model measured.
+  `bushes`: bushes and hedges from the surface model 0.7–3.5 m above the ground where the orthophoto is green,
+  away from buildings and taller vegetation (`gugik.ts` bushes), drawn as lobed bushes and thujas.
+  `bridgeDetail`: OSM bridges often end short of their abutments, over the gap the terrain model leaves under
+  them; each abutment end is carried on to where the embankment tops out (`ground.ts`; `deckHeight` takes the
+  extensions, so traffic drives on the drawn deck), decks are as wide as the road plus a cornice, with 3D
+  parapets, and piers stand under high spans, off the roads and rails below (`renderer.ts` buildDecks).
+  `powerLines`: OSM high-voltage lines (`fetch.ts` osm-power.json) built as lattice pylons (or tapered poles) at
+  their towers, arms across the line by circuits, conductors and an earth wire sagging between them; heights
+  from OSM or the voltage, since the surface model does not see a lattice (`power.ts`). `playgrounds`: the
+  equipment OSM maps on playgrounds as small bright models, on public playgrounds without any a set by their
+  size (sandpit, swing, tower with a slide, seesaw, spring riders, roundabout), rubber safety pads under it and
+  sandpits on the ground (`playgrounds.ts`). `waterDetail`: water with lighter shallows along the shore, a muddy
+  bank, ripples and sun glints fixed to the map, murky treatment basins, dry detention and retention reservoirs
+  (`intermittent=yes`) as the grassy basin they are most of the time, and the rivers, streams, ditches and
+  drains OSM maps as lines (`fetch.ts` osm-water.json, culverts left out). `parkedCars`: cars on the parking
+  lots and bays OSM maps, about two thirds occupied: on its stalls where mapped, else laid out by the lot's shape
+  (a kerbside lane, a row, or rows between aisles), with stall lines on lots (`parking.ts`). `barriers`: OSM
+  fences (see-through: posts and rails), walls, noise barriers, retaining walls and guard rails on the terrain,
+  hedges as rows of bushes (`barriers.ts`). `streetLamps`: OSM street lamps with an arm over the nearest road;
+  `roofsOnPosts`: building=roof and carport outlines (fuel canopies, carports, shelters) as slabs on posts at the
+  surface model's height (`props.ts`). `streetFurniture`: bus shelters open to the road (a blue stop sign where
+  there is none), benches, waste baskets, flagpoles with a Polish or EU flag, advertising columns and
+  billboards, wayside shrines and crosses, memorial stones, traffic signals on both sides of the road (`props.ts`).
+  `closedLines`: roads and paths mapped as one closed way (roundabouts, loops round a car park or a lawn) are
+  simplified as rings; the line simplification collapsed them to nothing (on in both presets; Zagreb, on the default
+  preset, keeps its published tiles until re-rendered). `roofDetail`: clay roofs in courses of staggered tiles, each tile its own
+  shade, grey sheet roofs with standing seams down the slope, brick or plaster chimneys rising past the ridge of
+  homes' pitched roofs. `ink`: how strong the post pass's outlines are and from which depth crease, and how dark
+  its ambient occlusion makes a corner ("poland": crisper lines and deeper corners than "stuttgart"). `repaint` (on in "stuttgart"):
+  what AI repaints of the render taught, drawn by the renderer: green gardens and parks, one dark asphalt with an
+  ink kerb line, kerb shadows, bold markings and rounded inside corners, ponds with a shore path, runways with
+  piano keys, designators and lights, mown grass strips, tracks on shared gravel beds with bold rails, rail yards
+  and platforms (`page/ground.ts`); bigger two-casement windows with stone surrounds and storey cornices, darker
+  bark and, without `trunks`, crowns stretched into ovals over a short trunk (`renderer.ts`).
 - Painting from aerial photos (the Stadtbibliothek / Europaviertel patch, windows 4..6 × -1..1 of `stuttgart-core`):
   1. `npx tsx src/aerial.ts <area> --near <lat>,<lon> --radius <r> --source city` drapes the city's 2023
      orthophotos (CC BY 4.0, cached in `data/raw/aerial/`) onto the render's view: every non-wall pixel gets the
@@ -266,10 +371,60 @@ most tiles differ slightly, so `--parts` is what keeps a fix small.
 - OSM detail on top of LoD2: `roof:colour`/`roof:material` and `building:colour`/`building:material` set roof
   and facade looks; tall towers (`man_made=tower|communications_tower`, ≥ 60 m) are rebuilt from their OSM
   `building:part`s; no nDOM tree crowns on railway and construction land.
-- Landmarks (`landmarks.ts`): hand-built models from published dimensions, matched by OSM `name`: the
-  Fernsehturm (whole tower) and the Mercedes star on the Bahnhofsturm (on its roof).
+- Landmarks (`landmarks.ts`: the registries and how they are matched; the models per region in `landmarks/`):
+  hand-built models from published dimensions, matched by OSM `name`: the Fernsehturm (whole tower) and the
+  Mercedes star on the Bahnhofsturm (on its roof). `STRUCTURES` builds tagged structures from their OSM outline
+  in every region (graduation towers); `PLACED` puts a model at a measured point (Wieliczka's viewing tower).
 - Areas: the city (`stuttgart-*`) and the towns around it (`metro-*`) are split into overlapping areas. Where
   they overlap, export takes each tile from the area it lies deepest inside.
+
+**Wieliczka** (region `wieliczka`, `sources: "gugik"`, `look: "styled"`, `style: "poland"`) differs again:
+
+- Data: GUGiK, Poland's national open geodata (CC BY 4.0; the 3D models CC0), read per powiat (`teryt`) in
+  PUWG 1992 (`gugik.ts`, built on Piotr Kulpiński's Kraków branch): the 3D building models (LoD2 with roofs from
+  the 2017 airborne LiDAR, LoD1 2024 for newer buildings), BDOT10k for what each building is used for (it picks
+  the look and the façade's storeys, shops and doors), the buildings the models lack from BDOT10k and OSM
+  outlines with roofs fitted to the surface model (`fitroof.ts`), NMT 1 m terrain (Copernicus outside its
+  sheets), tree crowns from NMPT − NMT, and the orthophoto (WMS, 0.25 m) read for each roof's roofing, the
+  lawns and gardens (`lawns.ts`) and which crowns have foliage. No pixel of the photo is shown.
+- OSM from the Geofabrik Małopolska extract via osmium, as in Stuttgart.
+- Look: styled, preset "poland" (`styles.ts`; the features above).
+- Shape: the gmina and Kraków (`outline`), cut further by the areas: the town and the A4 stay clear of the
+  faded edge.
+- Viewer (`effects`, `life`): a biplane to fly (F; its shadow laid over roofs from the exported
+  height pass), cloud shadows, a search box (export writes the index), detailed vehicles, coaches to the salt
+  mine's coach parks, pigeons on Rynek Górny, and a foreground layer so vehicles pass under trees and behind houses.
+- Areas: `wieliczka-rynek` (a test patch: the Rynek, the castle, the shafts), `wieliczka-town` (the town and a
+  ~650 m ring) and the mine's levels below.
+
+```sh
+npm -w pipeline run boundaries -- wieliczka
+npm run fetch -- wieliczka-town               # GUGiK models, BDOT10k, NMT/NMPT sheets, orthophoto; OSM from the extract
+npm run ground -- wieliczka-town && npm run scene -- wieliczka-town
+npm run render -- wieliczka-town -j 2         # ~35 min
+npm run export -- wieliczka-town
+```
+
+**Wieliczka's salt mine** (`mine.ts`, `minedata.ts`, `page/mine.ts`; web `mine.ts`): a lift panel, opened by the
+round button in the corner column (or `?level=III`), goes down the mine's levels I–IX, each its own transparent tile
+layer (`tiles/mine-<level>/`) over the dimmed town, drawn as a cutaway (the rock cut 3 m above the floor) and draped
+on the terrain so every chamber lies under the spot above it. No plan of the mine is open: `minedata.ts` holds what
+open sources give (level depths and chamber counts, shaft depths, the routes' chambers in order with their depths
+and sizes; MINE-RESEARCH.md, kept locally, has the survey). How sure each part is shows in its colour: the shafts,
+the mine's outline and the Groty Kryształowe reserve come from OSM (known: turquoise rings and boundary); the
+routes' chambers and galleries are placed schematically round their shafts (approximate: a gold floor with a bright
+rim, "≈" on the map); everything else is generated to each level's published chamber count (illustrative: a muted
+grey floor). The cut rock between the workings shows the deposit's general build, green salt boulders in clay over
+folded beds that take more of each level the deeper it goes (`page/minerock.ts`, illustrative), and hides a few
+things just for fun (`EGGS`: a dinosaur, St. Kinga's ring, …), labelled "✦ just for fun" on the map. One more layer
+shows the first level on Hondius's 1645 plan (public domain), fitted on the three shafts it shares with today (2–4 m
+residuals).
+
+```sh
+npm -w pipeline run mine                      # data/derived/wieliczka-mine-<level>/ (needs wieliczka-town's ground)
+for l in I IIw IIn III IV V VI VII VIII IX 1645; do npm run render -- wieliczka-mine-$l -j 2; done
+npm run export -- wieliczka-town              # the levels go out with the region whenever they are rendered
+```
 
 **Zagreb** (region `zagreb`, `sources: "zg3d"`) differs again:
 

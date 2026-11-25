@@ -3,12 +3,18 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 
-export function codex(cwd: string, images: string[], prompt: string, timeoutMs = 900_000): Promise<void> {
+/**
+ * `model`: the Codex model that drives the image tool (else CODEX_MODEL, else ~/.codex/config.toml's);
+ * `effort`: its reasoning effort.
+ */
+export function codex(cwd: string, images: string[], prompt: string, opts: { model?: string; effort?: string; timeoutMs?: number } = {}): Promise<void> {
   return new Promise((resolve) => {
     const log = openSync(join(cwd, "codex.log"), "w");
-    const p = spawn("codex", ["exec", "--skip-git-repo-check", ...(process.env.CODEX_MODEL ? ["-m", process.env.CODEX_MODEL] : []), "-s", "workspace-write", "-C", cwd, ...images.flatMap((f) => ["-i", f]), "-"],
+    const codexModel = opts.model ?? process.env.CODEX_MODEL;
+    const model = [...(codexModel ? ["-m", codexModel] : []), ...(opts.effort ? ["-c", `model_reasoning_effort="${opts.effort}"`] : [])];
+    const p = spawn("codex", ["exec", "--skip-git-repo-check", "-s", "workspace-write", ...model, "-C", cwd, ...images.flatMap((f) => ["-i", f]), "-"],
       { stdio: ["pipe", log, log] });
-    const timer = setTimeout(() => p.kill("SIGTERM"), timeoutMs);
+    const timer = setTimeout(() => p.kill("SIGTERM"), opts.timeoutMs ?? 900_000);
     p.on("close", () => { clearTimeout(timer); closeSync(log); resolve(); });
     p.stdin!.end(prompt);
   });

@@ -58,5 +58,5 @@ const graph = [
   `[w2][2:v]overlay=${M}:${M}[w3]`, `[w3][3:v]overlay=W-w-${M}:${M},format=yuv420p,noise=alls=5:allf=t[v]`,
 ].join(";");
 execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", before, "-i", after, "-i", join(tmp, "before.png"), "-i", join(tmp, "after.png"),
-  "-filter_complex", graph, "-map", "[v]", "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out], { stdio: "inherit" });
+  "-filter_complex", graph, "-map", "[v]", "-c:v", "libx264", "-preset", "slow", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out], { stdio: "inherit" });
 console.log(`-> ${out}`);

@@ -7,7 +7,9 @@
 
 type P2 = [number, number];
 /** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
-export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: [number, number]; s?: string; ref?: string; sh?: 1 }
+/** p, u: pavement sides and surface (src/ground.ts, preset streetDetail); s: a track line's surface kind; ref: a
+ *  runway's designators; sh: a sheltered platform */
+export interface Feature { k: string; r?: P2[][]; l?: P2[]; w?: number; o?: 1; n?: number; y?: number; j?: number[][]; v?: number; b?: 1; e?: number[]; s?: string; p?: number; u?: string; ref?: string; sh?: 1 }
 interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[number, number, number, number, number?]> }
 
 const FILL: Record<string, string> = {
@@ -16,7 +18,7 @@ const FILL: Record<string, string> = {
   park: "#9dcb6c", wood: "#73a851", scrub: "#adbb7b", sand: "#eedbab", pitch: "#6db35a", track: "#c97a5c",
   playground: "#dccba1", parking: "#bebcb7", paving: "#e6e0d4", water: "#3f95c2", pool: "#5ccbe6",
   vineyard: "#bfc27a", allotments: "#a9c676", orchard: "#b4cc7e", meadow: "#b6cf7e",
-  flowerbed: "#86b45a", gravel: "#ddd0b4",
+  flowerbed: "#86b45a", gravel: "#ddd0b4", lawn: "#a5c972", sandpit: "#efdfb0", wastewater: "#7d9286", drybasin: "#93b968",
   fairway: "#8fca62", green: "#76c158", bunker: "#f0e2b4", airgrass: "#a8cf78", tarmac: "#8e9196",
 };
 /** field shades (ground.ts fieldShade): wheat, maize, grass, vegetables, rapeseed, then unmapped fields by id */
@@ -27,13 +29,18 @@ const FIELD = ["#d8c983", "#a9c26a", "#b8cf7f", "#bcc48c", "#e0d66c",
 const NESTED = new Set(["park", "flowerbed", "paving", "gravel"]);
 const BLOOM = ["#e0525e", "#f2c94c", "#f4f1ea", "#c86bb0"];
 /** paint order of area kinds: broad landuse first, details on top */
-const AREA_ORDER = ["residential", "commercial", "industrial", "railyard", "campus", "farm", "meadow", "orchard", "vineyard", "allotments",
-  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "water", "pool"];
+const AREA_ORDER = ["residential", "commercial", "industrial", "railyard", "campus", "lawn", "farm", "meadow", "orchard", "vineyard", "allotments",
+  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "sandpit", "playpad", "drybasin", "water", "wastewater", "pool"];
+/** rubber safety surface under playground equipment: red-brown, green, blue (v) */
+const PADS = ["#b8604c", "#5f9c4c", "#557fb5"];
 const BASE = "#d9d3c4";
 const SEA = "#2c80b2", SHALLOW = "#4ea6cb";
 const ASPHALT: Record<string, string> = { highway: "#6c7077", street: "#7b7e85", lane: "#8b8d91", dirtroad: "#c3ab82" };
 const PATHS: Record<string, string> = { path: "#ebe5d6", cycle: "#c98e6c", plaza: "#e6e0d4" };
 const SIDEWALK = "#e4ded2", KERB = "#c9c4b9";
+/** OSM surfaces (preset streetDetail): of roads, and of paths and pavements */
+const ROAD_SURFACE: Record<string, string> = { paving: "#a9a49b", sett: "#988e83", gravel: "#cdbd98", dirt: "#c3ab82", grass: "#a6c27a", concrete: "#a9a9a6" };
+const PATH_SURFACE: Record<string, string> = { paving: "#e3dccf", sett: "#d0c7b9", gravel: "#ddd0b4", dirt: "#d6c4a0", grass: "#b9d58c", concrete: "#dddcd7" };
 const SHADOW_DIR: P2 = [0.84, 0.54]; // away from the renderer's sun (-0.55, -0.35, 0.76)
 /** styled regions (final look, no paint step): gardens and parks green like the painted house style, so grey
  *  streets and light paths stand out (measured from the AI paint over the same render) */
@@ -64,10 +71,71 @@ function filletFilter(rPx: number) {
   return `url(#${id})`;
 }
 
+let waterTile: HTMLCanvasElement | null = null;
+/**
+ * Ripples and glints on water (preset waterDetail), 256 px square (≈ 38 m at 0.15 m): short light and dark
+ * wavelets ~1–3 m long and a few sun glints, drawn wrapped round so the tile repeats without a seam.
+ */
+function waterTexture(): HTMLCanvasElement {
+  if (waterTile) return waterTile;
+  const N = 256, c = document.createElement("canvas");
+  c.width = c.height = N;
+  const g = c.getContext("2d")!;
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  g.lineCap = "round";
+  for (let i = 0; i < 90; i++) {
+    const x = rnd() * N, y = rnd() * N, L = 6 + rnd() * 12, light = rnd() < 0.7;
+    g.strokeStyle = light ? "rgba(235,248,255,0.16)" : "rgba(20,60,95,0.12)"; g.lineWidth = 1.2;
+    for (const dx of [-N, 0, N]) for (const dy of [-N, 0, N]) {
+      g.beginPath(); g.moveTo(x + dx, y + dy); g.quadraticCurveTo(x + dx + L / 2, y + dy - 1.5, x + dx + L, y + dy); g.stroke();
+    }
+  }
+  g.fillStyle = "rgba(255,255,240,0.55)";
+  for (let i = 0; i < 18; i++) {
+    const x = rnd() * N, y = rnd() * N;
+    for (const dx of [-N, 0, N]) for (const dy of [-N, 0, N]) g.fillRect(x + dx, y + dy, 1.5, 1.5);
+  }
+  return (waterTile = c);
+}
+
+/** Grass kinds that get the grass texture (preset `lawns`). */
+const GRASSY = new Set(["lawn", "park", "meadow", "scrub", "orchard", "cemetery", "allotments", "airgrass", "drybasin"]);
+let grassTile: HTMLCanvasElement | null = null;
+/**
+ * The grass texture, 384 px square (≈ 58 m at the ground's 0.15 m): soft lighter and darker patches about 10 m
+ * and 3.5 m across (value noise that wraps round, so the tile repeats without a seam) and a fine grain of tufts.
+ */
+function grassTexture(): HTMLCanvasElement {
+  if (grassTile) return grassTile;
+  const N = 384, c = document.createElement("canvas");
+  c.width = c.height = N;
+  const g = c.getContext("2d")!, img = g.createImageData(N, N);
+  const hash = (i: number, j: number, s: number) => { const h = Math.sin(i * 127.1 + j * 311.7 + s * 74.7) * 43758.5453; return h - Math.floor(h); };
+  const ease = (t: number) => t * t * (3 - 2 * t);
+  const noise = (x: number, y: number, cells: number, seed: number) => {
+    const fx = (x / N) * cells, fy = (y / N) * cells, i = Math.floor(fx), j = Math.floor(fy), u = ease(fx - i), v = ease(fy - j);
+    const h = (a: number, b: number) => hash(a % cells, b % cells, seed);
+    return (h(i, j) * (1 - u) + h(i + 1, j) * u) * (1 - v) + (h(i, j + 1) * (1 - u) + h(i + 1, j + 1) * u) * v;
+  };
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const n = 0.6 * noise(x, y, 6, 1) + 0.4 * noise(x, y, 16, 2) - 0.5, tuft = hash(x, y, 3), q = (y * N + x) * 4;
+    const light = n > 0, a = Math.min(0.3, Math.abs(n) * 0.32 + (tuft > 0.9 ? 0.07 : 0));
+    img.data[q] = light ? 250 : 45; img.data[q + 1] = light ? 246 : 92; img.data[q + 2] = light ? 205 : 30;
+    img.data[q + 3] = Math.round(a * 255);
+  }
+  g.putImageData(img, 0, 0);
+  return (grassTile = c);
+}
+
 export function drawGround(
   ctx: CanvasRenderingContext2D, features: Feature[], [x0, y0, x1, y1]: number[], mpt: number,
-  objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR, styled = false,
+  objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR, grass = false,
+  detailBridges = false, // preset bridgeDetail: on the deck canvas, a concrete cornice band instead of painted parapets
+  water = false, // preset waterDetail: depth, banks, ripples; watercourses
+  styled = false, // preset repaintGround: the ground as the AI repaints draw it (greens, ink kerbs, runways, gravel beds…)
 ) {
+  const CORNICE = "#cbc6bd";
   const SHADOW_DIR = shadowDir;
   const FILL_ = styled ? { ...FILL, ...STYLED_FILL } : FILL;
   const ASPHALT_ = styled ? { ...ASPHALT, ...STYLED_ASPHALT } : ASPHALT;
@@ -126,9 +194,18 @@ export function drawGround(
     if (!NESTED.has(k)) areas.push(...of(k));
     else if (k === "park") areas.push(...features.filter((f) => NESTED.has(f.k)).sort((a, b) => ringArea(b.r![0]) - ringArea(a.r![0])));
   }
+  // watercourses (preset waterDetail): a muddy bank, then the water; drawn just before the lakes and ponds, so a
+  // stream running through one is hidden by it, and under paths and roads (bridges, culverts)
+  let streams = !water;
+  const drawStreams = () => {
+    for (const f of of("stream")) stroke(f.l!, f.w! + 1.2, "rgba(95,115,80,0.7)");
+    for (const f of of("stream")) stroke(f.l!, f.w!, "#4c97c3");
+    streams = true;
+  };
   for (const f of areas) {
     const k = f.k;
-    path(f.r!); ctx.fillStyle = (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL_[k] : FILL_[k];
+    if (!streams && (k === "water" || k === "wastewater" || k === "pool")) drawStreams();
+    path(f.r!); ctx.fillStyle = k === "playpad" ? PADS[f.v ?? 0] : water && k === "water" ? "#3786b5" : (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL_[k] : FILL_[k];
     if (k === "railyard" && styled) ctx.fillStyle = yardGravel ??= gravelPattern(mpt, "#c2bcb0", "#aaa499", "#d4cfc4"); // lighter than the beds
     ctx.fill("evenodd");
     if (k === "farm" && f.v !== undefined) { // tramlines / furrows: faint parallel lines, own angle per field
@@ -148,6 +225,15 @@ export function drawGround(
       ctx.restore();
     }
     if (k === "bunker") { ctx.lineWidth = 0.4; ctx.strokeStyle = "#cdbb88"; ctx.stroke(); }
+    if (grass && GRASSY.has(k)) { // grass texture, fixed to the map (no seams between tiles), over this tile only
+      ctx.save(); ctx.clip("evenodd");
+      const pattern = ctx.createPattern(grassTexture(), "repeat")!;
+      pattern.setTransform(new DOMMatrix().scale(mpt));
+      const [bx0, by0, bx1, by1] = bounds(f.r!), ax = Math.max(bx0, x0), ay = Math.max(by0, y0);
+      ctx.fillStyle = pattern;
+      ctx.fillRect(ax, ay, Math.min(bx1, x1) - ax, Math.min(by1, y1) - ay);
+      ctx.restore();
+    }
     if (k === "flowerbed") { // blossoms: a deterministic speckle every ~1 m
       ctx.save(); ctx.clip("evenodd");
       const [bx0, by0, bx1, by1] = bounds(f.r!);
@@ -178,7 +264,19 @@ export function drawGround(
       ctx.stroke(); ctx.restore();
     }
     if (k === "pool") { ctx.lineWidth = 0.6; ctx.strokeStyle = "#e9ecee"; ctx.stroke(); }
-    if (k === "water" && styled) {
+    if ((k === "water" || k === "wastewater") && water) {
+      // depth: lighter shallows along the shore fading inwards (the outline's strokes, their inner halves inside),
+      // a muddy edge, then ripples and glints fixed to the map
+      ctx.save(); ctx.clip("evenodd");
+      const shallow = k === "water" ? [[14, "rgba(110,180,205,0.18)"], [8, "rgba(120,188,210,0.22)"], [4, "rgba(135,198,215,0.3)"]] : [[6, "rgba(150,160,140,0.25)"]];
+      for (const [w, c] of [...shallow, [1.6, "rgba(90,112,88,0.45)"]] as Array<[number, string]>) { ctx.lineWidth = w; ctx.strokeStyle = c; ctx.stroke(); }
+      const pattern = ctx.createPattern(waterTexture(), "repeat")!;
+      pattern.setTransform(new DOMMatrix().scale(mpt));
+      const [bx0, by0, bx1, by1] = bounds(f.r!), ax = Math.max(bx0, x0), ay = Math.max(by0, y0);
+      ctx.fillStyle = pattern; ctx.fillRect(ax, ay, Math.min(bx1, x1) - ax, Math.min(by1, y1) - ay);
+      ctx.restore();
+      path(f.r!); ctx.lineWidth = 0.8; ctx.strokeStyle = "rgba(95,115,80,0.55)"; ctx.stroke(); // the bank, just outside
+    } else if (k === "water" && styled) {
       // ponds: a light shore path (stroke over the edge, the water refilled over its inner half)
       if (ringArea(f.r![0]) < POND) { ctx.lineWidth = 5; ctx.strokeStyle = PATHS.path; ctx.stroke(); path(f.r!); ctx.fillStyle = FILL.water; ctx.fill("evenodd"); }
       // inner shadow under the sunward bank, then a thin darker rim
@@ -311,8 +409,18 @@ export function drawGround(
   ctx.restore();
   void ground;
 
+  if (!streams) drawStreams(); // no lake in this tile
+  // parking stall lines (preset parkedCars)
+  for (const f of of("stalls")) { path(f.r!); ctx.lineWidth = 0.12; ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.setLineDash([]); ctx.stroke(); }
   // 4. paths and plazas, then pavements under streets
-  for (const k of ["path", "plaza", "cycle"]) fillet(FILLET.path, (g) => { for (const f of of(k)) stroke(f.l!, f.w! + 2 * g, PATHS[k]); });
+  if (detailBridges) for (const f of [...of("path"), ...of("cycle"), ...of("sidewalk")]) stroke(f.l!, f.w! + 2.2, CORNICE);
+  // styled (preset repaintGround): inside corners where paths meet rounded
+  for (const k of ["path", "plaza", "cycle"]) fillet(FILLET.path, (g) => {
+    for (const f of of(k)) stroke(f.l!, f.w! + 2 * g, (f.u && PATH_SURFACE[f.u]) || (detailBridges && f.k !== "plaza" ? "#b8b7b3" : PATHS[f.k]));
+  });
+  // pavements OSM maps as their own ways: a kerbed strip
+  for (const f of of("sidewalk")) stroke(f.l!, f.w! + 0.3, KERB);
+  for (const f of of("sidewalk")) stroke(f.l!, f.w!, (f.u && PATH_SURFACE[f.u]) || SIDEWALK);
   for (const f of of("pier")) stroke(f.l!, f.w!, "#d8d2c4");
   // Roads have butt ends: a round cap on a bridge end or a wide road's end bulges over whatever it
   // meets. Joins between ways are filled by junction disks instead, drawn in the junction's layer.
@@ -329,47 +437,62 @@ export function drawGround(
   for (const layer of layers) {
     const rs = roads.filter((f) => (f.y ?? 0) === layer);
     const js = junctions.filter((j) => (j[3] ?? 0) === layer);
-    if (layer > 0) {
+    if (layer > 0 && detailBridges) for (const f of rs) stroke(f.l!, f.w! + 2.2, CORNICE); // the deck's own parapets stand on it
+    else if (layer > 0) {
       // a bridge must read as passing OVER what's below: cast shadow, dark outline, concrete parapets
       for (const f of rs) stroke(f.l!.map(([x, y]) => [x + SHADOW_DIR[0] * 4, y + SHADOW_DIR[1] * 4] as P2), f.w! + 3, "rgba(40,40,48,0.35)");
       for (const f of rs) stroke(f.l!, f.w! + 3, "#55565c");
       for (const f of rs) stroke(f.l!, f.w! + 2.4, "#e2ddd2");
     }
     const streets = rs.filter((f) => f.k === "street");
-    const streetJs = layer === 0 ? js.filter((j) => CLASS[j[4]] === "street") : []; // pavements round street corners
-    const r = layer === 0 ? FILLET.street : 0, ra = layer === 0 ? FILLET.asphalt : 0;
-    const filleted = (r: number, draw: (g: number) => void) => (r ? fillet(r, draw) : draw(0));
-    const kerb = styled ? 5.8 : 6; // styled: a thin ink line round the pavement
-    filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + kerb + 2 * g, KERB_); disks(streetJs, kerb / 2 + g, KERB_); });
-    filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + 5.4 + 2 * g, SIDEWALK_); disks(streetJs, 2.7 + g, SIDEWALK_); });
+    const streetJs = layer === 0 ? js.filter((j) => CLASS[j[4]] === "street" && j[5] !== 0) : []; // pavements round street corners
     let shadow: HTMLCanvasElement | null = null;
     let roadShape: HTMLCanvasElement | null = null; // this layer's asphalt as pixels (styled, ground level)
-    if (styled && ra) {
-      // styled, ground level: all asphalt in ONE filleted pass (per-class passes leave slivers between classes),
-      // then everything derived from that exact shape
-      const shape = shapeOf(ra, (g) => {
-        for (const k of CLASS) { for (const f of rs) if (f.k === k) stroke(f.l!, f.w! + 2 * g, ASPHALT_[k]); disks(js.filter((j) => (CLASS[j[4]] ?? "street") === k), g); }
+    if (!styled) {
+      // pavements: both sides, or the sides OSM puts them on (p: bit 1 left, 2 right; 0 none)
+      const sides = (f: Feature, w: number, c: string) => {
+        if (f.p === undefined) stroke(f.l!, f.w! + 2 * w, c);
+        else for (const [bit, side] of [[1, 1], [2, -1]]) if (f.p & bit) stroke(offset(f.l!, side * (f.w! / 2 + w / 2)), w, c);
+      };
+      for (const f of streets) sides(f, 3, KERB);
+      disks(streetJs, 3, KERB);
+      for (const f of streets) sides(f, 2.7, SIDEWALK);
+      disks(streetJs, 2.7, SIDEWALK);
+      for (const f of rs) stroke(f.l!, f.w!, (f.u && ROAD_SURFACE[f.u]) || ASPHALT[f.k]);
+      disks(js, 0);
+    } else {
+          const r = layer === 0 ? FILLET.street : 0, ra = layer === 0 ? FILLET.asphalt : 0;
+      const filleted = (r: number, draw: (g: number) => void) => (r ? fillet(r, draw) : draw(0));
+      const kerb = styled ? 5.8 : 6; // styled: a thin ink line round the pavement
+      filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + kerb + 2 * g, KERB_); disks(streetJs, kerb / 2 + g, KERB_); });
+      filleted(r, (g) => { for (const f of streets) stroke(f.l!, f.w! + 5.4 + 2 * g, SIDEWALK_); disks(streetJs, 2.7 + g, SIDEWALK_); });
+      if (styled && ra) {
+        // styled, ground level: all asphalt in ONE filleted pass (per-class passes leave slivers between classes),
+        // then everything derived from that exact shape
+        const shape = shapeOf(ra, (g) => {
+          for (const k of CLASS) { for (const f of rs) if (f.k === k) stroke(f.l!, f.w! + 2 * g, ASPHALT_[k]); disks(js.filter((j) => (CLASS[j[4]] ?? "street") === k), g); }
+        });
+        const asphalt = scratch("asphalt"); asphalt.drawImage(shape, 0, 0);
+        // ink kerb line: the asphalt shape grown by 1 px (8 shifted copies), inked, under the asphalt
+        const ink = scratch("ink");
+        for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) ink.drawImage(canvases.asphalt, dx, dy);
+        ink.globalCompositeOperation = "source-in"; ink.fillStyle = INK; ink.fillRect(0, 0, W, H);
+        // kerb shadow: what lies outside the road, shifted down-sun and blurred, kept on the road
+        const sh = scratch("shadow");
+        sh.fillStyle = KERB_SHADOW.color; sh.fillRect(0, 0, W, H);
+        sh.globalCompositeOperation = "destination-out"; sh.filter = `blur(${KERB_SHADOW.blur / mpt}px)`;
+        sh.drawImage(canvases.asphalt, (SHADOW_DIR[0] * KERB_SHADOW.d) / mpt, (-SHADOW_DIR[1] * KERB_SHADOW.d) / mpt);
+        sh.filter = "none"; sh.globalCompositeOperation = "destination-in"; sh.drawImage(canvases.asphalt, 0, 0);
+        shadow = canvases.shadow;
+        roadShape = canvases.asphalt;
+        ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(canvases.ink, 0, 0); ctx.drawImage(canvases.asphalt, 0, 0); ctx.restore();
+      } else if (ra) for (const k of CLASS) filleted(ra, (g) => {
+        for (const f of rs) if (f.k === k) stroke(f.l!, f.w! + 2 * g, ASPHALT_[k]);
+        disks(js.filter((j) => (CLASS[j[4]] ?? "street") === k), g);
       });
-      const asphalt = scratch("asphalt"); asphalt.drawImage(shape, 0, 0);
-      // ink kerb line: the asphalt shape grown by 1 px (8 shifted copies), inked, under the asphalt
-      const ink = scratch("ink");
-      for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) ink.drawImage(canvases.asphalt, dx, dy);
-      ink.globalCompositeOperation = "source-in"; ink.fillStyle = INK; ink.fillRect(0, 0, W, H);
-      // kerb shadow: what lies outside the road, shifted down-sun and blurred, kept on the road
-      const sh = scratch("shadow");
-      sh.fillStyle = KERB_SHADOW.color; sh.fillRect(0, 0, W, H);
-      sh.globalCompositeOperation = "destination-out"; sh.filter = `blur(${KERB_SHADOW.blur / mpt}px)`;
-      sh.drawImage(canvases.asphalt, (SHADOW_DIR[0] * KERB_SHADOW.d) / mpt, (-SHADOW_DIR[1] * KERB_SHADOW.d) / mpt);
-      sh.filter = "none"; sh.globalCompositeOperation = "destination-in"; sh.drawImage(canvases.asphalt, 0, 0);
-      shadow = canvases.shadow;
-      roadShape = canvases.asphalt;
-      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(canvases.ink, 0, 0); ctx.drawImage(canvases.asphalt, 0, 0); ctx.restore();
-    } else if (ra) for (const k of CLASS) filleted(ra, (g) => {
-      for (const f of rs) if (f.k === k) stroke(f.l!, f.w! + 2 * g, ASPHALT_[k]);
-      disks(js.filter((j) => (CLASS[j[4]] ?? "street") === k), g);
-    });
-    else { for (const f of rs) stroke(f.l!, f.w!, ASPHALT_[f.k]); disks(js, 0); }
-    if (shadow) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(shadow, 0, 0); ctx.restore(); }
+      else { for (const f of rs) stroke(f.l!, f.w!, ASPHALT_[f.k]); disks(js, 0); }
+      if (shadow) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(shadow, 0, 0); ctx.restore(); }
+    }
     // 5. markings, kept out of junctions (lines of crossing roads would scribble over each other)
     // styled: drawn on a scratch canvas with the junctions (+4 m) cut out; an even-odd clip would let marks
     // through where junction circles overlap
@@ -383,7 +506,7 @@ export function drawGround(
       ctx.clip("evenodd");
     }
     for (const f of rs) {
-      if (f.k !== "street" && f.k !== "highway") continue;
+      if ((f.k !== "street" && f.k !== "highway") || f.u) continue; // no lines on setts, gravel…
       // styled: no markings on short pieces (turn links and stubs inside big junctions scribble at bold widths)
       if (styled && f.l!.reduce((a, p, i) => (i ? a + Math.hypot(p[0] - f.l![i - 1][0], p[1] - f.l![i - 1][1]) : 0), 0) < 25) continue;
       const w = f.w!;
@@ -432,7 +555,8 @@ export function drawGround(
       for (const f of rl) for (const s of [-0.85, 0.85]) stroke(offset(f.l!, s), 0.45, "#ffffff");
       ctx.lineCap = "round";
     } else for (const f of rl) {
-      if (layer > 0) { stroke(f.l!, 5, "#55565c"); stroke(f.l!, 4.4, "#cfcac0"); } // deck edge and parapets, like road bridges
+      if (layer > 0 && detailBridges) stroke(f.l!, 5, CORNICE);
+      else if (layer > 0) { stroke(f.l!, 5, "#55565c"); stroke(f.l!, 4.4, "#cfcac0"); } // deck edge and parapets, like road bridges
       stroke(f.l!, 3.4, "#a9a49a");
       stroke(f.l!, 2.6, "#7d6a58", [0.25, 0.4]);
       ctx.setLineDash([]);
@@ -440,7 +564,7 @@ export function drawGround(
     }
     ctx.setLineDash([]);
     // 6b. platforms beside open-air track (ground.ts): light concrete, a white safety line 0.6 m in, dark edge
-    if (layer === 0) for (const f of of("platform")) {
+    if (layer === 0 && styled) for (const f of of("platform")) {
       const PLAT = "#dcd6ca", LINE = "#fbf9f3", EDGE = styled ? INK : "#7d7a74";
       if (f.r) {
         const path = () => { ctx.beginPath(); for (const q of f.r!) q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); };

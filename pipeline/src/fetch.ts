@@ -6,8 +6,16 @@
  * data/raw/<area>/tlv_buildings.geojson  Tel Aviv-Yafo GIS layer 513: footprints, 2019 surveyed
  *                                        height above ground, base/roof elevation, floors
  * data/raw/<area>/tlv_canopy.geojson     layer 574: 2024 tree canopy polygons
- * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage)
+ * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage; none where LoD2
+ *                                        has the buildings), roof/facade looks + landmarks (styled regions)
  * data/raw/<area>/osm_parts.json         OSM building:parts (Tel Aviv-Yafo: towers on podiums)
+ * data/raw/<area>/osm-buildings.json     every OSM building (sources "gugik": the ones the 3D models and BDOT10k lack)
+ * data/raw/<area>/osm-power.json         OSM high-voltage power lines and their towers (preset powerLines)
+ * data/raw/<area>/osm-play.json          OSM playgrounds and their equipment (preset playgrounds)
+ * data/raw/<area>/osm-water.json         OSM rivers, streams, canals, ditches and drains as lines (preset waterDetail)
+ * data/raw/<area>/osm-parking.json       OSM parking lots, bays and stalls (preset parkedCars)
+ * data/raw/<area>/osm-barriers.json      OSM fences, walls, hedges, guard rails (preset barriers)
+ * data/raw/<area>/osm-furniture.json     OSM street lamps, roofs on posts, shelters, benches, shrines… (presets streetLamps …)
  * data/raw/<area>/roads.json             OSM drivable roads (for the traffic animation)
  * data/raw/<area>/rails.json             OSM rail routes (S-Bahn, regional, Stadtbahn…) and their tracks (trains), funiculars
  * data/raw/<area>/ground.json            OSM ground surface: roads/paths, landuse, parks, water,
@@ -15,6 +23,8 @@
  * data/raw/dem/*.tif                     Copernicus GLO-30 elevation (1°×1° tiles, AWS open data)
  * data/raw/lgl/{dgm1,ndom1,lod2}/*.zip    LGL Baden-Württemberg terrain, surface heights, LoD2 buildings
  *                                        (regions with sources "lgl"; see lgl.ts)
+ * data/raw/gugik/                        GUGiK LoD2, LoD1 2024, BDOT10k (per powiat), NMT and NMPT sheets
+ *                                        (regions with sources "gugik"; see gugik.ts)
  *
  * data/raw/zg3d/*.zip                    City of Zagreb ZG3D 2022 LoD2 buildings, one Shapefile per district
  *                                        (regions with sources "zg3d"; see zg3d.ts)
@@ -24,10 +34,12 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openArea } from "./areas.ts";
-import { LOOKS, REBUILDS, TOWERS } from "./landmarks.ts";
+import { LOOKS, REBUILDS, STRUCTURES, TOWERS } from "./landmarks.ts";
 import { download } from "./lgl.ts";
-import { FILTERS, localOsm, type OsmFilter } from "./osmlocal.ts";
+import { fetchGugik } from "./gugik.ts";
+import { FILTERS, downloadExtract, localOsm, type OsmFilter } from "./osmlocal.ts";
 import { overpass } from "./overpass.ts";
+import { styleOf } from "./styles.ts";
 import { RAW } from "./paths.ts";
 import { REGIONS } from "./places.ts";
 import { downloadZg3d } from "./zg3d.ts";
@@ -78,11 +90,17 @@ async function arcgis(layer: number, bbox: [number, number, number, number], fie
 const name = process.argv[2] ?? "tlv-core";
 const area = openArea(name);
 const sources = REGIONS[area.region].sources;
+/** Buildings come from LoD2 and tree crowns from a surface model (data), not from OSM. */
+const LOD2 = sources === "lgl" || sources === "gugik";
+/** Styled look (places.ts `look`): OSM roof/facade colours, tall towers and landmarks on top of the LoD2 meshes. */
+const STYLED = REGIONS[area.region].look === "styled";
 const extract = REGIONS[area.region].osmExtract;
 /** Overpass query, or the same selection from the region's local extract. */
 const osmQuery = (ql: string, bbox: number[], filter: OsmFilter) => extract ? localOsm(extract, bbox, filter) : overpass(ql);
 const dir = join(RAW, name);
 mkdirSync(dir, { recursive: true });
+// first: the region outline (outline.ts) is cut from the extract, and the LGL tiles to fetch depend on it
+if (extract) await downloadExtract(extract);
 
 if (sources === "tlv") {
   if (!existsSync(join(dir, "tlv_buildings.geojson")))
@@ -97,15 +115,29 @@ if (sources === "lgl") {
   await download("ndom1", [s - m, w - m, n + m, e + m]);
   await download("dgm1", [s - g, w - g, n + g, e + g]);
 }
+if (sources === "gugik") await fetchGugik(REGIONS[area.region].teryt ?? [], area.bbox);
 if (sources === "zg3d") await downloadZg3d();
-/** OSM building selection: LGL takes only roof/wall looks, ZG3D also every building (newer ones fill its gaps). */
-const buildingFilter = sources === "lgl" ? FILTERS.treesAndLooks : sources === "zg3d" ? FILTERS.buildingsAndLooks : FILTERS.buildingsAndTrees;
 if (!existsSync(join(dir, "osm.json"))) {
   const [s, w, n, e] = area.bbox;
   const b = `(${s},${w},${n},${e})`;
+  // each part as Overpass QL + the same selection as an extract filter (osmlocal.ts)
+  const parts: Array<[string, OsmFilter]> = [];
+  // every building, unless LoD2 has them (data; ZG3D's gaps, newer buildings, are filled from OSM)
+  if (!LOD2) parts.push([`way["building"]${b}; relation["building"]${b};`, FILTERS.buildings]);
+  parts.push([`node["natural"="tree"]${b};`, FILTERS.trees]);
+  // buildings with colour/material tags and the landmarks (the styled look; ZG3D's buildings keep their OSM looks)
+  if (STYLED || sources === "zg3d") parts.push([[
+    ...["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)),
+    ...Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`),
+    ...Object.keys(TOWERS).map((n) => `nwr["name"="${n}"]${b};`),
+    ...STRUCTURES.map((s) => `nwr${s.ql}${b};`),
+    ...Object.keys(REBUILDS).map((q) => `nwr["building"]["wikidata"="${q}"]${b};`),
+  ].join(" "), FILTERS.looks]);
+  // fountains, whose sculptures the surface model reads as tree crowns (data)
+  if (LOD2 || sources === "zg3d") parts.push([`nwr["amenity"="fountain"]${b};`, FILTERS.fountains]);
   const data = await osmQuery(`[out:json][timeout:300];
-${sources === "lgl" ? `(node["natural"="tree"]${b}; ${["building", "building:part"].flatMap((k) => ["roof:colour", "roof:material", "building:colour", "building:material", "min_height", "man_made"].map((v) => `nwr["${k}"]["${v}"]${b};`)).join(" ")} ${Object.keys(LOOKS).map((n) => `nwr["building"]["name"="${n}"]${b};`).join(" ")} ${Object.keys(TOWERS).map((n) => `nwr["name"="${n}"]${b};`).join(" ")} ${Object.keys(REBUILDS).map((q) => `nwr["building"]["wikidata"="${q}"]${b};`).join(" ")} nwr["amenity"="fountain"]${b};);` : `(way["building"]${b}; relation["building"]${b}; node["natural"="tree"]${b};);`}
-out body geom;`, area.bbox, buildingFilter);
+(${parts.map((p) => p[0]).join(" ")});
+out body geom;`, area.bbox, (type, t) => parts.some((p) => p[1](type, t)));
   writeFileSync(join(dir, "osm.json"), JSON.stringify(data));
   console.log(`  osm: ${data.elements.length} elements`);
 }
@@ -118,6 +150,74 @@ if (sources === "tlv" && !existsSync(join(dir, "osm_parts.json"))) {
 out body geom;`);
   writeFileSync(join(dir, "osm_parts.json"), JSON.stringify(data));
   console.log(`  osm building parts: ${data.elements.length}`);
+}
+// GUGiK: every building, for those the 3D models and BDOT10k lack (gugik.ts); kept apart from osm.json, which
+// holds what the look takes from OSM
+if (sources === "gugik" && !existsSync(join(dir, "osm-buildings.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(way["building"]${b}; relation["building"]${b};);
+out body geom;`, area.bbox, FILTERS.buildings);
+  writeFileSync(join(dir, "osm-buildings.json"), JSON.stringify(data));
+  console.log(`  osm buildings: ${data.elements.length} elements`);
+}
+// the look's power lines (preset powerLines): the lines with their tower nodes
+if (STYLED && styleOf(REGIONS[area.region].style).powerLines && !existsSync(join(dir, "osm-power.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(way["power"="line"]${b};)->.l;
+(.l; node(w.l)["power"~"^(tower|portal)$"];);
+out body geom;`, area.bbox, FILTERS.power);
+  writeFileSync(join(dir, "osm-power.json"), JSON.stringify(data));
+  console.log(`  osm power lines: ${data.elements.length} elements`);
+}
+// the look's watercourses (preset waterDetail): rivers, streams, ditches as lines (their areas are in ground.json)
+if (STYLED && styleOf(REGIONS[area.region].style).waterDetail && !existsSync(join(dir, "osm-water.json"))) {
+  const [s, w, n, e] = area.bbox, m = 0.02, b = `(${s - m},${w - m},${n + m},${e + m})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+way["waterway"~"^(river|stream|canal|ditch|drain)$"]${b};
+out body geom;`, [s - m, w - m, n + m, e + m], FILTERS.waterways);
+  writeFileSync(join(dir, "osm-water.json"), JSON.stringify(data));
+  console.log(`  osm watercourses: ${data.elements.length} ways`);
+}
+// the look's street furniture and roofs on posts (presets streetLamps, roofsOnPosts)
+const STYLE = styleOf(REGIONS[area.region].style);
+if (STYLED && (STYLE.streetLamps || STYLE.roofsOnPosts || STYLE.streetFurniture) && !existsSync(join(dir, "osm-furniture.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(node["highway"~"^(street_lamp|traffic_signals|bus_stop)$"]${b}; node["amenity"~"^(bench|waste_basket|shelter)$"]${b};
+ node["man_made"="flagpole"]${b}; node["advertising"~"^(column|billboard)$"]${b}; node["historic"~"^(wayside_shrine|wayside_cross|memorial)$"]${b};
+ way["building"~"^(roof|carport)$"]${b}; way["amenity"="shelter"]${b};);
+out body geom;`, area.bbox, FILTERS.furniture);
+  writeFileSync(join(dir, "osm-furniture.json"), JSON.stringify(data));
+  console.log(`  osm furniture: ${data.elements.length} elements`);
+}
+// the look's fences, walls and hedges (preset barriers)
+if (STYLED && styleOf(REGIONS[area.region].style).barriers && !existsSync(join(dir, "osm-barriers.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+way["barrier"~"^(fence|wall|hedge|retaining_wall|guard_rail|noise_barrier|city_wall)$"]${b};
+out body geom;`, area.bbox, FILTERS.barriers);
+  writeFileSync(join(dir, "osm-barriers.json"), JSON.stringify(data));
+  console.log(`  osm barriers: ${data.elements.length} ways`);
+}
+// the look's parked cars (preset parkedCars): lots, bays and stalls
+if (STYLED && styleOf(REGIONS[area.region].style).parkedCars && !existsSync(join(dir, "osm-parking.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(way["amenity"~"^(parking|parking_space)$"]${b}; relation["amenity"~"^(parking|parking_space)$"]${b};);
+out body geom;`, area.bbox, FILTERS.parking);
+  writeFileSync(join(dir, "osm-parking.json"), JSON.stringify(data));
+  console.log(`  osm parking: ${data.elements.length} elements`);
+}
+// the look's playgrounds (preset playgrounds): the areas and the equipment on them
+if (STYLED && styleOf(REGIONS[area.region].style).playgrounds && !existsSync(join(dir, "osm-play.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(nwr["leisure"="playground"]${b}; nwr["playground"]${b};);
+out body geom;`, area.bbox, FILTERS.play);
+  writeFileSync(join(dir, "osm-play.json"), JSON.stringify(data));
+  console.log(`  osm playgrounds: ${data.elements.length} elements`);
 }
 if (!existsSync(join(dir, "roads.json"))) {
   const [s, w, n, e] = area.bbox;

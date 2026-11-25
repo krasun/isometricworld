@@ -6,23 +6,33 @@
 import * as THREE from "three";
 import { CAMERA, axes, ecefToEnu, llhToEcef, tileCamera, useRegion } from "../src/camera.ts";
 import { REGIONS } from "../src/places.ts";
+import { styleOf } from "../src/styles.ts";
 import { drawGround, type Feature } from "./ground.ts";
-import { deckHeight } from "../src/bridges.ts";
+import { richBushes, richTrees } from "./trees.ts";
+import { carried, deckHeight } from "../src/bridges.ts";
+import { MINE_CAP, drawMineCap, drawMineFloor, flatMaterial, mineObjects, mineVisible, preloadMine, type MineFeature } from "./mine.ts";
 import { ZG_SPECIES } from "../src/species.ts";
 
 const params = new URLSearchParams(location.search);
 const REGION = params.get("region") ?? "israel-center";
 useRegion(REGION); // before any projection below
 /**
- * The styled look (materials, hillshade, outlines, paper grain): every region but Tel Aviv, whose painted map was
- * made from the plain render. Painted regions keep it wherever a window isn't painted.
+ * Styled regions (places.ts `look`) get the finished procedural look (no paint step): LoD2 roofs, hillshade, outlines.
+ * Zagreb (sources "zg3d") is drawn the same way, as the input its painter repaints (default preset).
  */
-const STYLED = REGIONS[REGION].sources !== "tlv";
+const STYLED = REGIONS[REGION].look === "styled" || REGIONS[REGION].sources === "zg3d";
 /** Zagreb: its own plaster and tile palette, Austro-Hungarian façades, prefab slabs and the landmark styles 6–10 (shader `ZG`). */
 const ZG = REGIONS[REGION].sources === "zg3d";
+/** A salt-mine level (areas.ts `mine`, src/mine.ts): drawn as a cutaway (page/mine.ts) instead of the town. */
+const MINE = params.get("mine");
+/** The styled look's preset (styles.ts). */
+const STYLE = styleOf(REGIONS[REGION].style);
+/** Sun shadows cast by buildings and trees (preset `castShadow`; styled look only, tested in the post pass). */
+const SHADOWS = STYLED && STYLE.castShadow !== null;
 /** Ellipsoid height the height pass counts from (heights.ts). */
 const HEIGHT_BASE = REGIONS[REGION].heightBase ?? 0;
 const SS = Number(params.get("ss") ?? 2); // supersampling
+const PROFILE = params.get("profile") === "1"; // renderTile: per-pass timings (render.ts --profile)
 const SIZE = CAMERA.tile * SS;
 const HEIGHT_SIZE = 256;
 /** Ground texture resolution (m per texel); the render samples ~0.125 m across, 0.18 m in depth. */
@@ -51,9 +61,10 @@ const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 10);
 const meta: { x0: number; y0: number; nx: number; ny: number; step: number } = await (await fetch("/ground/meta.json")).json();
 const terrain = new Float32Array(await (await fetch("/ground/height.bin")).arrayBuffer());
 const features: Feature[] = await (await fetch("/ground/features.json")).json();
+if (MINE) await preloadMine(features as unknown as MineFeature[]);
 const fbox = features.map((f) => {
   let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
-  if (f.j) return [-Infinity, -Infinity, Infinity, Infinity]; // point sets (junctions, zebras): always passed
+  if (f.j || (!f.r && !f.l)) return [-Infinity, -Infinity, Infinity, Infinity]; // point sets (junctions, zebras), placeless (a mine's rock): always passed
   for (const ring of f.r ?? [f.l!]) for (const [x, y] of ring) { a = Math.min(a, x); b = Math.min(b, y); c = Math.max(c, x); d = Math.max(d, y); }
   return [a, b, c, d];
 });
@@ -95,8 +106,16 @@ const hillshadeMaterial = new THREE.ShaderMaterial({
     }`,
   uniforms: { map: { value: groundTexture }, sun: { value: SUN } },
 });
-const groundMesh = new THREE.Mesh(new THREE.BufferGeometry(), STYLED ? hillshadeMaterial : new THREE.MeshBasicMaterial({ map: groundTexture }));
+const groundMesh = new THREE.Mesh(new THREE.BufferGeometry(), MINE ? flatMaterial(groundTexture, false) : STYLED ? hillshadeMaterial : new THREE.MeshBasicMaterial({ map: groundTexture }));
 scene.add(groundMesh);
+// a mine level: the rock's cut surface over the floor (holes where the voids are), and the walls between
+const capTexture = new THREE.CanvasTexture(document.createElement("canvas"));
+capTexture.colorSpace = THREE.NoColorSpace;
+capTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+const capMesh = new THREE.Mesh(new THREE.BufferGeometry(), flatMaterial(capTexture, true));
+capMesh.visible = !!MINE;
+scene.add(capMesh);
+let mineMesh: THREE.Mesh | null = null;
 let terrainLo = Infinity, terrainHi = -Infinity;
 for (const h of terrain) if (Number.isFinite(h)) { terrainLo = Math.min(terrainLo, h); terrainHi = Math.max(terrainHi, h); }
 
@@ -140,13 +159,15 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   cv.width = w;
   cv.height = h;
   const visible = features.filter((_, i) => fbox[i][0] < x1 && fbox[i][2] > x0 && fbox[i][1] < y1 && fbox[i][3] > y0);
+  if (MINE) return buildMine([x0, y0, x1, y1], w, h);
   // bridges (styled regions): off the ground, onto their own deck above the gap (bridges.ts)
   const bridges = STYLED ? visible.filter((f) => f.b && f.l && f.l.length >= 2) : [];
   // LoD2 footprints cast the same contact shadows as extruded buildings
   const shadows = { b: [...(data?.b ?? []), ...(data?.m ?? []).filter((m) => !m[9] || m[9] < 2).map((m) => [m[4], m[5], m[0], null] as [P2[], number, number, null])], t: data?.t ?? [] };
   const ctx = cv.getContext("2d")!;
-  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, shadows, ground, STYLED ? SHADOW : undefined, STYLED);
-  buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h);
+  // regions with cast shadows (post pass) skip the short contact shadows, which would point the same way
+  drawGround(ctx, bridges.length ? visible.filter((f) => !bridges.includes(f)) : visible, [x0, y0, x1, y1], GROUND_MPT, SHADOWS ? { b: [], t: [] } : shadows, ground, STYLED ? SHADOW : undefined, STYLED && STYLE.lawns, false, STYLED && STYLE.waterDetail, STYLED && STYLE.repaint);
+  buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h, visible.filter((f) => !f.b && f.l && (f.k === "rail" || ["highway", "street", "lane", "dirtroad"].includes(f.k))));
   if (STYLED) deckShadows(ctx, data);
   groundTexture.needsUpdate = true;
   // terrain mesh: 5 m grid draped on the terrain, UVs into the canvas
@@ -165,6 +186,40 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   if (STYLED) geo.computeVertexNormals();
   groundMesh.geometry.dispose();
   groundMesh.geometry = geo;
+}
+
+/** terrain mesh over [x0, y0, x1, y1]: a 5 m grid draped on the terrain (+ dz), UVs into the rect */
+function drape([x0, y0, x1, y1]: number[], dz: number) {
+  const step = Math.min(5, meta.step), nx = Math.ceil((x1 - x0) / step) + 1, ny = Math.ceil((y1 - y0) / step) + 1;
+  const pos = new Float32Array(nx * ny * 3), uv = new Float32Array(nx * ny * 2), idx: number[] = [];
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const x = Math.min(x1, x0 + i * step), y = Math.min(y1, y0 + j * step), k = j * nx + i;
+    pos.set([x, y, ground(x, y) + dz], k * 3);
+    uv.set([(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)], k * 2);
+    if (i && j) idx.push(k - nx - 1, k - nx, k, k - nx - 1, k, k - 1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  return geo;
+}
+
+/** A mine level's tile: floor and cap textures, both meshes, the walls (page/mine.ts). */
+function buildMine(rect: number[], w: number, h: number) {
+  const mine = mineVisible(features as unknown as MineFeature[], rect);
+  drawMineFloor(groundTexture.image.getContext("2d")!, mine, rect, GROUND_MPT);
+  groundTexture.needsUpdate = true;
+  const cv = capTexture.image as HTMLCanvasElement;
+  if (w !== cv.width || h !== cv.height) capTexture.dispose();
+  cv.width = w; cv.height = h;
+  drawMineCap(cv.getContext("2d")!, mine, rect, GROUND_MPT);
+  capTexture.needsUpdate = true;
+  groundMesh.geometry.dispose(); groundMesh.geometry = drape(rect, 0);
+  capMesh.geometry.dispose(); capMesh.geometry = drape(rect, MINE_CAP);
+  if (mineMesh) { scene.remove(mineMesh); mineMesh.geometry.dispose(); }
+  mineMesh = mineObjects(mine, rect, ground, SUN);
+  scene.add(mineMesh);
 }
 
 // ---- bridge decks ------------------------------------------------------------------------------
@@ -195,21 +250,43 @@ const FASCIA = 1.3;
  * a ribbon carrying it at the deck height, concrete fascias along both edges, and the deck's shadow on
  * the ground canvas `ctx` (still in ENU metres after drawGround).
  */
-function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, x1, y1]: number[], w: number, h: number) {
+/** Preset bridgeDetail: decks carried on to their abutments, as wide as the road and a 1.1 m cornice each side, with
+ *  a 0.95 m parapet along both edges and piers under high spans (every ~25 m, off the roads and rails below). */
+const BRIDGE_DETAIL = STYLED && STYLE.bridgeDetail;
+const CORNICE = 1.1, PARAPET = 0.95, SPAN = 25;
+function buildDecks(ctx: CanvasRenderingContext2D, osmBridges: Feature[], [x0, y0, x1, y1]: number[], w: number, h: number, under: Feature[] = []) {
   for (const c of decks.children) (c as THREE.Mesh).geometry.dispose();
   decks.clear();
-  if (!bridges.length) return;
+  if (!osmBridges.length) return;
+  // preset bridgeDetail: a deck carried on past its OSM line's ends to the abutments (ground.ts: e[2], e[3] m)
+  const bridges = osmBridges.map((f) => {
+    if (!f.e || f.e.length < 4 || !f.l || f.l.length < 2) return f;
+    const l = [...f.l];
+    l[0] = carried(f.l, 0, f.e[2]); l[l.length - 1] = carried(f.l, 1, f.e[3]);
+    return { ...f, l, e: [f.e[0], f.e[1]] };
+  });
   const cv = deckTexture.image as HTMLCanvasElement;
   if (w !== cv.width || h !== cv.height) deckTexture.dispose();
   cv.width = w; cv.height = h;
-  drawGround(cv.getContext("2d")!, bridges, [x0, y0, x1, y1], GROUND_MPT, { b: [], t: [] }, ground, SHADOW, STYLED);
+  drawGround(cv.getContext("2d")!, bridges, [x0, y0, x1, y1], GROUND_MPT, { b: [], t: [] }, ground, SHADOW, false, BRIDGE_DETAIL, false, STYLED && STYLE.repaint);
   deckTexture.needsUpdate = true;
+  // what a pier must not stand on: the roads and rails under the decks
+  const onWay = (x: number, y: number) => under.some((f) => {
+    const l = f.l!, r = (f.k === "rail" ? 2.5 : (f.w ?? 6) / 2) + 1.2;
+    for (let i = 1; i < l.length; i++) {
+      const [ax, ay] = l[i - 1], [bx, by] = l[i], dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
+      if (Math.hypot(x - ax - dx * t, y - ay - dy * t) < r) return true;
+    }
+    return false;
+  });
+  /** a concrete quad into the fascia mesh (both sides drawn), lit by its normal */
+  const quad = (q: number[][], n: number[]) => { for (const k of [0, 1, 2, 0, 2, 3]) { side.push(...q[k]); sideN.push(...n); } };
   const top: number[] = [], uv: number[] = [], side: number[] = [], sideN: number[] = [];
   const U = (x: number, y: number) => [(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)];
   ctx.save();
   ctx.fillStyle = "rgba(40,40,48,0.28)";
   for (const f of bridges) {
-    const l = f.l!, deck = deckHeight(l, ground, f.e), half = f.k === "rail" ? 2.5 : (f.w ?? 6) / 2 + 1.5;
+    const l = f.l!, deck = deckHeight(l, ground, f.e), half = f.k === "rail" ? 2.5 : (f.w ?? 6) / 2 + (BRIDGE_DETAIL ? CORNICE : 1.5);
     // samples every ≤ 2 m along the line, with the direction there
     const pts: Array<{ x: number; y: number; z: number; dx: number; dy: number; g: number }> = [];
     for (let i = 0; i + 1 < l.length; i++) {
@@ -242,6 +319,15 @@ function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, 
         const ex = s1[0] - s0[0], ey = s1[1] - s0[1], el = Math.hypot(ex, ey) || 1, nx = -ey / el, ny = ex / el; // outward: left of the way for A, right for B (walked backwards)
         for (const k of [0, 1, 2, 0, 2, 3]) { side.push(...q[k]); sideN.push(nx, ny, 0); }
       }
+      // parapets on both edges (preset bridgeDetail): outer face, inner face and top of a 0.3 m wall
+      if (BRIDGE_DETAIL) for (const sgn of [1, -1]) {
+        const at = (p: typeof a, n: number[], ln: number, o: number) => [p.x + (sgn * n[0] * o) / ln, p.y + (sgn * n[1] * o) / ln];
+        const ao = at(a, na, la, half - 0.1), bo = at(b, nb, lb, half - 0.1), ai = at(a, na, la, half - 0.4), bi = at(b, nb, lb, half - 0.4);
+        const out = [(sgn * na[0]) / la, (sgn * na[1]) / la, 0];
+        quad([[ao[0], ao[1], a.z], [bo[0], bo[1], b.z], [bo[0], bo[1], b.z + PARAPET], [ao[0], ao[1], a.z + PARAPET]], out);
+        quad([[ai[0], ai[1], a.z], [bi[0], bi[1], b.z], [bi[0], bi[1], b.z + PARAPET], [ai[0], ai[1], a.z + PARAPET]], [-out[0], -out[1], 0]);
+        quad([[ao[0], ao[1], a.z + PARAPET], [bo[0], bo[1], b.z + PARAPET], [bi[0], bi[1], b.z + PARAPET], [ai[0], ai[1], a.z + PARAPET]], [0, 0, 1]);
+      }
       // shadow on the ground: the deck strip shifted away from the sun by its clearance
       const clear = (a.z + b.z - a.g - b.g) / 2;
       if (clear > 1) {
@@ -249,6 +335,32 @@ function buildDecks(ctx: CanvasRenderingContext2D, bridges: Feature[], [x0, y0, 
         ctx.beginPath();
         ctx.moveTo(A[0][0] + sx, A[0][1] + sy); ctx.lineTo(B[0][0] + sx, B[0][1] + sy); ctx.lineTo(B[1][0] + sx, B[1][1] + sy); ctx.lineTo(A[1][0] + sx, A[1][1] + sy);
         ctx.closePath(); ctx.fill();
+      }
+    }
+    // piers (preset bridgeDetail): every ~25 m where the deck stands over 4.5 m clear, at least 10 m from its ends,
+    // moved up to 8 m along it off the roads and rails below; two columns under a wide deck
+    if (BRIDGE_DETAIL && pts.length > 2) {
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+      const total = cum.at(-1)!, r = f.k === "path" || f.k === "cycle" || f.k === "sidewalk" ? 0.35 : 0.6;
+      const across = half > 5 ? [-(half - 2), half - 2] : [0];
+      const column = (cx: number, cy: number, z0: number, z1: number) => {
+        for (let k = 0; k < 8; k++) {
+          const t0 = (k * Math.PI) / 4, t1 = ((k + 1) * Math.PI) / 4, tm = (t0 + t1) / 2;
+          const p0 = [cx + Math.cos(t0) * r, cy + Math.sin(t0) * r], p1 = [cx + Math.cos(t1) * r, cy + Math.sin(t1) * r];
+          quad([[p0[0], p0[1], z0], [p1[0], p1[1], z0], [p1[0], p1[1], z1], [p0[0], p0[1], z1]], [Math.cos(tm), Math.sin(tm), 0]);
+        }
+      };
+      for (let s = Math.min(SPAN, total / 2); s <= total - 10; s += SPAN) {
+        if (s < 10) continue;
+        for (const shift of [0, 2, -2, 4, -4, 6, -6, 8, -8]) {
+          const i = cum.findIndex((c) => c >= s + shift);
+          if (i < 0) continue;
+          const p = pts[i], nx = -p.dy, ny = p.dx, spots = across.map((o) => [p.x + nx * o, p.y + ny * o]);
+          if (p.z - p.g < 4.5 || spots.some(([x, y]) => onWay(x, y))) continue;
+          for (const [x, y] of spots) column(x, y, ground(x, y) - 0.5, p.z - FASCIA);
+          break;
+        }
       }
     }
   }
@@ -281,6 +393,46 @@ function deckShadows(ctx: CanvasRenderingContext2D, data?: TileObjects) {
   }
   ctx.fill("nonzero");
   ctx.restore();
+}
+
+/**
+ * Foreground mask (places.ts life.foreground): white where the visible surface stands at least 2.5 m above the
+ * terrain under it (tree crowns, walls and roofs over a car's height), black elsewhere. Drawn twice with the same
+ * vertex code, so the second pass meets the first one's depth exactly: `on` 0 everything black with its depth,
+ * then `on` 1 all but the ground and the bridge decks (cars drive on those: the decks stay black).
+ */
+const FOREGROUND = STYLED && !!REGIONS[REGION].life?.foreground;
+const fgMaterial = new THREE.ShaderMaterial({
+  vertexShader: /* glsl */ `
+    varying vec3 vEnu;
+    void main() {
+      #ifdef USE_INSTANCING
+        vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.0);
+      #else
+        vec4 w = modelMatrix * vec4(position, 1.0);
+      #endif
+      vEnu = w.xyz;
+      gl_Position = projectionMatrix * viewMatrix * w;
+    }`,
+  fragmentShader: /* glsl */ `
+    uniform highp sampler2D terrain;
+    uniform vec3 grid; // terrain grid: x0, y0, step
+    uniform float on;
+    varying vec3 vEnu;
+    float at(ivec2 i) { return texelFetch(terrain, clamp(i, ivec2(0), textureSize(terrain, 0) - 1), 0).r; }
+    void main() {
+      vec2 f = (vEnu.xy - grid.xy) / grid.z, a = fract(f);
+      ivec2 k = ivec2(floor(f));
+      float t = mix(mix(at(k), at(k + ivec2(1, 0)), a.x), mix(at(k + ivec2(0, 1)), at(k + ivec2(1, 1)), a.x), a.y);
+      gl_FragColor = vec4(vec3(on * step(2.5, vEnu.z - t)), 1.0);
+    }`,
+  side: THREE.DoubleSide,
+  uniforms: { terrain: { value: null }, grid: { value: new THREE.Vector3(meta.x0, meta.y0, meta.step) }, on: { value: 0 } },
+});
+if (FOREGROUND) {
+  const t = new THREE.DataTexture(terrain, meta.nx, meta.ny, THREE.RedFormat, THREE.FloatType);
+  t.needsUpdate = true;
+  fgMaterial.uniforms.terrain.value = t;
 }
 
 /** Ellipsoid height (cm + 10000, 16 bit in RG) of whatever surface is visible. */
@@ -322,8 +474,9 @@ type P2 = [number, number];
 export interface TileObjects {
   b: Array<[P2[], number, number, number | null]>; // ring, height, style, ground hint (ellipsoid)
   t: Array<[number, number, number, number, number?]>; // x, y, radius, crown height, species (Zagreb: species.ts)
+  s?: Array<[number, number, number, number]>;     // bushes and hedges: x, y, radius, top (preset bushes)
   /** LoD2 meshes: style, roof kind, roof xyz[], wall (xyz, along, above base)[], footprint, height, seed */
-  m?: Array<[number, number, number[], number[], P2[], number, number, (number[] | null)?, (number[] | null)?, number?]>; // … osm roof, osm wall, bare (no roof furniture)
+  m?: Array<[number, number, number[], number[], P2[], number, number, (number[] | null)?, (number[] | null)?, (number | null)?, number?, number?]>; // … osm roof, osm wall, bare (no roof furniture), storeys, façade flags (scene.ts facadeFlags)
 }
 
 /** wall, roof colours per style (see scene.ts): bauhaus, residential, public, tower, shed, modern */
@@ -355,20 +508,25 @@ const buildingMaterial = new THREE.ShaderMaterial({
     attribute vec3 color;
     attribute vec2 facade;   // (meters along wall, meters above ground); y = -1000: roof / rooftop object
     attribute float kind;    // style index
-    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos;
+    attribute vec4 frame;    // the wall: start, end along, eaves, top (style 6: wallFrames' kind code + top; else + 1000: doors here)
+    attribute vec4 grid;     // the building (wallFacts): floor height, the grid's bottom, façade flags; 0: unknown
+    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos; varying vec4 vFrame; varying vec4 vGrid;
     void main() {
-      vColor = color; vNormal = normal; vFacade = facade; vKind = kind; vPos = position;
+      vColor = color; vNormal = normal; vFacade = facade; vKind = kind; vPos = position; vFrame = frame; vGrid = grid;
       gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: /* glsl */ `
     uniform vec3 sun;
+    uniform bool roofDetail; // preset roofDetail (styles.ts)
+    uniform bool repaint; // preset repaint (styles.ts): windows learned from an AI facade sheet
     uniform sampler2D roofTex; uniform float useTex;
-    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos;
+    varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos; varying vec4 vFrame; varying vec4 vGrid;
     // the roof sheet's mean colour (dividing by it tints the sheet to each roof's colour); one repeat per
     // ROOF_M metres, ~3× real tile size so the rows stay readable
     const vec3 ROOF_MEAN = vec3(0.796, 0.325, 0.208);
     const float ROOF_M = 8.0;
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    bool bit(float v, float b) { return mod(floor(v / b + 0.001), 2.0) > 0.5; }
     float vnoise(vec2 p) {
       vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
       return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
@@ -441,6 +599,22 @@ const buildingMaterial = new THREE.ShaderMaterial({
             vec2 uv = vec2(dot(vPos.xy, al), -dot(vPos.xy, dn) / max(n.z, 0.3)) / ROOF_M;
             c = texture2D(roofTex, uv).rgb * vColor / ROOF_MEAN;
           }
+          else if (n.z < 0.97 && roofDetail) {
+            // preset roofDetail: courses run level (constant height), the tiles along the eaves (u)
+            vec2 t = normalize(vec2(-n.y, n.x) + 1e-6);
+            float u = dot(vPos.xy, t), mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
+            if (c.r > c.g * 1.12 && c.r > c.b * 1.2) {                     // clay: staggered tiles, each its own shade
+              float row = floor(vPos.z / 0.38), fr = fract(vPos.z / 0.38), uu = u / 0.34 + 0.5 * mod(row, 2.0);
+              float h = hash(vec2(floor(uu), row));
+              c *= 0.9 + 0.16 * h;
+              c.g *= 0.97 + 0.06 * hash(vec2(row, floor(uu) * 1.7));      // some more orange, some more brown
+              if (fr < 0.2) c *= 0.82;                                     // the lap shadow under each course
+              else if (fract(uu) < 0.1) c *= 0.9;                          // the joint between tiles
+            } else if (mx - mn < 0.08) {                                   // grey: sheet metal, standing seams down the slope
+              float f = fract(u / 0.55);
+              if (f < 0.06) c *= 0.8; else if (f < 0.12) c *= 1.08;
+            } else if (fract(vPos.z / 0.42) < 0.16) c *= 0.93;             // anything else: plain courses
+          }
           else if (n.z < 0.97) { if (fract(vPos.z / 0.42) < 0.16) c *= 0.93; }   // tile courses
           else if (abs(floor(vKind + 0.001) - 22.0) > 0.5) c *= 0.95 + 0.07 * hash(floor(vPos.xy * 2.0)); // gravel (car park decks: flat concrete)
           #ifdef ZG
@@ -457,23 +631,29 @@ const buildingMaterial = new THREE.ShaderMaterial({
           float v = clamp((vKind - kf - 0.05) / 0.9, 0.0, 1.0);
           float r1 = hash(vec2(v * 97.0, 1.3)), r2 = hash(vec2(v * 61.0, 4.7)), r3 = hash(vec2(v * 43.0, 8.9));
           float r4 = hash(vec2(v * 29.0, 2.1)), r5 = hash(vec2(v * 83.0, 6.5)), r6 = hash(vec2(v * 17.0, 9.3));
-          float y = vFacade.y, x = vFacade.x;
+          bool rows = vGrid.x > 0.5;                                    // known storeys (wallFacts): floor height, grid bottom
+          float fl = vGrid.z;                                           // façade flags (scene.ts facadeFlags); > 15: known
+          bool fk = fl > 15.5, doors = fk && vFrame.w > 999.5;
+          float Y = vFacade.y, wW = vFrame.y - vFrame.x, wE = vFrame.z, wmid = vFacade.x - vFrame.x - 0.5 * wW;
+          float y = vFacade.y - (rows ? vGrid.y : 0.0), x = vFacade.x;
           vec3 WIN = vec3(0.24, 0.30, 0.37);
           vec3 FRAME = r5 < 0.7 ? vec3(0.95, 0.95, 0.93) : (r5 < 0.85 ? vec3(0.32, 0.32, 0.34) : vec3(0.52, 0.40, 0.29));
           if (k <= 2) {
             // punched windows: floor height, bay, window size and grouping, ground floor, frames, shutters
             // Zagreb's 19th-century blocks: tall storeys, window heads, shops in most ground floors
-            float FH = k == 2 ? 3.8 + 0.9 * r1 : (k == 0 ? (ZGS ? 3.5 + 0.7 * r1 : 3.0 + 0.5 * r1) : 2.75 + 0.35 * r1);
-            bool shop = k != 2 && r6 < (ZGS && k == 0 ? 0.45 : 0.22);
-            float GF = shop ? 4.2 : (k == 2 || r6 < 0.5 ? FH * 1.2 : FH);
+            float FH = rows ? vGrid.x : k == 2 ? 3.8 + 0.9 * r1 : (k == 0 ? (ZGS ? 3.5 + 0.7 * r1 : 3.0 + 0.5 * r1) : 2.75 + 0.35 * r1);
+            bool shop = fk ? bit(fl, 1.0) : k != 2 && r6 < (ZGS && k == 0 ? 0.45 : 0.22);
+            float GF = rows ? FH : shop ? 4.2 : (k == 2 || r6 < 0.5 ? FH * 1.2 : FH);
             float BAY = k == 2 ? 3.1 + 1.2 * r2 : 2.2 + 1.7 * r2;
-            float hw = min(k == 2 ? 0.6 + 0.25 * r3 : 0.55 + 0.25 * r3, BAY * 0.5 - 0.35); // big windows read at map scale
+            // preset repaint: big windows that read at map scale (as in the AI facade sheet)
+            float hw = min(repaint ? (k == 2 ? 0.6 + 0.25 * r3 : 0.55 + 0.25 * r3) : (k == 2 ? 0.55 + 0.25 * r3 : 0.42 + 0.38 * r3), BAY * 0.5 - 0.35);
             bool pairs = k != 2 && r4 > 0.72 && BAY > 2.8;
             // older-looking buildings: tall windows in a stone surround under a head cap (as in the AI facade sheet)
-            bool orn = k == 2 || (k == 0 && r3 > 0.4);
+            bool orn = repaint && (k == 2 || (k == 0 && r3 > 0.4));
             float fi = y < GF ? 0.0 : 1.0 + floor((y - GF) / FH);
             float fy = y < GF ? y : mod(y - GF, FH), fh = y < GF ? GF : FH;
-            float wh = fh * (k == 2 || orn ? 0.56 + 0.1 * r4 : 0.5 + 0.12 * r4), s0 = min(fh * 0.3, fh - wh - (orn ? 0.45 : 0.3));
+            float wh = repaint ? fh * (k == 2 || orn ? 0.56 + 0.1 * r4 : 0.5 + 0.12 * r4) : fh * (k == 2 ? 0.58 + 0.1 * r4 : 0.44 + 0.16 * r4);
+            float s0 = min(fh * 0.3, fh - wh - (orn ? 0.45 : 0.3));
             float bay = floor(x / BAY), cx = mod(x, BAY) - BAY * 0.5;
             if (pairs) { cx = abs(cx) - (hw * 0.5 + 0.12); }
             float rw = hash(vec2(bay, fi) + v * 31.0);
@@ -482,36 +662,69 @@ const buildingMaterial = new THREE.ShaderMaterial({
               // shop front: glass between pilasters, a fascia band above
               if (fy > 0.35 && fy < GF - 0.9 && abs(mod(x, 2.0 * BAY) - BAY) < BAY - 0.3) c = mix(WIN, vec3(0.62, 0.70, 0.76), 0.25 + 0.3 * rw);
               else if (fy > GF - 0.75 && fy < GF - 0.35) c *= 0.82;
-            } else if (abs(cx) < hw && fy > s0 && fy < s0 + wh) {
-              float t = (fy - s0) / wh;
-              vec3 g = WIN * (0.94 + 0.12 * rw);                                   // flat slate glass, a touch of variation
-              if (rw < 0.06) g = mix(vec3(0.50, 0.60, 0.70), WIN, t * 0.7);          // the odd window catching the sky
-              else if (rw < 0.13 && t > 0.62) g = vec3(0.70, 0.69, 0.65);            // a lowered blind
-              c = g;
-              float e = min(hw - abs(cx), min(fy - s0, s0 + wh - fy));
-              if (e < 0.08) c = FRAME;                                             // frame
-              else if (k != 1 && hw > 0.35 && abs(cx) < 0.045) c = FRAME;          // mullion: two casements
-              else if (r4 > 0.5 && k != 1 && abs(t - 0.75) * wh < 0.04) c = FRAME; // transom
-            } else if (orn && abs(cx) < hw + 0.32 && fy >= s0 + wh + 0.12 && fy < s0 + wh + 0.36) {
-              c *= fy < s0 + wh + 0.17 ? 0.72 : 1.08;                              // head cap, shadow line under it
-            } else if (orn && abs(cx) < hw + 0.15 && fy > s0 - 0.02 && fy < s0 + wh + 0.12) {
-              c *= abs(cx) > hw + 0.11 ? 0.8 : 1.06;                               // stone surround, outlined
-            } else if (abs(cx) < hw + (orn ? 0.25 : 0.1) && fy > s0 - 0.16 && fy <= s0) {
-              c = orn ? c * 1.08 : FRAME * 0.97;                                   // sill
-            } else if (orn && abs(cx) < hw + 0.25 && fy > s0 - 0.3 && fy <= s0 - 0.16) {
-              c *= 0.84;                                                           // the sill's shadow
-            } else if (ZGS && k == 0 && r3 > 0.3 && !orn && abs(cx) < hw + 0.18 && fy >= s0 + wh && fy < s0 + wh + 0.3) {
-              c *= 0.86;                                                           // window head (Zagreb)
-            } else if (k == 0 && r5 > 0.8 && abs(cx) >= hw && abs(cx) < hw * 1.85 && fy > s0 && fy < s0 + wh && BAY > hw * 4.0 + 0.4) {
-              c = r1 < 0.4 ? vec3(0.33, 0.45, 0.36) : (r1 < 0.7 ? vec3(0.45, 0.50, 0.55) : vec3(0.50, 0.38, 0.28)); // shutters
-              if (fract(fy / 0.22) < 0.25) c *= 0.85;
-            } else if (fi > 0.5 && fy < 0.45) {
-              c *= fy < 0.16 ? 0.58 + 0.12 * r2 : 1.07;                            // cornice between storeys: shadow line + lit band (≥1 px each)
+            } else if (repaint) {
+              // windows learned from an AI facade sheet: flat glass, two casements, stone surrounds, storey cornices
+              if (abs(cx) < hw && fy > s0 && fy < s0 + wh) {
+                float t = (fy - s0) / wh;
+                vec3 g = WIN * (0.94 + 0.12 * rw);                                   // flat slate glass, a touch of variation
+                if (rw < 0.06) g = mix(vec3(0.50, 0.60, 0.70), WIN, t * 0.7);          // the odd window catching the sky
+                else if (rw < 0.13 && t > 0.62) g = vec3(0.70, 0.69, 0.65);            // a lowered blind
+                c = g;
+                float e = min(hw - abs(cx), min(fy - s0, s0 + wh - fy));
+                if (e < 0.08) c = FRAME;                                             // frame
+                else if (k != 1 && hw > 0.35 && abs(cx) < 0.045) c = FRAME;          // mullion: two casements
+                else if (r4 > 0.5 && k != 1 && abs(t - 0.75) * wh < 0.04) c = FRAME; // transom
+              } else if (orn && abs(cx) < hw + 0.32 && fy >= s0 + wh + 0.12 && fy < s0 + wh + 0.36) {
+                c *= fy < s0 + wh + 0.17 ? 0.72 : 1.08;                              // head cap, shadow line under it
+              } else if (orn && abs(cx) < hw + 0.15 && fy > s0 - 0.02 && fy < s0 + wh + 0.12) {
+                c *= abs(cx) > hw + 0.11 ? 0.8 : 1.06;                               // stone surround, outlined
+              } else if (abs(cx) < hw + (orn ? 0.25 : 0.1) && fy > s0 - 0.16 && fy <= s0) {
+                c = orn ? c * 1.08 : FRAME * 0.97;                                   // sill
+              } else if (orn && abs(cx) < hw + 0.25 && fy > s0 - 0.3 && fy <= s0 - 0.16) {
+                c *= 0.84;                                                           // the sill's shadow
+              } else if (ZGS && k == 0 && r3 > 0.3 && !orn && abs(cx) < hw + 0.18 && fy >= s0 + wh && fy < s0 + wh + 0.3) {
+                c *= 0.86;                                                           // window head (Zagreb)
+              } else if (k == 0 && r5 > 0.8 && abs(cx) >= hw && abs(cx) < hw * 1.85 && fy > s0 && fy < s0 + wh && BAY > hw * 4.0 + 0.4) {
+                c = r1 < 0.4 ? vec3(0.33, 0.45, 0.36) : (r1 < 0.7 ? vec3(0.45, 0.50, 0.55) : vec3(0.50, 0.38, 0.28)); // shutters
+                if (fract(fy / 0.22) < 0.25) c *= 0.85;
+              } else if (fi > 0.5 && fy < 0.45) {
+                c *= fy < 0.16 ? 0.58 + 0.12 * r2 : 1.07;                            // cornice between storeys: shadow line + lit band (≥1 px each)
+              }
+            } else {
+              if (abs(cx) < hw && fy > s0 && fy < s0 + wh) {
+                float t = (fy - s0) / wh;
+                vec3 g = WIN * (0.9 + 0.3 * t);                                     // sky reflection toward the top
+                if (rw < 0.16) g = mix(vec3(0.56, 0.66, 0.76), WIN, t * 0.6);          // window catching the sky
+                else if (rw < 0.30) g = t > 0.45 ? vec3(0.84, 0.82, 0.76) : g;         // curtains
+                else if (rw < 0.40 && t > 1.0 - 0.35 - 0.4 * hash(vec2(rw, fi))) g = vec3(0.66, 0.66, 0.64); // roller blind
+                c = g;
+                float e = min(hw - abs(cx), min(fy - s0, s0 + wh - fy));
+                if (e < 0.09) c = FRAME;                                             // frame
+                else if (r4 > 0.5 && k != 1 && (abs(cx) < 0.05 || abs(t - 0.7) * wh < 0.05)) c = FRAME; // mullion + transom
+              } else if (abs(cx) < hw + 0.1 && fy > s0 - 0.14 && fy <= s0) {
+                c = k == 2 ? c * 0.88 : FRAME * 0.97;                                // sill
+              } else if ((k == 2 || ZGS && k == 0 && r3 > 0.3) && abs(cx) < hw + 0.18 && fy >= s0 + wh && fy < s0 + wh + 0.3) {
+                c *= 0.86;                                                           // window head
+              } else if (k == 0 && r5 > 0.8 && abs(cx) >= hw && abs(cx) < hw * 1.85 && fy > s0 && fy < s0 + wh && BAY > hw * 4.0 + 0.4) {
+                c = r1 < 0.4 ? vec3(0.33, 0.45, 0.36) : (r1 < 0.7 ? vec3(0.45, 0.50, 0.55) : vec3(0.50, 0.38, 0.28)); // shutters
+                if (fract(fy / 0.22) < 0.25) c *= 0.85;
+              } else if ((r2 > 0.55 || k == 2) && fi > 0.5 && fy < 0.22) {
+                c *= 0.9;                                                            // string course
+              }
+            }
+            if (fk && bit(fl, 2.0) && fi > 0.5 && abs(mod(bay, 3.0) - 1.0) < 0.5) {
+              // blocks of flats: stacks of loggias every third bay, a parapet and the shaded recess behind it
+              float bx = mod(x, BAY);
+              if (bx > 0.15 && bx < BAY - 0.15) {
+                vec3 P = r2 < 0.5 ? vec3(0.92, 0.92, 0.90) : r2 < 0.75 ? vec3(0.78, 0.85, 0.90) : vec3(0.93, 0.83, 0.68);
+                if (fy < 1.05) c = P * (fy > 0.95 ? 0.88 : 1.0);
+                else if (fy < fh - 0.25) c = abs(bx - 0.5 * BAY) < 0.5 * BAY - 0.7 ? WIN * 0.8 : c * 0.55;
+              }
             }
             if (plinth) c *= 0.8;
           } else if (k == 3) {       // towers: curtain wall, tint per building
             vec3 tint = r1 < 0.3 ? vec3(0.42, 0.55, 0.68) : (r1 < 0.55 ? vec3(0.40, 0.56, 0.55) : (r1 < 0.8 ? vec3(0.52, 0.55, 0.58) : vec3(0.55, 0.48, 0.40)));
-            float FH = 3.4 + 0.5 * r2, M = 1.2 + 0.6 * r3;
+            float FH = rows ? vGrid.x : 3.4 + 0.5 * r2, M = 1.2 + 0.6 * r3;
             c = mix(c, tint, 0.75) * (0.92 + 0.12 * hash(vec2(floor(x / M), floor(y / FH)) + v));
             if (fract(y / FH) < 0.1 + 0.15 * r4 || fract(x / M) < 0.06) c = vec3(0.84, 0.86, 0.88);
           } else if (k == 4) {       // sheds, garages, halls: horizontal or vertical cladding
@@ -558,6 +771,57 @@ const buildingMaterial = new THREE.ShaderMaterial({
             if (cx > 0.58 && cx < 0.94 && fy > 0.08) c = mix(vec3(0.20, 0.23, 0.27), vec3(0.42, 0.48, 0.55), 0.3 * vnoise(vec2(x * 0.1, y * 0.05)));
             else if (cx > 0.5 && cx <= 0.58) c *= 0.82;                          // rib shadow
           }
+          #else
+          else if (k == 6) {
+            // monumental walls (churches; styles.ts monumental): laid out on each wall, not on a floor grid.
+            // vFrame (wallFrames): the wall's start and end along it, its eaves, 1000 × raised + 100 × kind + its top;
+            // heights (y too) from the wall's own bottom
+            float up = floor(vFrame.w / 1000.0 + 0.001), wk = floor((vFrame.w - 1000.0 * up) / 100.0 + 0.001);
+            float s0 = vFrame.x, W = vFrame.y - vFrame.x, E = vFrame.z, T = vFrame.w - 1000.0 * up - 100.0 * wk;
+            float xl = x - s0, mid = xl - 0.5 * W;
+            bool tower = wk > 2.5, gable = wk > 0.5 && wk < 2.5, portal = wk > 1.5 && wk < 2.5;
+            vec3 TRIM = dot(c, vec3(0.3333)) > 0.9 ? c * 0.9 : vec3(0.96, 0.94, 0.87); // pilasters, cornices, surrounds
+            vec3 GL = vec3(0.21, 0.26, 0.31), WOOD = vec3(0.34, 0.24, 0.17);
+            if (y < 0.8 && up < 0.5) c = mix(c, vec3(0.74, 0.72, 0.68), 0.65);       // stone plinth
+            else if (min(xl, W - xl) < 0.55 && W > 3.0) c = TRIM;                     // corner pilasters
+            else if (tower) {
+              // storeys of about 5.5 m between cornices: a narrow window each, the clock, the belfry on top
+              float N = max(2.0, floor(E / 5.5 + 0.5)), Hs = E / N, i = floor(y / Hs), fy = y - i * Hs, ab = abs(mid);
+              if (fy < 0.35 && i > 0.5) c = TRIM;
+              else if (i > N - 1.5) {                                                 // belfry: arched opening, louvres
+                float r = min(1.2, W * 0.17), yh = Hs - 1.0 - r, d = fy > yh ? length(vec2(mid, fy - yh)) : ab;
+                if (fy > 1.0 && d < r) c = fract(fy / 0.35) < 0.3 ? vec3(0.30, 0.28, 0.26) : vec3(0.13, 0.13, 0.15);
+                else if (fy > 0.85 && d < r + 0.2) c = TRIM;
+              } else if (i > N - 2.5 && N > 2.5) {                                    // clock
+                float r = min(1.1, min(W * 0.16, Hs * 0.3)), d = length(vec2(mid, fy - Hs * 0.55));
+                if (d < r * 0.12) c = vec3(0.15);
+                else if (d < r) c = vec3(0.95, 0.93, 0.86);
+                else if (d < r + 0.22) c = vec3(0.20, 0.20, 0.22);
+              } else if (i > 0.5 || E < 12.0) {                                       // a narrow window per storey
+                float r = min(0.55, W * 0.08), yh = Hs - 1.3 - r, d = fy > yh ? length(vec2(mid, fy - yh)) : ab;
+                if (fy > 1.3 && d < r) c = GL; else if (fy > 1.15 && d < r + 0.16) c = TRIM;
+              }
+            } else {
+              // bays of about 5.5 m: a tall round-arched window each, pilasters between, a cornice at the eaves
+              float n = max(1.0, floor(W / 5.5 + 0.5)), B = W / n, bx = mod(xl, B) - 0.5 * B, ab = abs(bx);
+              float ww = clamp(B * 0.34, 0.9, 2.0), r = 0.5 * ww, ys = max(gable ? 4.9 : 1.6, 0.22 * E), yh = E - 1.3 - r;
+              if (y > E - 0.75 && y < E - 0.15) c = TRIM;
+              else if (y < E - 0.75) {
+                if (n > 1.5 && 0.5 * B - ab < 0.28) c = TRIM;
+                else if (portal && abs(mid) < 1.3 && y < 4.5) {                       // portal in the gable wall
+                  float d = y > 3.2 ? length(vec2(mid, y - 3.2)) : abs(mid);
+                  if (d < 1.0) c = WOOD * (fract(mid / 0.3) < 0.12 ? 0.8 : 1.0); else if (d < 1.25) c = TRIM;
+                } else if (yh - ys > 0.8 && W > 2.2) {
+                  float d = y > yh ? length(vec2(bx, y - yh)) : ab;
+                  if (y > ys && d < r) c = ab < 0.05 || abs(y - yh) < 0.05 ? TRIM * 0.85 : GL * (0.9 + 0.3 * (y - ys) / (yh + r - ys));
+                  else if (y > ys - 0.3 && d < r + 0.17) c = TRIM;
+                }
+              } else if (gable) {                                                     // oculus in the gable
+                float o = clamp((T - E) * 0.12, 0.4, 1.0), d = length(vec2(mid, y - E - (T - E) * 0.38));
+                if (d < o) c = GL; else if (d < o + 0.2) c = TRIM;
+              }
+            }
+          }
           #endif
           else if (k == 11) {      // masonry (tunnel portals, retaining walls): ashlar courses, staggered joints
             float row = floor(y / 0.55), bl = 0.9 + 0.6 * hash(vec2(row, 3.1)), sx = x / bl + 0.5 * mod(row, 2.0);
@@ -570,12 +834,35 @@ const buildingMaterial = new THREE.ShaderMaterial({
             else if (fy < 0.05) c *= 0.88;                                        // slab edge
           }
           else {                   // offices: ribbon windows or a grid of square windows, shop fronts
-            float FH = 3.4 + 0.5 * r1, M = 1.3 + 0.8 * r2, fy = fract(y / FH);
+            float FH = rows ? vGrid.x : 3.4 + 0.5 * r1, M = 1.3 + 0.8 * r2, fy = fract(y / FH);
             vec3 g = mix(WIN, r5 < 0.5 ? vec3(0.36, 0.48, 0.58) : vec3(0.40, 0.50, 0.46), 0.5) * (0.9 + 0.2 * hash(vec2(floor(x / M), floor(y / FH)) + v));
             float lo = 0.25 + 0.1 * r3, hi = 0.82 + 0.08 * r4;
             if (r3 < 0.35) { if (fy > lo && fy < hi && abs(fract(x / M) - 0.5) < 0.32) c = g; }
             else if (fy > lo && fy < hi) c = fract(x / M) < 0.06 ? c * 0.85 : g;
-            if (y < 4.0 && y > 0.3 && r6 < 0.6 && fract(x / 6.0) > 0.08) c = WIN * 0.9; // shop fronts
+            if (y < 4.0 && y > 0.3 && (fk ? bit(fl, 1.0) : r6 < 0.6) && fract(x / 6.0) > 0.08) c = WIN * 0.9; // shop fronts
+          }
+          if (fk) {
+            // what the building is used for (BDOT10k): doors, a market's front
+            if (bit(fl, 8.0)) {                                         // retail box: panels; a sign band and the entrance
+              c = vColor * (fract(Y / 1.2) < 0.04 ? 0.94 : 1.0);
+              if (doors) {
+                vec3 brand = r1 < 0.25 ? vec3(0.78, 0.16, 0.16) : r1 < 0.5 ? vec3(0.16, 0.34, 0.68) : r1 < 0.75 ? vec3(0.93, 0.72, 0.12) : vec3(0.18, 0.52, 0.30);
+                if (Y > wE - 1.6 && Y < wE - 0.4) c = brand;
+                if (abs(wmid) < min(4.0, 0.18 * wW) && Y > 0.1 && Y < 3.2) c = Y > 2.95 || fract(wmid / 1.5) < 0.05 ? vec3(0.72, 0.73, 0.74) : WIN * 0.95;
+              }
+            }
+            if (doors && bit(fl, 4.0)) {                                // garage doors in a row
+              float n = max(1.0, floor(wW / 3.0)), B = wW / n, bx = mod(vFacade.x - vFrame.x, B) - 0.5 * B;
+              vec3 D = r3 < 0.5 ? vec3(0.64, 0.65, 0.66) : r3 < 0.8 ? vec3(0.46, 0.34, 0.25) : vec3(0.85, 0.85, 0.83);
+              if (abs(bx) < min(1.2, 0.42 * B) && Y > 0.05 && Y < min(2.15, wE - 0.4)) c = D * (fract(Y / 0.32) < 0.12 ? 0.86 : 1.0);
+            }
+            if (doors && bit(fl, 32.0)) {                               // a shed's or barn's door: timber planks
+              if (abs(wmid) < min(1.5, 0.2 * wW) && Y > 0.05 && Y < min(2.6, wE * 0.8)) c = vec3(0.42, 0.30, 0.21) * (fract(wmid / 0.22) < 0.12 ? 0.82 : 1.0);
+            }
+            if (doors && bit(fl, 64.0)) {                               // a hall's roller doors
+              float d = wW > 22.0 ? abs(abs(wmid) - 0.22 * wW) : abs(wmid);
+              if (d < 2.0 && Y > 0.05 && Y < min(4.5, wE - 1.0)) c = vec3(0.66, 0.67, 0.68) * (fract(Y / 0.25) < 0.15 ? 0.88 : 1.0);
+            }
           }
         }
         gl_FragColor = vec4(c * light, 1.0);
@@ -607,7 +894,7 @@ const buildingMaterial = new THREE.ShaderMaterial({
       }
       gl_FragColor = vec4(c * light, 1.0);
     }`,
-  uniforms: { sun: { value: SUN }, roofTex: { value: roofTex }, useTex: { value: TEX ? 1 : 0 } },
+  uniforms: { sun: { value: SUN }, roofDetail: { value: STYLED && STYLE.roofDetail }, repaint: { value: STYLED && STYLE.repaint }, roofTex: { value: roofTex }, useTex: { value: TEX ? 1 : 0 } },
   defines: ZG ? { ZG: 1 } : {},
 });
 
@@ -764,6 +1051,112 @@ function quad3(o: Out, q: number[][], c: number[]) {
   let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
   const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
   for (const k of [0, 1, 2, 0, 2, 3]) { o.pos.push(...q[k]); o.nor.push(nx, ny, nz); o.col.push(...c); o.fac.push(0, -1000); o.kin.push(0); }
+}
+
+/** square bar of width w from a to b (gutters, downpipes), faces turned outward */
+function bar(o: Out, a: number[], b: number[], w: number, c: number[]) {
+  const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  const e1 = new THREE.Vector3().crossVectors(d, Math.abs(d.z) > 0.9 * d.length() ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1)).normalize();
+  const e2 = new THREE.Vector3().crossVectors(d, e1).normalize();
+  const off = [[1, 1], [1, -1], [-1, -1], [-1, 1]].map(([i, j]) => e1.clone().multiplyScalar((i * w) / 2).add(e2.clone().multiplyScalar((j * w) / 2)));
+  for (let k = 0; k < 4; k++) {
+    const p = off[k], q = off[(k + 1) % 4], out = p.clone().add(q);
+    let f = [[a[0] + p.x, a[1] + p.y, a[2] + p.z], [a[0] + q.x, a[1] + q.y, a[2] + q.z], [b[0] + q.x, b[1] + q.y, b[2] + q.z], [b[0] + p.x, b[1] + p.y, b[2] + p.z]];
+    const n = new THREE.Vector3(f[1][0] - f[0][0], f[1][1] - f[0][1], f[1][2] - f[0][2]).cross(new THREE.Vector3(f[2][0] - f[0][0], f[2][1] - f[0][1], f[2][2] - f[0][2]));
+    if (n.dot(out) < 0) f = [f[1], f[0], f[3], f[2]];
+    quad3(o, f, c);
+  }
+}
+
+/**
+ * Eaves (styles.ts `eaves`). LoD2 roofs end flush with the walls: every pitched roof plane is carried on past
+ * its free edges (edges of one roof triangle only), along the slope at the eaves and sideways at the gables,
+ * the corners mitred; edges rising into a higher wall stay. A gutter hangs under each eaves edge, downpipes run
+ * from the ends and corners of the eaves down to the building's base.
+ */
+function eaves(o: Out, roof: number[], wall: number[], tile: number[], kind: number, seed: number, cfg: { overhang: number; verge: number; gutters: boolean }) {
+  const nv = roof.length / 3, vk: number[] = new Array(nv), ids = new Map<string, number>();
+  for (let i = 0; i < nv; i++) { // vertex ids by position (5 cm)
+    const k = `${Math.round(roof[3 * i] * 20)},${Math.round(roof[3 * i + 1] * 20)},${Math.round(roof[3 * i + 2] * 20)}`;
+    let id = ids.get(k);
+    if (id === undefined) ids.set(k, id = ids.size);
+    vk[i] = id;
+  }
+  const ek = (a: number, b: number) => (a < b ? a * 1048576 + b : b * 1048576 + a), count = new Map<number, number>();
+  for (let t = 0; t + 2 < nv; t += 3) for (const [i, j] of [[0, 1], [1, 2], [2, 0]]) { const k = ek(vk[t + i], vk[t + j]); count.set(k, (count.get(k) ?? 0) + 1); }
+  // free edges of pitched planes: [ax, ay, az, bx, by, bz, offx, offy, offz, nx, ny, nz, eave, id a, id b]
+  const E: number[][] = [];
+  for (let t = 0; t + 2 < nv; t += 3) {
+    const p = [3 * t, 3 * t + 3, 3 * t + 6];
+    const ux = roof[p[1]] - roof[p[0]], uy = roof[p[1] + 1] - roof[p[0] + 1], uz = roof[p[1] + 2] - roof[p[0] + 2];
+    const wx = roof[p[2]] - roof[p[0]], wy = roof[p[2] + 1] - roof[p[0] + 1], wz = roof[p[2] + 2] - roof[p[0] + 2];
+    let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+    const L = Math.hypot(nx, ny, nz);
+    if (L < 1e-6) continue;
+    nx /= L; ny /= L; nz /= L;
+    if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    if (nz > 0.97 || nz < 0.2) continue; // flat roofs keep their parapet; near-vertical faces
+    for (const [i, j, k] of [[0, 1, 2], [1, 2, 0], [2, 0, 1]]) {
+      if (count.get(ek(vk[t + i], vk[t + j])) !== 1) continue;
+      const a = p[i], b = p[j], c = p[k];
+      const ex = roof[b] - roof[a], ey = roof[b + 1] - roof[a + 1], ez = roof[b + 2] - roof[a + 2];
+      let ox = ey * nz - ez * ny, oy = ez * nx - ex * nz, oz = ex * ny - ey * nx;
+      const ol = Math.hypot(ox, oy, oz) || 1;
+      ox /= ol; oy /= ol; oz /= ol;
+      if (ox * (roof[c] - roof[a]) + oy * (roof[c + 1] - roof[a + 1]) + oz * (roof[c + 2] - roof[a + 2]) > 0) { ox = -ox; oy = -oy; oz = -oz; }
+      const h = Math.hypot(ox, oy);
+      if (oz > 0.05 || h < 0.3) continue; // against a higher wall
+      const eave = oz < -0.05, d = (eave ? cfg.overhang : cfg.verge) / h;
+      E.push([roof[a], roof[a + 1], roof[a + 2], roof[b], roof[b + 1], roof[b + 2], ox * d, oy * d, oz * d, nx, ny, nz, eave ? 1 : 0, vk[t + i], vk[t + j]]);
+    }
+  }
+  if (!E.length) return;
+  const push = (q: number[][], n: number[]) => { // roof triangles, counter-clockwise from above
+    const cr = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]);
+    for (const v of cr >= 0 ? q : [q[0], q[2], q[1]]) { o.pos.push(v[0], v[1], v[2]); o.nor.push(n[0], n[1], n[2]); o.col.push(...tile); o.fac.push(0, -1000); o.kin.push(kind); }
+  };
+  const at = new Map<number, Array<{ e: number[]; v: number[]; dx: number; dy: number }>>();
+  for (const e of E) {
+    const a = [e[0], e[1], e[2]], b = [e[3], e[4], e[5]], a2 = [a[0] + e[6], a[1] + e[7], a[2] + e[8]], b2 = [b[0] + e[6], b[1] + e[7], b[2] + e[8]], n = [e[9], e[10], e[11]];
+    push([a, b, b2], n); push([a, b2, a2], n);
+    for (const [v, w, id] of [[a, b, e[13]], [b, a, e[14]]] as Array<[number[], number[], number]>) {
+      const l = Math.hypot(w[0] - v[0], w[1] - v[1]) || 1;
+      if (!at.has(id)) at.set(id, []);
+      at.get(id)!.push({ e, v, dx: (w[0] - v[0]) / l, dy: (w[1] - v[1]) / l });
+    }
+  }
+  // corners: where two carried edges meet at an angle, fill the mitre (at the lower of their levels)
+  for (const list of at.values()) {
+    if (list.length !== 2) continue;
+    const [p, q] = list, hp = Math.hypot(p.e[6], p.e[7]), hq = Math.hypot(q.e[6], q.e[7]);
+    if ((p.e[6] * q.e[6] + p.e[7] * q.e[7]) / (hp * hq) > 0.9) continue;
+    const v = p.v, m = [v[0] + p.e[6] + q.e[6], v[1] + p.e[7] + q.e[7], v[2] + Math.min(p.e[8], q.e[8])];
+    const n = [p.e[9] + q.e[9], p.e[10] + q.e[10], p.e[11] + q.e[11]], nl = Math.hypot(n[0], n[1], n[2]) || 1;
+    const nn = [n[0] / nl, n[1] / nl, n[2] / nl];
+    push([v, [v[0] + p.e[6], v[1] + p.e[7], v[2] + p.e[8]], m], nn); push([v, m, [v[0] + q.e[6], v[1] + q.e[7], v[2] + q.e[8]]], nn);
+  }
+  if (!cfg.gutters) return;
+  const G = [[0.26, 0.27, 0.28], [0.26, 0.27, 0.28], [0.26, 0.27, 0.28], [0.26, 0.27, 0.28], [0.38, 0.28, 0.21], [0.38, 0.28, 0.21], [0.38, 0.28, 0.21], [0.70, 0.71, 0.72], [0.70, 0.71, 0.72], [0.90, 0.90, 0.89]][(seed * 7) % 10];
+  let base = Infinity;
+  for (let i = 0; i + 4 < wall.length; i += 5) base = Math.min(base, wall[i + 2] - wall[i + 4]);
+  for (const e of E) {
+    if (!e[12]) continue;
+    const h = Math.hypot(e[6], e[7]), ux = e[6] / h, uy = e[7] / h;
+    const lift = (x: number, y: number, z: number) => [x + e[6] + ux * 0.05, y + e[7] + uy * 0.05, z + e[8] - 0.1];
+    bar(o, lift(e[0], e[1], e[2]), lift(e[3], e[4], e[5]), 0.16, G);
+  }
+  // downpipes at the eaves' ends and corners (not where an eaves line runs straight on), a few per building
+  let pipes = 0;
+  for (const list of at.values()) {
+    const ev = list.filter((x) => x.e[12]);
+    if (!ev.length || (ev.length === 2 && ev[0].dx * ev[1].dx + ev[0].dy * ev[1].dy < -0.95)) continue;
+    for (const x of ev) {
+      if (pipes >= 8 || !Number.isFinite(base)) break;
+      const h = Math.hypot(x.e[6], x.e[7]), px = x.v[0] + (x.e[6] / h) * 0.12 + x.dx * 0.3, py = x.v[1] + (x.e[7] / h) * 0.12 + x.dy * 0.3;
+      bar(o, [px, py, x.v[2] + x.e[8] - 0.12], [px, py, base - 0.2], 0.11, G);
+      pipes++;
+    }
+  }
 }
 
 /** box turned by t (u = (cos t, sin t)): centre (x, y), base z, su × sv, height h on the -v side and hb on the +v side */
@@ -932,6 +1325,105 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
       }, 3);
     }
   }
+  // chimneys (preset roofDetail): a brick or plaster stack a step down the slope from the top of a home's pitched
+  // roof, rising past the ridge, a dark cap on it; one, sometimes two
+  const pitched = planes.filter((q) => q.n[2] <= 0.97 && q.n[2] > 0.35 && q.area > 12).sort((p, q) => q.area - p.area);
+  if (STYLE.roofDetail && (style === 0 || style === 2) && flatShare < 0.4 && pitched.length) {
+    const corners = (pl: Plane) => pl.tris.flatMap((t) => [[t[0], t[1]], [t[2], t[3]], [t[4], t[5]]] as P2[]);
+    const ridge = Math.max(...pitched.flatMap((pl) => corners(pl).map((p) => zAt(pl, p[0], p[1]))));
+    const n = rnd() < 0.3 ? 2 : 1, colour = rnd() < 0.55 ? [0.62, 0.34, 0.27] : wall.map((q) => q * 0.95);
+    for (let k = 0, tries = 0; k < n && tries < 10; tries++) {
+      const pl = pitched[Math.floor(rnd() * Math.min(2, pitched.length))], pts = corners(pl);
+      const top = Math.max(...pts.map((p) => zAt(pl, p[0], p[1]))), high = pts.filter((p) => zAt(pl, p[0], p[1]) > top - 0.3);
+      const a = high[Math.floor(rnd() * high.length)], b = high[Math.floor(rnd() * high.length)], f = 0.2 + 0.6 * rnd();
+      const h = Math.hypot(pl.n[0], pl.n[1]), dx = pl.n[0] / h, dy = pl.n[1] / h; // the normal leans down the slope
+      const x = a[0] + (b[0] - a[0]) * f + dx * 0.9, y = a[1] + (b[1] - a[1]) * f + dy * 0.9, t = Math.atan2(dy, dx);
+      if (!fits(pl, x, y, 0.65, 0.65, t, 0.15)) continue;
+      const z0 = zAt(pl, x, y) - 0.1, z1 = ridge + 0.7 + 0.4 * rnd();
+      prism(o, x, y, z0, 0.65, 0.65, z1 - z0, z1 - z0, t, colour);
+      prism(o, x, y, z1, 0.8, 0.8, 0.1, 0.1, t, [0.32, 0.31, 0.3]);
+      take(x, y, 0.65, 0.65, t);
+      k++;
+    }
+  }
+}
+
+/**
+ * A LoD2 mesh's wall polygons (per wall triangle, its polygon: the triangles sharing a facing and the origin of
+ * `along`; lod2.ts: along = projection on the wall's horizontal direction + a constant per polygon), each
+ * polygon's height at both ends (a gable wall's eaves), and the building's main eaves: the median of those over
+ * its walls weighted by their length (a nave's side walls, a rotunda's drum).
+ */
+type WallPolygon = { nx: number; ny: number; o: number; s0: number; s1: number; top: number; pts: number[][] };
+function wallPolygons(wall: number[]) {
+  const walls: WallPolygon[] = [], of: WallPolygon[] = [], rx = wall[0], ry = wall[1]; // near the building: kilometres would magnify normal errors
+  for (let i = 0; i + 14 < wall.length; i += 15) {
+    const [ax, ay, az] = wall.slice(i, i + 3), [bx, by, bz] = wall.slice(i + 5, i + 8), [cx, cy, cz] = wall.slice(i + 10, i + 13);
+    let nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay), ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
+    const L = Math.hypot(nx, ny) || 1;
+    nx /= L; ny /= L;
+    const o = wall[i + 3] - ((ax - rx) * -ny + (ay - ry) * nx);
+    let w = walls.find((q) => Math.abs(q.nx - nx) + Math.abs(q.ny - ny) < 0.03 && Math.abs(q.o - o) < 0.15);
+    if (!w) walls.push(w = { nx, ny, o, s0: Infinity, s1: -Infinity, top: 0, pts: [] });
+    for (const k of [3, 8, 13]) {
+      const s = wall[i + k], h = wall[i + k + 1];
+      w.s0 = Math.min(w.s0, s); w.s1 = Math.max(w.s1, s); w.top = Math.max(w.top, h); w.pts.push([s, h]);
+    }
+    of.push(w);
+  }
+  const ends = (w: WallPolygon) => Math.min(...[w.s0, w.s1].map((e) => Math.max(...w.pts.filter((p) => Math.abs(p[0] - e) < 0.3).map((p) => p[1]))));
+  const byE = walls.map((w) => ({ e: ends(w), len: w.s1 - w.s0 })).sort((a, b) => a.e - b.e);
+  let half = byE.reduce((t, q) => t + q.len, 0) / 2, eaves = 0;
+  for (const q of byE) if ((half -= q.len) <= 0) { eaves = q.e; break; }
+  return { walls, of, ends, eaves };
+}
+
+/**
+ * What the source knows of a building (BDOT10k: storeys, façade flags), for its walls. The floor grid: storeys
+ * under the main eaves at ≈ 3 m (the rest are in the roof: gable windows continue the grid), floor height
+ * between 2.7 and 4.2 m, lined up under the eaves (any height left below is a plinth: a raised ground floor, a
+ * slope); none where the height does not fit the storeys. Per wall: [start, end along, eaves, top + 1000 where
+ * the doors go].
+ */
+function wallFacts(wall: number[], storeys: number, flags: number) {
+  const { walls, of, ends, eaves } = wallPolygons(wall);
+  let fh = 0, y0 = 0;
+  if (storeys && eaves >= 2 && eaves <= storeys * 4.8 + 1.5) { // a height that fits the storeys (else the data disagree)
+    const n = Math.max(1, Math.min(storeys, Math.round(eaves / 3)));
+    fh = Math.min(4.2, Math.max(2.7, eaves / n));
+    y0 = Math.max(0, eaves - n * fh);
+  }
+  // doors (scene.ts facadeFlags) on the long walls, a single garage's on its short ones
+  const len = (w: WallPolygon) => w.s1 - w.s0, long = Math.max(...walls.map(len));
+  const short = Math.min(...walls.map(len).filter((W) => W >= 2.6), long);
+  const doors = (w: WallPolygon) => flags & 4 ? (long < 7.5 ? len(w) >= 2.6 && len(w) <= short + 0.6 : len(w) >= long - 1.5)
+    : flags & (8 | 32 | 64) ? len(w) >= Math.max(4, 0.8 * long) : false;
+  const frame = new Map(walls.map((w) => [w, [w.s0, w.s1, ends(w), w.top + (doors(w) ? 1000 : 0)]] as [WallPolygon, number[]]));
+  return { grid: [fh, y0, flags, 0], frames: of.map((w) => frame.get(w)!) };
+}
+
+/**
+ * Monumental walls (style 6): per wall triangle, its LoD2 wall polygon's [start, end along, eaves, 1000 × raised
+ * + 100 × kind + top] and its bottom; eaves and top from that bottom (the shader lays a wall standing on a lower
+ * roof out on its own height, without plinth, portal or oculus: raised). Kinds: 0 a side wall; 1 a gable from
+ * the ground (rising 2.5 m+ above its ends, 6 m+ wide): an oculus; 2 such a gable 7 m+ wide: also a portal;
+ * 3 a tower (eaves 4 m+ above the building's main eaves, under 14 m wide). The eaves are the wall's height at
+ * its ends, or the building's main eaves where those are much lower (stepped outlines); the main eaves: the
+ * median over its walls weighted by their length (a nave's side walls, a rotunda's drum). A
+ * polygon is the triangles sharing a facing and the origin of `along` (lod2.ts: along = projection on the
+ * wall's horizontal direction + a constant per polygon).
+ */
+function wallFrames(wall: number[]): Array<{ frame: number[]; bottom: number }> {
+  const { walls, of, ends, eaves } = wallPolygons(wall);
+  const frame = new Map(walls.map((w) => {
+    const W = w.s1 - w.s0, bottom = Math.min(...w.pts.map((p) => p[1])), raised = bottom > 2 ? 1 : 0;
+    let e = ends(w);
+    if (e < 0.6 * eaves) e = Math.min(w.top, eaves);
+    const kind = e > eaves + 4 && W < 14 ? 3 : !raised && w.top - e > 2.5 && W > 6 ? (W > 7 ? 2 : 1) : 0;
+    const b = raised ? bottom : 0;
+    return [w, { frame: [w.s0, w.s1, e - b, 1000 * raised + 100 * kind + w.top - b], bottom: b }];
+  }) as Array<[WallPolygon, { frame: number[]; bottom: number }]>);
+  return of.map((w) => frame.get(w)!);
 }
 
 /**
@@ -985,11 +1477,11 @@ function parkingDeck(o: Out, ring: P2[], z: number, rnd: () => number) {
 }
 
 /** LoD2 meshes into the shared building arrays (flat-shaded triangles; walls carry facade coordinates). */
-function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[], fac: number[], kin: number[]) {
+function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[], fac: number[], kin: number[], frm: number[], grd: number[]) {
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
-  for (const [style, roofKind, roof, wall, footprint, , seed, osmRoof, osmWall, bare] of data.m ?? []) {
+  for (const [style, roofKind, roof, wall, footprint, , seed, osmRoof, osmWall, bare, storeys, flags] of data.m ?? []) {
     const j = (seed % 97) / 97 - 0.5; // per-building tint
-    const walls = (ZG ? WALL_BY_STYLE_ZG[style] ?? WALLS_ZG : WALL_BY_STYLE[style] ?? WALLS_STR), w = (osmWall ?? walls[seed % walls.length]).map((v) => Math.min(1, v * (1 + 0.04 * j)));
+    const walls = ZG ? WALL_BY_STYLE_ZG[style] ?? WALLS_ZG : (STYLE.walls?.[style] ?? WALL_BY_STYLE[style] ?? WALLS_STR), w = (osmWall ?? walls[seed % walls.length]).map((v) => Math.min(1, v * (1 + 0.04 * j)));
     // OSM roof:colour / roof:material where mapped (scene.ts), else the palette by roof kind
     let tileRoof = (osmRoof ?? ROOFS[Math.floor(roofKind / 10)]).map((v) => v * (1 + 0.14 * j));
     // Zagreb: tile from orange-red to brown per building (new and old tile, different works)
@@ -998,7 +1490,10 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
     const rnd = mulberry(seed * 7919 + 1);
     // style in the integer part, the building's facade variation in the fraction (buildingMaterial)
     const kind = 10 + style + 0.05 + 0.9 * mulberry(seed * 104729 + 7)();
-    const green = roofKind % 10 === 6, deck = style === 12, landmark = (style === 4 && !!osmRoof) || !!bare || deck; // hand-modelled / LOOKS landmarks / car parks: no roof furniture
+    // Zagreb's style 6 is its prefab slabs (shader ZG), not monumental walls
+    const monumental = style === 6 && !ZG;
+    // hand-modelled / LOOKS landmarks, churches, car parks (style 12): no roof furniture
+    const green = roofKind % 10 === 6, deck = style === 12, landmark = (style === 4 && !!osmRoof) || !!bare || monumental || deck;
     let deckZ = -Infinity;
     const planes: Plane[] = [];
     for (let i = 0; i + 8 < roof.length; i += 9) {
@@ -1018,16 +1513,27 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
       pl.tris.push([a.x, a.y, b.x, b.y, c.x, c.y]); pl.area += area;
     }
     if (planes.length) roofFurniture({ pos, nor, col, fac, kin }, planes, footprint, wall, style, green, w, rnd);
+    if (STYLE.eaves && !bare && wall.length) eaves({ pos, nor, col, fac, kin }, roof, wall, tileRoof, kind, seed, STYLE.eaves);
+    const frames = monumental ? wallFrames(wall) : null;
+    const facts = !frames && (storeys || flags) ? wallFacts(wall, storeys ?? 0, flags ?? 0) : null; // window rows, doors
     if (deck && deckZ > -Infinity) parkingDeck({ pos, nor, col, fac, kin }, footprint, deckZ, rnd);
     for (let i = 0; i + 14 < wall.length; i += 15) {
       a.fromArray(wall, i); b.fromArray(wall, i + 5); c.fromArray(wall, i + 10);
       n.subVectors(b, a).cross(c.clone().sub(a)).normalize();
       for (const k of [0, 5, 10]) {
+        const f = frames?.[i / 15];
+        if (f || facts) {
+          const n = (pos.length / 3) * 4;
+          while (frm.length < n) frm.push(0, 0, 0, 0);
+          while (grd.length < n) grd.push(0, 0, 0, 0);
+          frm.push(...(f ? f.frame : facts!.frames[i / 15]));
+          grd.push(...(facts ? facts.grid : [0, 0, 0, 0]));
+        }
         const above = wall[i + k + 4];
         // walls reach 3 m below the LoD2 base, so a downhill slope never opens a gap under the house
         const drop = above < 0.05 ? 3 : 0;
         pos.push(wall[i + k], wall[i + k + 1], wall[i + k + 2] - drop); nor.push(n.x, n.y, n.z); col.push(...w);
-        fac.push(wall[i + k + 3], above - drop); kin.push(kind);
+        fac.push(wall[i + k + 3], above - drop - (f?.bottom ?? 0)); kin.push(kind);
       }
     }
   }
@@ -1036,7 +1542,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
 function buildObjects(data: TileObjects) {
   objects.children.forEach((o: any) => o.geometry?.dispose());
   objects.clear();
-  const pos: number[] = [], nor: number[] = [], col: number[] = [], fac: number[] = [], tow: number[] = [];
+  const pos: number[] = [], nor: number[] = [], col: number[] = [], fac: number[] = [], tow: number[] = [], frm: number[] = [], grd: number[] = [];
   /** axis-aligned box on a roof (rooftop clutter), no facade pattern */
   const box = (x: number, y: number, z: number, sx: number, sy: number, sz: number, c: number[]) => {
     const X = [x - sx / 2, x + sx / 2], Y = [y - sy / 2, y + sy / 2], Z = [z, z + sz];
@@ -1098,7 +1604,9 @@ function buildObjects(data: TileObjects) {
       }
     }
   });
-  if (STYLED) addMeshes(data, pos, nor, col, fac, tow);
+  if (STYLED) addMeshes(data, pos, nor, col, fac, tow, frm, grd);
+  while (frm.length < (pos.length / 3) * 4) frm.push(0, 0, 0, 0);
+  while (grd.length < (pos.length / 3) * 4) grd.push(0, 0, 0, 0);
   if (pos.length) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
@@ -1106,12 +1614,16 @@ function buildObjects(data: TileObjects) {
     geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
     geo.setAttribute("facade", new THREE.Float32BufferAttribute(fac, 2));
     geo.setAttribute("kind", new THREE.Float32BufferAttribute(tow, 1));
+    geo.setAttribute("frame", new THREE.Float32BufferAttribute(frm, 4));
+    geo.setAttribute("grid", new THREE.Float32BufferAttribute(grd, 4));
     objects.add(new THREE.Mesh(geo, buildingMaterial));
   }
-  if (data.t.length) {
+  if (data.t.length && STYLED && STYLE.richTrees) objects.add(...richTrees(data.t, ground, treeMaterial, SUN));
+  if (data.s?.length && STYLED && STYLE.richTrees) objects.add(...richBushes(data.s, ground, SUN));
+  else if (data.t.length) {
     const crowns = new THREE.InstancedMesh(STYLED ? CROWN : new THREE.IcosahedronGeometry(1, 2), treeMaterial, data.t.length);
     const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6).rotateX(Math.PI / 2).translate(0, 0, 0.5), treeMaterial, data.t.length);
-    const m = new THREE.Matrix4(), c = new THREE.Color(), bark = new THREE.Color(0.40, 0.31, 0.23);
+    const m = new THREE.Matrix4(), c = new THREE.Color(), bark = STYLED && STYLE.repaint ? new THREE.Color(0.40, 0.31, 0.23) : new THREE.Color(0.45, 0.36, 0.28);
     data.t.forEach(([x, y, r, ch, named], i) => {
       const g = ground(x, y), [name, , col, sxy, sz, palm] = species(x, y, r, named);
       if (palm && STYLED) {
@@ -1130,7 +1642,12 @@ function buildObjects(data: TileObjects) {
         m.makeScale(0.4, 0.4, top - g).setPosition(x, y, g);
         trunks.setMatrixAt(i, m);
       } else {
-        if (STYLED) {
+        if (STYLED && STYLE.trunks) { // preset: a trunk up to the crown's middle, thicker under a wider crown
+          m.makeScale(r * sxy, r * sxy, r * sz).setPosition(x, y, g + ch);
+          crowns.setMatrixAt(i, m);
+          const tr = 0.12 + 0.045 * r;
+          m.makeScale(tr, tr, ch).setPosition(x, y, g);
+        } else if (STYLED && STYLE.repaint) {
           // crown stretched down into an oval (at most 1.7× as tall as wide) so only a short trunk shows under it
           const top = ch + r * sz, bot = Math.min(ch - r * sz, Math.max(2, 0.28 * top, top - 3.4 * r * sxy)), hz = (top - bot) / 2;
           m.makeScale(r * sxy, r * sxy, hz).setPosition(x, y, g + bot + hz);
@@ -1158,10 +1675,15 @@ const colorTarget = new THREE.WebGLRenderTarget(SIZE, SIZE, {
 const postMaterial = new THREE.ShaderMaterial({
   vertexShader: /* glsl */ `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: /* glsl */ `
-    uniform sampler2D tColor, tDepth;
+    uniform sampler2D tColor, tDepth, tShadow;
     uniform float near, far, px, size;   // px: metres per supersampled pixel
+    uniform bool shadows;                 // cast sun shadows (preset castShadow): tShadow is the depth seen from the sun
+    uniform mat4 sunMatrix;               // ENU -> sun clip space
+    uniform vec3 camPos, camRight, camUp, camDir, sun, shade;  // shade: a fully shaded surface's colour factor
+    uniform float halfW;                  // half the tile camera's width (m)
     uniform vec2 origin;                  // global art pixel of the tile's top-left corner
     uniform float ss;
+    uniform float inkStrength, inkFrom, inkTo, aoStrength;  // preset ink (styles.ts)
     varying vec2 vUv;
     float depth(vec2 uv) { return near + texture2D(tDepth, uv).x * (far - near); }
     vec3 P(vec2 uv) { return vec3(uv * size * px, depth(uv)); }
@@ -1178,7 +1700,7 @@ const postMaterial = new THREE.ShaderMaterial({
       // outlines: depth Laplacian over 2 px (planes are linear in an ortho depth buffer, so only creases and silhouettes show)
       float lx = abs(depth(vUv + 2.0 * e) + depth(vUv - 2.0 * e) - 2.0 * z);
       float ly = abs(depth(vUv + 2.0 * f) + depth(vUv - 2.0 * f) - 2.0 * z);
-      float edge = smoothstep(0.35, 1.2, max(lx, ly));
+      float edge = smoothstep(inkFrom, inkTo, max(lx, ly));
       // ambient occlusion: samples above this pixel's tangent plane, within 1.5 m
       vec3 p = P(vUv);
       vec3 n = normalize(cross(P(vUv + e) - P(vUv - e), P(vUv + f) - P(vUv - f)));
@@ -1192,8 +1714,25 @@ const postMaterial = new THREE.ShaderMaterial({
         occ += max(0.0, dot(n, v / max(d, 1e-3)) - 0.2) * (1.0 - smoothstep(1.0, 3.0, d));
       }
       occ = clamp(occ / 12.0 * 2.2, 0.0, 1.0);
-      c *= 1.0 - 0.38 * occ;
-      c = mix(c, c * vec3(0.42, 0.40, 0.42), edge * 0.75);
+      // sun shadows: is this surface point seen from the sun? (only surfaces facing it: the others are shaded already)
+      if (shadows) {
+        vec3 nw = normalize(camRight * n.x + camUp * n.y + camDir * n.z);
+        if (dot(nw, sun) > 0.02) {
+          vec3 w = camPos + camRight * ((vUv.x - 0.5) * 2.0 * halfW) + camUp * ((vUv.y - 0.5) * 2.0 * halfW) + camDir * z;
+          vec4 q = sunMatrix * vec4(w + nw * 0.2, 1.0);   // a normal offset keeps a surface from shadowing itself
+          vec3 s = q.xyz / q.w * 0.5 + 0.5;
+          if (all(greaterThan(s.xy, vec2(0.0))) && all(lessThan(s.xy, vec2(1.0)))) {
+            float lit = 0.0;
+            for (int i = 0; i < 16; i++) {                  // soft edge: 16 taps on a ~0.3 m disc
+              float a = float(i) * 2.39996, r = sqrt(float(i) + 0.5) * 0.4;
+              lit += step(s.z - 0.00001, texture2D(tShadow, s.xy + vec2(cos(a), sin(a)) * r / 4096.0).x);
+            }
+            c *= mix(shade, vec3(1.0), lit / 16.0);
+          }
+        }
+      }
+      c *= 1.0 - aoStrength * occ;
+      c = mix(c, c * vec3(0.42, 0.40, 0.42), edge * inkStrength);
       // paper: soft blotches over a few hundred art pixels + fine grain, continuous across tiles
       vec2 g = origin + vec2(vUv.x, 1.0 - vUv.y) * size / ss;
       float paper = (vnoise(g / 220.0) - 0.5) * 0.05 + (vnoise(g / 37.0) - 0.5) * 0.03 + (hash(floor(g * ss)) - 0.5) * 0.025;
@@ -1207,12 +1746,67 @@ const postMaterial = new THREE.ShaderMaterial({
     tColor: { value: colorTarget.texture }, tDepth: { value: colorTarget.depthTexture },
     near: { value: 1 }, far: { value: 6000 }, px: { value: CAMERA.mpp / SS }, size: { value: SIZE },
     origin: { value: new THREE.Vector2() }, ss: { value: SS },
+    tShadow: { value: null }, shadows: { value: false }, sunMatrix: { value: new THREE.Matrix4() },
+    camPos: { value: new THREE.Vector3() }, camRight: { value: new THREE.Vector3() }, camUp: { value: new THREE.Vector3() },
+    camDir: { value: new THREE.Vector3() }, sun: { value: SUN.clone() }, halfW: { value: 1 },
+    shade: { value: new THREE.Vector3(...(STYLE.castShadow ?? [1, 1, 1])) },
+    inkStrength: { value: STYLE.ink.strength }, inkFrom: { value: STYLE.ink.from }, inkTo: { value: STYLE.ink.to }, aoStrength: { value: STYLE.ink.ao },
   },
   depthTest: false, depthWrite: false,
 });
 const postScene = new THREE.Scene();
 postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMaterial));
 const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+// ---- sun shadows (preset castShadow): depth seen from the sun, tested per pixel in the post pass ------------------
+/** Shadow map texels sit on one fixed grid in sun space, so neighbouring tiles agree along their seams. */
+const SM = 4096, SM_TEXEL = 0.2;
+const shadowTarget = new THREE.WebGLRenderTarget(SM, SM, {
+  colorSpace: THREE.NoColorSpace, depthBuffer: true, generateMipmaps: false,
+  depthTexture: new THREE.DepthTexture(SM, SM, THREE.UnsignedIntType),
+});
+const sunCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20000);
+sunCamera.position.set(SUN.x * 10000, SUN.y * 10000, SUN.z * 10000);
+sunCamera.up.set(0, 0, 1);
+sunCamera.lookAt(0, 0, 0);
+sunCamera.updateMatrixWorld(true);
+const casterMaterial = new THREE.MeshBasicMaterial({ colorWrite: false });
+
+/** Frame the sun camera on what the tile camera sees (ground … 80 m above it), snapped to the texel grid. */
+function placeSun(tx: number, ty: number) {
+  const [fx0, fy0, fx1, fy1] = footprint(tx, ty);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i <= 16; i++) for (let j = 0; j <= 16; j++) {
+    const g = ground(fx0 + ((fx1 - fx0) * i) / 16, fy0 + ((fy1 - fy0) * j) / 16);
+    lo = Math.min(lo, g); hi = Math.max(hi, g);
+  }
+  // slide the sun camera along the sun ray to stay 10 km above this tile: its depth range (1 … 20 000 m) then
+  // holds every tile, also those over 10 km from the origin away from the sun (beyond far plane they read as
+  // shadowed). Moving along its own view axis leaves the texel grid where it was.
+  const k = 10000 + SUN.x * (fx0 + fx1) / 2 + SUN.y * (fy0 + fy1) / 2 + SUN.z * (lo + hi) / 2;
+  sunCamera.position.set(SUN.x * k, SUN.y * k, SUN.z * k);
+  sunCamera.updateMatrixWorld(true);
+  const r = new THREE.Vector3(), u = new THREE.Vector3(), d = new THREE.Vector3(), p = new THREE.Vector3();
+  camera.matrixWorld.extractBasis(r, u, d);
+  d.negate(); // a camera looks down its -z
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const Z of [lo - 5, hi + 80]) {
+    const x = sx * camera.right, y = sy * camera.top, t = (Z - camera.position.z - r.z * x - u.z * y) / d.z;
+    p.copy(camera.position).addScaledVector(r, x).addScaledVector(u, y).addScaledVector(d, t).applyMatrix4(sunCamera.matrixWorldInverse);
+    x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+  }
+  const span = SM * SM_TEXEL;
+  if (x1 - x0 > span || y1 - y0 > span) console.warn(`shadow map too small for ${tx}_${ty}: ${(x1 - x0).toFixed(0)} × ${(y1 - y0).toFixed(0)} m`);
+  sunCamera.left = Math.floor(((x0 + x1) / 2 - span / 2) / SM_TEXEL) * SM_TEXEL;
+  sunCamera.right = sunCamera.left + span;
+  sunCamera.bottom = Math.floor(((y0 + y1) / 2 - span / 2) / SM_TEXEL) * SM_TEXEL;
+  sunCamera.top = sunCamera.bottom + span;
+  sunCamera.updateProjectionMatrix();
+  const u_ = postMaterial.uniforms;
+  u_.sunMatrix.value.multiplyMatrices(sunCamera.projectionMatrix, sunCamera.matrixWorldInverse);
+  u_.camPos.value.copy(camera.position); u_.camRight.value.copy(r); u_.camUp.value.copy(u); u_.camDir.value.copy(d);
+  u_.halfW.value = camera.right;
+}
 
 function placeCamera(tx: number, ty: number) {
   const c = tileCamera(tx, ty);
@@ -1226,10 +1820,32 @@ function placeCamera(tx: number, ty: number) {
   camera.updateMatrixWorld(true);
 }
 
-async function renderTile(tx: number, ty: number, data?: TileObjects) {
+/** `casters`: the tile's objects and its neighbours' (render.ts, presets with cast shadows): they shadow this tile too. */
+async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: TileObjects) {
+  // ?profile=1 (render.ts --profile): time each pass; gl.finish() waits for the GPU, so only when asked
+  const gl = renderer.getContext(), ms: Record<string, number> = {};
+  let tp = performance.now();
+  const lap = (k: string) => { if (!PROFILE) return; gl.finish(); const n = performance.now(); ms[k] = Math.round(n - tp); tp = n; };
   placeCamera(tx, ty);
-  buildObjects(data ?? { b: [], t: [] });
+  buildObjects((SHADOWS && casters) || data || { b: [], t: [] });
+  lap("objects");
   buildGround(tx, ty, data);
+  lap("ground");
+  if (SHADOWS) {
+    placeSun(tx, ty);
+    groundMesh.visible = false; // the ground receives, it does not cast (hillshade lights the slopes)
+    capMesh.visible = false; // a mine's walls cast for its cut rock (the cap's holes would not survive the override)
+    scene.overrideMaterial = casterMaterial;
+    renderer.setRenderTarget(shadowTarget);
+    renderer.clear(true, true, true);
+    renderer.render(scene, sunCamera);
+    scene.overrideMaterial = null;
+    groundMesh.visible = true;
+    capMesh.visible = !!MINE;
+    postMaterial.uniforms.tShadow.value = shadowTarget.depthTexture;
+    postMaterial.uniforms.shadows.value = true;
+    lap("shadow");
+  }
   if (STYLED) {
     renderer.setRenderTarget(colorTarget);
     renderer.render(scene, camera);
@@ -1243,6 +1859,26 @@ async function renderTile(tx: number, ty: number, data?: TileObjects) {
     renderer.render(scene, camera);
   }
   const color = renderer.domElement.toDataURL("image/png");
+  lap("color");
+  let fg: string | undefined;
+  if (FOREGROUND && !MINE) {
+    renderer.setRenderTarget(null);
+    renderer.setClearColor(0x000000, 1);
+    renderer.clear(true, true, true);
+    scene.overrideMaterial = fgMaterial;
+    fgMaterial.uniforms.on.value = 0;
+    renderer.render(scene, camera);
+    groundMesh.visible = false; decks.visible = false;
+    fgMaterial.uniforms.on.value = 1;
+    const auto = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.render(scene, camera);
+    renderer.autoClear = auto;
+    groundMesh.visible = true; decks.visible = true;
+    scene.overrideMaterial = null;
+    fg = renderer.domElement.toDataURL("image/png");
+    lap("fg");
+  }
 
   scene.overrideMaterial = heightMaterial;
   renderer.setRenderTarget(heightTarget);
@@ -1254,7 +1890,8 @@ async function renderTile(tx: number, ty: number, data?: TileObjects) {
   renderer.readRenderTargetPixels(heightTarget, 0, 0, HEIGHT_SIZE, HEIGHT_SIZE, buf);
   renderer.setRenderTarget(null);
   scene.overrideMaterial = null;
-  return { color, height: bufToB64(buf) };
+  lap("height");
+  return { color, height: bufToB64(buf), fg, ms };
 }
 
 function bufToB64(buf: Uint8Array) {

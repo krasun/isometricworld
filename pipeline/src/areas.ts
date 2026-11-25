@@ -8,7 +8,13 @@ export interface Area {
   region: string;
   /** south, west, north, east (WGS84) */
   bbox: [number, number, number, number];
+  /** a level of a salt mine (mine.ts, minedata.ts): drawn as a cutaway under the town, exported as its own layer */
+  mine?: string;
 }
+
+/** The Wieliczka salt mine's levels (mine.ts): the mine's outline (OSM) with a margin, one area per level. */
+const MINE_BBOX: [number, number, number, number] = [49.9735, 20.0255, 49.988, 20.0905];
+const MINE_LEVELS = ["I", "IIw", "IIn", "III", "IV", "V", "VI", "VII", "VIII", "IX"];
 
 export const AREAS: Record<string, Area> = {
   /** Jaffa → Yarkon Park → Ramat Gan, including the sea off the coast. */
@@ -99,6 +105,36 @@ export const AREAS: Record<string, Area> = {
   "zagreb-sesvete-east": { title: "Sesvete (east)", region: "zagreb", bbox: [45.770, 16.160, 45.874, 16.245] },
   /** Between Žitnjak, the Sava and the airport (Kosnica, Ivanja Reka). */
   "zagreb-southeast": { title: "Žitnjak · Ivanja Reka", region: "zagreb", bbox: [45.755, 16.040, 45.800, 16.170] },
+  /** Wieliczka test patch: Rynek Górny, Zamek Żupny, the Regis, Daniłowicza and Kinga shafts, the graduation
+   *  tower, the Rynek-Kopalnia station, St Clement's and St Sebastian's (~1.2 × 1.4 km). */
+  "wieliczka-rynek": { title: "Wieliczka · Rynek Górny · Kopalnia", region: "wieliczka", bbox: [49.977, 20.049, 49.988, 20.068] },
+  /** The whole town (OSM relation 2751961: 49.971–50.005 N, 20.003–20.089 E) and a ~650 m ring around it, so
+   *  the faded map edge (up to ~640 m wide) falls on the villages and Kraków, not on the town; north to past
+   *  the A4 (50.000–50.018 N). */
+  "wieliczka-town": { title: "Wieliczka", region: "wieliczka", bbox: [49.965, 19.994, 50.024, 20.098] },
+  /** Kraków test patch: the Barbican and Rynek Główny south past Wawel to the Vistula's far bank (~2.2 × 2.6 km), so
+   *  Wawel stays clear of the faded map edge. */
+  "krakow-test": { title: "Kraków · Old Town and Wawel", region: "wieliczka", bbox: [50.0445, 19.9195, 50.0675, 19.9505] },
+  // The whole of Kraków (OSM relation 449696: 49.967–50.126 N, 19.792–20.217 E) in a grid of 5 × 3 boxes of ~50 km²
+  // (≈ 7.1 × 7.2 km), overlapping ~1 km; places.ts `outline` trims them to the city (and the gmina Wieliczka).
+  "krakow-south-1": { title: "Kraków · Tyniec", region: "wieliczka", bbox: [49.962, 19.785, 50.027, 19.885] },
+  "krakow-south-2": { title: "Kraków · Łagiewniki · Kurdwanów", region: "wieliczka", bbox: [49.962, 19.870, 50.027, 19.970] },
+  "krakow-south-3": { title: "Kraków · Prokocim · Bieżanów", region: "wieliczka", bbox: [49.962, 19.955, 50.027, 20.055] },
+  "krakow-south-4": { title: "Kraków · Rybitwy · Przewóz", region: "wieliczka", bbox: [49.962, 20.040, 50.027, 20.140] },
+  "krakow-south-5": { title: "Kraków · Branice (south)", region: "wieliczka", bbox: [49.962, 20.125, 50.027, 20.225] },
+  "krakow-mid-1": { title: "Kraków · Zwierzyniec · Bielany · Las Wolski", region: "wieliczka", bbox: [50.017, 19.785, 50.082, 19.885] },
+  "krakow-mid-2": { title: "Kraków · Old Town · Kazimierz · Podgórze", region: "wieliczka", bbox: [50.017, 19.870, 50.082, 19.970] },
+  "krakow-mid-3": { title: "Kraków · Grzegórzki · Czyżyny · Płaszów", region: "wieliczka", bbox: [50.017, 19.955, 50.082, 20.055] },
+  "krakow-mid-4": { title: "Kraków · Nowa Huta", region: "wieliczka", bbox: [50.017, 20.040, 50.082, 20.140] },
+  "krakow-mid-5": { title: "Kraków · Branice · Kościelniki", region: "wieliczka", bbox: [50.017, 20.125, 50.082, 20.225] },
+  "krakow-north-1": { title: "Kraków · Bronowice · Mydlniki", region: "wieliczka", bbox: [50.072, 19.785, 50.137, 19.885] },
+  "krakow-north-2": { title: "Kraków · Krowodrza · Prądnik Biały", region: "wieliczka", bbox: [50.072, 19.870, 50.137, 19.970] },
+  "krakow-north-3": { title: "Kraków · Prądnik Czerwony · Mistrzejowice", region: "wieliczka", bbox: [50.072, 19.955, 50.137, 20.055] },
+  "krakow-north-4": { title: "Kraków · Bieńczyce · Wzgórza Krzesławickie", region: "wieliczka", bbox: [50.072, 20.040, 50.137, 20.140] },
+  "krakow-north-5": { title: "Kraków · Grębałów · Wadów", region: "wieliczka", bbox: [50.072, 20.125, 50.137, 20.225] },
+  ...Object.fromEntries(MINE_LEVELS.map((id) => [`wieliczka-mine-${id}`, { title: `Salt mine · level ${id}`, region: "wieliczka", bbox: MINE_BBOX, mine: id }])),
+  /** the first level on Hondius's 1645 plan (mine.ts build1645) */
+  "wieliczka-mine-1645": { title: "Salt mine · level I in 1645", region: "wieliczka", bbox: MINE_BBOX, mine: "1645" },
 };
 
 /** Look up an area and switch the camera to its region: call before any projection. */

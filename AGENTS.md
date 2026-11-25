@@ -21,10 +21,14 @@ the site is Astro + OpenSeadragon.
    port; the dev server prints it). Don't touch `web/` while a film render (`pipeline/src/film.ts`) is running:
    hot reload breaks the capture.
 5. **Shared code runs for every region.** `renderer.ts`, `page/ground.ts`, `ground.ts`, `scene.ts` and the paint
-   assembly are global: a change shows up in every region on its next run. Check it on another region's test
-   patch (`rothschild`, `schlossplatz`, `jelacic`) or put it behind your region's `sources`.
+   assembly are global: a change shows up in every region on its next run. A new look feature is a field of the
+   style presets (`pipeline/src/styles.ts`) whose value in the existing presets keeps their look; a data reader
+   goes behind the region's `sources`. Check it on another region's test patch (`rothschild`, `schlossplatz`,
+   `jelacic`, Wieliczka's) pixel for pixel.
 6. **Never delete `data/derived/`** (renders, height passes and, above all, paintings: hours of image
    generation each) or `data/web-state/` (what is published). `data/web/` is only the unpublished cache.
+   After painting, `npm run archive -- <region>` (README "Archive"); only the user decides to free local space,
+   and only after `npm run archive -- <region> --verify` passes.
 7. **Publishing is outward-facing**: `npm run publish` uploads to the production bucket, `npm run deploy` updates
    the live site. Run it only when the user asked for it; it asks `[y/N]` (`--yes` only with the user's
    go-ahead). **Working for a contributor** (not a maintainer of the production bucket): publish only to their
@@ -44,15 +48,19 @@ the site is Astro + OpenSeadragon.
   overlap (export takes each tile from the area it lies deepest inside; paint reuses the neighbours' windows).
 - **Sources** (`sources` on the region): where buildings, trees and terrain come from beyond OSM. `"tlv"`
   (Tel Aviv municipal GIS), `"lgl"` (LGL Baden-Württemberg LoD2, nDOM1 crowns, DGM1 terrain), `"zg3d"` (Zagreb's
-  LoD2 model), unset (OSM buildings and trees, Copernicus terrain).
-- **Look**: every region but Tel Aviv gets the **styled** render (`STYLED` in `page/renderer.ts`): buildings as
-  meshes with roofs, facade and roof materials, hillshade, ink outlines, ambient occlusion, paper grain,
-  species-coloured crowns, styled streets and rails. Without a 3D source, OSM footprints are built as meshes
-  (gabled or hipped from `roof:shape`, heights from `height`/`building:levels`) and tree crowns are generated from
-  OSM land cover, as Zagreb does for what its model lacks. So a new city looks finished without painting. A
-  region is then **styled** (Stuttgart: the render is the map, only landmarks are painted), **painted** (Zagreb:
-  every window repainted by an image model, the styled render wherever one isn't) or both. Tel Aviv keeps the
-  plain render its painting was made from.
+  LoD2 model), `"gugik"` (Polish GUGiK LoD2, BDOT10k, NMT/NMPT, orthophoto), unset (OSM buildings and trees,
+  Copernicus terrain).
+- **Look** (`look` on the region, independent of `sources`: check data with `sources` and the look with `look`,
+  never one for the other). `"styled"` (`STYLED` in `page/renderer.ts`; Zagreb too, as the input its painter
+  repaints): buildings as meshes with roofs, facade and roof materials, hillshade, ink outlines, ambient
+  occlusion, paper grain, species-coloured crowns, styled streets and rails. Without a 3D source, OSM footprints
+  are built as meshes (gabled or hipped from `roof:shape`, heights from `height`/`building:levels`) and tree
+  crowns are generated from OSM land cover, as Zagreb does for what its model lacks, so a new styled city looks
+  finished without painting. Variants of the styled look are presets in `pipeline/src/styles.ts` (`style`:
+  "stuttgart", the default, also Zagreb's; "poland", Wieliczka). A region is then **styled** (Stuttgart: the render
+  is the map, a few patches and landmarks painted; Wieliczka), **painted** (Zagreb: every window repainted by an
+  image model, the styled render wherever one isn't) or both. Tel Aviv keeps the plain render its painting was
+  made from.
 - **Hosting** (`pipeline/src/hosting.ts`, README "Hosting"): tiles and region data live only on R2
   (`isometricworldtiles`, `regions/<region>/` under `TILES_ORIGIN` from `.env`), never in git or
   `web/public`. `export` writes changed files to the cache `data/web/regions/<region>/`, `npm run dev` shows
@@ -60,6 +68,10 @@ the site is Astro + OpenSeadragon.
   export downloads when it's missing locally) and empties the cache. A contributor who publishes a region to
   their own bucket must include `state.json`. Tiles are AVIF only: don't build a WebP fallback for a new region
   (Tel Aviv's old WebP pyramid is legacy).
+- **Archive** (`pipeline/src/archive.ts`, README "Archive"): every file under `data/derived/` and `data/raw/` in
+  the private bucket `isometricworld-archive`, content-addressed. `npm run pull -- <region> shared --near <lat>,<lon>`
+  brings a patch to repaint; `npm run export -- <region> --partial` then rebuilds only the tiles whose sources are
+  here, and `npm run archive -- <region>` uploads only what changed.
 
 ## Adding a city
 
@@ -127,10 +139,11 @@ buildings and trees come from it and which from OSM.
 
 ### 4. Look
 
-**Styled** (the default). The renderer picks a facade style per building (`scene.ts` → `kind = 10 + style`):
-shared styles 0 old plaster, 1 post-war, 2 public/sandstone, 3 tower, 4 shed, 5 office; Zagreb's 6–10 (only
-compiled with `#define ZG`); 11 masonry (`portals.ts`), 12 multi-storey car park. A region's own styles take the
-next free numbers, behind their own define, so other regions never change. OSM `roof:colour`/`roof:material`
+**Styled** (`look: "styled"`, a preset in `styles.ts`). The renderer picks a facade style per building (`scene.ts` → `kind = 10 + style`):
+shared styles 0 old plaster, 1 post-war, 2 public/sandstone, 3 tower, 4 shed, 5 office; 6 Zagreb's prefab slabs
+and 7–10 its landmarks (compiled with `#define ZG`), elsewhere 6 monumental walls (preset `monumental`); 11
+masonry (`portals.ts`), 12 multi-storey car park (ALKIS). A region's own styles take the next free numbers, behind
+their own define or preset field, so other regions never change. OSM `roof:colour`/`roof:material`
 and `building:colour`/`building:material` refine roofs and walls. Tree crowns: a species table
 (`species.ts`, used by Zagreb and OSM-only regions; species from OSM tags or the place: street, park, wood). Named landmarks the data gets wrong:
 `landmarks.ts` (`LOOKS` tag fixes, `PAINT` colours, `ARCADES`, hand-built models like the Fernsehturm).
