@@ -90,6 +90,11 @@ async function openPage(browser: Awaited<ReturnType<typeof chromium.launch>>, di
     const type = file.endsWith(".js") ? "text/javascript" : file.endsWith(".json") ? "application/json" : file.endsWith(".bin") ? "application/octet-stream"
       : file.endsWith(".jpg") ? "image/jpeg" : file.endsWith(".png") ? "image/png" : "text/html";
     if (!existsSync(file)) return route.fulfill({ status: 404 });
+    const range = /^bytes=(\d+)-(\d+)$/.exec(route.request().headers()["range"] ?? ""); // height.bin comes in parts (renderer.ts)
+    if (range) {
+      const body = readFileSync(file), a = Number(range[1]), b = Math.min(body.length - 1, Number(range[2]));
+      return route.fulfill({ status: 206, body: body.subarray(a, b + 1), contentType: type, headers: { "Content-Range": `bytes ${a}-${b}/${body.length}` } });
+    }
     return route.fulfill({ body: readFileSync(file), contentType: type });
   });
   page.on("console", (m) => { if (m.type() === "warning") console.warn(`  page: ${m.text()}`); });

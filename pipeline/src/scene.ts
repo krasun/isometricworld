@@ -182,12 +182,15 @@ function lod2Style(b: Lod2Building): [number, number] {
   const [s, roofKind] = lod2StyleOf(b), kind = b.kind ?? alkisKind(b.fn);
   return [s !== 4 && MONUMENTAL.has(kind) ? 6 : s, roofKind]; // preset: monumental walls for these kinds
 }
+const bigRoofs = () => styleOf(region.style).bigRoofs;
+const footArea = (b: Lod2Building) => Math.abs(b.footprint.reduce((a, p, i) => { const q = b.footprint[(i + 1) % b.footprint.length]; return a + p[0] * q[1] - q[0] * p[1]; }, 0)) / 2;
 function lod2StyleOf(b: Lod2Building): [number, number] {
   const kind = b.kind ?? alkisKind(b.fn), flatOnly = b.roofType === "1000";
   const r = hash(Math.round(b.center[0] * 1e6) ^ Math.round(b.center[1] * 1e6));
   const r2 = hash(Math.round(b.center[1] * 1e6) * 7 + 3);
   const tile = r < 0.55 ? 0 : r < 0.82 ? 1 : 2;
-  const flat = r2 < 0.55 ? 3 : r2 < 0.85 || b.roofRgb ? 5 : 6; // no made-up green roof where the roof's colour is measured
+  const big = bigRoofs() && footArea(b) > 1500;
+  const flat = r2 < 0.55 ? 3 : r2 < 0.85 || b.roofRgb || big ? 5 : 6; // no made-up green roof where the roof's colour is measured
   const k = (pitched: number, f: number) => pitched * 10 + f;
   if (kind === "structure") return [4, k(2, 5)];                                 // canopies, other structures
   const code = b.fn.split("_")[1] ?? "";
@@ -196,6 +199,7 @@ function lod2StyleOf(b: Lod2Building): [number, number] {
   if (kind === "church") return [2, k(r < 0.3 ? 4 : 2, 3)];                     // churches: slate, some copper
   if (b.height >= 45) return [3, k(2, 5)];
   if (kind === "public") return [2, k(r < 0.15 ? 4 : tile, flat)];             // public: sandstone
+  if (big && kind === "industrial" && b.height <= 18) return [4, k(tile, flat)];  // preset bigRoofs: factory and warehouse halls
   if ((kind === "commercial" || kind === "industrial") && (flatOnly || b.height > 18)) return [r2 < 0.5 ? 5 : 1, k(tile, flat)]; // offices, shops: ribbon or punched windows
   if (kind === "industrial") return [4, k(tile, 5)];                            // production, storage
   return [flatOnly ? 1 : 0, k(tile, flat)];

@@ -1,0 +1,10 @@
+ref: style/textures/prompts/ref-camera.png
+
+A seamless top-down texture of an EXTENSIVE GREEN ROOF (sedum roof) on a big flat building, 1024x1024 px covering 32 x 32 m (3.2 cm per pixel).
+What it shows: a low carpet of sedum and mosses in irregular soft patches of olive green, yellow-green, a little ochre and a few rust-red sedum patches (as sedum turns in dry summers); here and there thin dry gravel strips (light grey, about 0.5 m wide) along straight lines as maintenance paths and around two small square roof drains. It must NOT look like a mown lawn: patchy, low, mixed colours, no stripes, no trees, no shrubs.
+Rules for this texture:
+- Seen STRAIGHT FROM ABOVE (orthographic, top-down, no perspective, no horizon, no tilt), lit evenly by soft daylight with no cast shadows of its own beyond tiny contact shading.
+- It must TILE SEAMLESSLY: what leaves the right edge continues at the left edge, top continues at bottom. No border, no vignette, no frame, no text, no logos.
+- Style: the clean, slightly simplified illustrated look of the attached map render (ref1.png): flat clear colours, crisp but not noisy detail, readable when shrunk to a quarter of its size. No photographic noise or grain, no dark grunge.
+- Keep the overall brightness EVEN across the whole image (no large light or dark patches that would show as a repeating pattern when tiled).
+- Output exactly 1024x1024.

@@ -298,6 +298,7 @@ export const REGIONS: Record<string, Region> = {
     geoidM: 46.06, // EGM2008 at Trg bana Jelačića (PROJ cs2cs EPSG:4326+3855 -> 4979: 46.057 m)
     groundH: 166, // Lower Town ~120 m a.s.l. + geoid
     heightBase: 200, // Sava ~105 m a.s.l. (151 m ellipsoid) … foothills + towers below ~700 m a.s.l.: 100…755 m fits
+    style: "zagreb",
     sources: "zg3d",
     // the 17 city districts (OSM admin_level 9, see municipalities) plus a box over Zagreb Airport (Velika Gorica)
     outline: {

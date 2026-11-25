@@ -30,7 +30,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; "tiles-height"?: string; borders?: string; roads?: string; trains?: string; airport?: string; mine?: string; search?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; "tiles-height"?: string; borders?: string; roads?: string; trains?: string; cranes?: string; airport?: string; mine?: string; search?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -208,6 +208,12 @@ if (effects.clouds) import("./clouds.ts").then(({ Clouds: C }) => { clouds = new
 // finding streets and places (effects.search; search.ts)
 if (effects.search && files.search) Promise.all([import("./search.ts"), json<SearchItem[]>(files.search)]).then(([{ Search }, items]) => new Search(items, { go: goTo }));
 let lightAircraft: LightAircraft | null = null, airport: AirportTraffic | null = null, signs: Signs | null = null;
+/** tower cranes slewing on the construction sites (cranes.ts; the tiles draw their masts) */
+let cranes: import("./cranes.ts").Cranes | null = null;
+if (files.cranes) Promise.all([import("./cranes.ts"), json<number[][]>(files.cranes)]).then(([{ Cranes: C }, data]) => {
+  if (data.length) cranes = new C(data, world.enu2px);
+  Object.assign(window as object, { __cranes: cranes });
+});
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
@@ -346,6 +352,7 @@ function frame(t: number) {
     pecking.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
   if (clouds && !mine?.underground) { clouds.step(dt); clouds.draw(ctx, k, tx, ty, w, hgt, px); } // over the town, under the sky
+  if (cranes && !mine?.underground) { cranes.step(dt); cranes.draw(ctx, toScreen, [0, 0, w, hgt]); } // part of the sites: shown with traffic off too
   if (signs && !mine?.underground) { signs.step(dt); signs.draw(ctx, toScreen, [0, 0, w, hgt]); } // part of the buildings: shown with traffic off too
   if (above) { // sky above everything: parakeets or pigeons, light aircraft, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }

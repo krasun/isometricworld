@@ -1,0 +1,10 @@
+ref: style/textures/prompts/ref-camera.png
+
+A seamless top-down texture of the GROUND OF A LARGE CONSTRUCTION SITE (earthworks for a railway), 1024x1024 px covering 48 x 48 m (4.7 cm per pixel).
+What it shows: compacted earth and crushed-stone base in light beige, sandy ochre and light grey areas with soft irregular borders; several sets of curving tyre and caterpillar tracks crossing it (paired darker lines with tread pattern, overlapping, some long, some short); a couple of shallow puddles (small, muddy grey-blue); a few small heaps of grey gravel and of brown topsoil (seen from above, with a slight soft shading only); scattered planks and a few kerb stones lying around. No machines, no vehicles, no people, no containers, no buildings, no fences: only ground.
+Rules for this texture:
+- Seen STRAIGHT FROM ABOVE (orthographic, top-down, no perspective, no horizon, no tilt), lit evenly by soft daylight with no cast shadows of its own beyond tiny contact shading.
+- It must TILE SEAMLESSLY: what leaves the right edge continues at the left edge, top continues at bottom. No border, no vignette, no frame, no text, no logos.
+- Style: the clean, slightly simplified illustrated look of the attached map render (ref1.png): flat clear colours, crisp but not noisy detail, readable when shrunk to a quarter of its size. No photographic noise or grain, no dark grunge.
+- Keep the overall brightness EVEN across the whole image (no large light or dark patches that would show as a repeating pattern when tiled).
+- Output exactly 1024x1024.

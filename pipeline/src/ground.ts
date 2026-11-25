@@ -66,14 +66,18 @@ const CLOSED_LINES = STYLED && styleOf(region.style).closedLines;
 const REPAINT = STYLED && styleOf(region.style).repaint;
 /** Preset `parkedCars`: the stall lines of the parking lots (parking.ts; the cars: scene.ts). */
 const PARKED = STYLED && styleOf(region.style).parkedCars;
+const SITES = STYLED && styleOf(region.style).constructionSites;
 /** Preset `playgrounds`: rubber safety pads and sandpits of the playgrounds (playgrounds.ts). */
 const PLAYGROUNDS = STYLED && styleOf(region.style).playgrounds;
 /** Preset `bridgeDetail`: bridge decks carried on to their abutments (below). */
 const BRIDGE_DETAIL = STYLED && styleOf(region.style).bridgeDetail;
+/** Preset bridgeAbutments (or bridgeDetail): the same, the abutments only. */
+const ABUTMENTS = BRIDGE_DETAIL || (STYLED && styleOf(region.style).bridgeAbutments);
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
 const GEOID = region.geoidM;
-/** Terrain grid posting (m) and how far past the area it reaches (deg; the render footprint of an edge tile). */
-const STEP = DGM ? 3 : 10, TMARGIN = DGM ? 0.008 : MARGIN;
+/** Terrain grid posting (m) and how far past the area it reaches (deg; the render footprint of an edge tile). LGL:
+ *  1.5 m, so walls between tracks at different levels (4.5 m apart) draw straight instead of as a staircase. */
+const STEP = region.sources === "lgl" ? 1.5 : DGM ? 3 : 10, TMARGIN = DGM ? 0.008 : MARGIN;
 const [S, W, N, E] = area.bbox;
 const bb = [S - MARGIN, W - MARGIN, N + MARGIN, E + MARGIN];
 const out = join(DERIVED, name, "ground");
@@ -242,6 +246,7 @@ function areaKind(t: Record<string, string>): string | null {
     || ["grass", "meadow", "village_green", "recreation_ground"].includes(lu)) return "park";
   if (STYLED && ["vineyard", "allotments", "orchard"].includes(lu)) return lu; // the Kessel's slopes: own colours and rows
   if (["farmland", "orchard", "allotments", "plant_nursery", "greenhouse_horticulture", "vineyard"].includes(lu)) return "farm";
+  if (SITES && lu === "construction") return "construction"; // preset constructionSites
   if (["construction", "brownfield", "greenfield", "landfill"].includes(lu)) return "dirt";
   if (am === "parking") return "parking";
   if (t["area:highway"] || t.place === "square" || (t.highway === "pedestrian" && t.area === "yes")
@@ -590,15 +595,21 @@ if (region.sources === "gugik") {
 // track beds (LGL): on the 3 m grid, nodes beside a track in a cutting sit on the cutting wall, so the draped
 // track zig-zags up and down. Every open-air track on the ground gets a smooth long profile (lowest DGM1 point
 // across the bed every metre, running median 15 m, then mean 20 m); nodes within the bed + one grid step take it,
-// blending back to the terrain over the next 4 m; the nearest track wins where beds run side by side
+// blending back to the terrain over the next 4 m. Where beds run side by side at different levels, the two profiles
+// blend linearly over RAMP m about the midline between them: a straight ramp along the tracks (a nearest-track-wins
+// step jumps a whole grid cell from row to row and draws a sawtooth cliff). Last, within NEAR m of a track the ground
+// rises or falls at most 1 m per metre from the beds: a survey's retaining wall beside the tracks becomes a 45°
+// embankment running along them (on the 3 m grid a diagonal wall is a staircase, and the tracks on it wobble)
 if (region.sources === "lgl") {
   const at = (x: number, y: number) => {
     const fx = Math.max(0, Math.min(grid.nx - 1.001, (x - grid.x0) / STEP)), fy = Math.max(0, Math.min(grid.ny - 1.001, (y - grid.y0) / STEP));
     const ix = Math.floor(fx), iy = Math.floor(fy), ax = fx - ix, ay = fy - iy, v = (a: number, b: number) => h[b * grid.nx + a];
     return (v(ix, iy) * (1 - ax) + v(ix + 1, iy) * ax) * (1 - ay) + (v(ix, iy + 1) * (1 - ax) + v(ix + 1, iy + 1) * ax) * ay;
   };
-  const FLAT = 2.7 + STEP, BLEND = 4;
-  const best = new Float32Array(n).fill(Infinity), target = new Float32Array(n);
+  const FLAT = 2.7 + STEP, BLEND = 4, RAMP = 2 * STEP + 1, NEAR = 15;
+  const near = new Uint8Array(n);
+  const best = new Float32Array(n).fill(Infinity), target = new Float32Array(n), who = new Int32Array(n).fill(-1);
+  const best2 = new Float32Array(n).fill(Infinity), target2 = new Float32Array(n); // the nearest other track
   let tracks = 0;
   for (const f of features) {
     if (f.k !== "rail" || f.y || f.b || !f.l || f.l.length < 2) continue;
@@ -620,7 +631,7 @@ if (region.sources === "lgl") {
     const prof = win(10, (v) => v.reduce((a, b) => a + b, 0) / v.length, med);
     tracks++;
     // nodes near each 1 m piece take the profile there
-    const R = FLAT + BLEND;
+    const R = FLAT + BLEND, RN = Math.max(R, NEAR);
     for (let k = 1; k < pts.length; k++) {
       const a = pts[k - 1], b = pts[k], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-9;
       const gx0 = Math.max(0, Math.floor((Math.min(a[0], b[0]) - R - grid.x0) / STEP)), gx1 = Math.min(grid.nx - 1, Math.ceil((Math.max(a[0], b[0]) + R - grid.x0) / STEP));
@@ -629,7 +640,12 @@ if (region.sources === "lgl") {
         const x = grid.x0 + ix * STEP, y = grid.y0 + iy * STEP, i = iy * grid.nx + ix;
         if (isWater[i]) continue;
         const u = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2)), d = Math.hypot(x - a[0] - u * dx, y - a[1] - u * dy);
-        if (d < R && d < best[i]) { best[i] = d; target[i] = prof[k - 1] + (prof[k] - prof[k - 1]) * u; }
+        if (d < RN) near[i] = 1;
+        if (d >= R) continue;
+        const t = prof[k - 1] + (prof[k] - prof[k - 1]) * u;
+        if (who[i] === tracks) { if (d < best[i]) { best[i] = d; target[i] = t; } }
+        else if (d < best[i]) { if (who[i] >= 0) { best2[i] = best[i]; target2[i] = target[i]; } who[i] = tracks; best[i] = d; target[i] = t; }
+        else if (d < best2[i]) { best2[i] = d; target2[i] = t; }
       }
     }
   }
@@ -637,11 +653,33 @@ if (region.sources === "lgl") {
   for (let i = 0; i < n; i++) {
     if (best[i] === Infinity) continue;
     const t = best[i] <= FLAT ? 1 : 1 - (best[i] - FLAT) / BLEND, s = t * t * (3 - 2 * t);
-    const v = h[i] + (target[i] - h[i]) * s;
+    const w2 = best2[i] === Infinity ? 0 : 0.5 * Math.max(0, 1 - (best2[i] - best[i]) / RAMP);
+    const v = h[i] + (target[i] + (target2[i] - target[i]) * w2 - h[i]) * s;
     if (Math.abs(v - h[i]) > 0.05) moved++;
     h[i] = v;
   }
-  console.log(`  track beds: ${tracks} open-air track(s) levelled, ${moved} grid nodes moved`);
+  // slope limit near the tracks (chamfer sweeps, beds fixed): |h(i) - h(j)| <= distance(i, j) m
+  const fixedBed = (i: number) => best[i] <= FLAT || isWater[i] || !near[i];
+  const NB: Array<[number, number, number]> = [[-1, 0, STEP], [-1, -1, STEP * Math.SQRT2], [0, -1, STEP], [1, -1, STEP * Math.SQRT2]];
+  let limited = 0;
+  for (let round = 0; round < 2; round++) for (const dir of [1, -1]) {
+    for (let a = 0; a < grid.ny; a++) {
+      const iy = dir > 0 ? a : grid.ny - 1 - a;
+      for (let b = 0; b < grid.nx; b++) {
+        const ix = dir > 0 ? b : grid.nx - 1 - b, i = iy * grid.nx + ix;
+        if (fixedBed(i)) continue;
+        for (const [dx, dy, d] of NB) {
+          const jx = ix + dx * dir, jy = iy + dy * dir;
+          if (jx < 0 || jy < 0 || jx >= grid.nx || jy >= grid.ny) continue;
+          const j = jy * grid.nx + jx;
+          if (!near[j]) continue;
+          const v = Math.min(h[j] + d, Math.max(h[j] - d, h[i]));
+          if (v !== h[i]) { h[i] = v; limited++; }
+        }
+      }
+    }
+  }
+  console.log(`  track beds: ${tracks} open-air track(s) levelled, ${moved} grid nodes moved, ${limited} slope limits near them`);
 }
 
 // orthometric -> ellipsoid -> ENU up (Earth curvature drops the ellipsoid below the tangent plane)
@@ -660,11 +698,11 @@ const sample = (x: number, y: number) => {
   const ix = Math.floor(fx), iy = Math.floor(fy), ax = fx - ix, ay = fy - iy, i = iy * grid.nx + ix;
   return (h[i] * (1 - ax) + h[i + 1] * ax) * (1 - ay) + (h[i + grid.nx] * (1 - ax) + h[i + grid.nx + 1] * ax) * ay;
 };
-// preset bridgeDetail: an OSM bridge often ends short of its abutment, over the gap the terrain model leaves under
+// preset bridgeDetail / bridgeAbutments: an OSM bridge often ends short of its abutment, over the gap the terrain model leaves under
 // the bridge, so the road dips before the deck. Each abutment end (not a joint between bridge ways) runs on along
 // its direction to where the embankment tops out: the first point within 0.3 m of the highest terrain in the
 // next 15 m, at least 1 m (bridges.ts deckHeight, carried).
-if (BRIDGE_DETAIL) {
+if (ABUTMENTS) {
   const endUse = new Map<number, number>();
   for (const w of graph) if (w.bridge) for (const n of [w.nodes[0], w.nodes.at(-1)!]) endUse.set(n, (endUse.get(n) ?? 0) + 1);
   let n = 0, total = 0;

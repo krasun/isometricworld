@@ -1,0 +1,26 @@
+ref: style/textures/prompts/ref-camera.png
+ref: style/reference.png
+
+A SPRITE SHEET of construction-site objects for an isometric city map, drawn EXACTLY in the map's camera and style.
+Camera: the same as ref1.png (a render of the map): orthographic, NO perspective, tilted 45° down, every object seen from the same angle as the buildings in ref1.png; the sun from the upper left as in ref1.png. Style: the clean illustrated look of ref1.png and ref2.png: flat-shaded surfaces, each one flat colour, a thin dark outline along every edge, soft even daylight.
+Scale: 8 pixels per metre (twice as large as in ref1.png).
+
+Draw these objects, each one separate with clear empty space (at least 40 px) around it, arranged in a loose grid, every object WHOLE (nothing cut off by the image edge):
+1. a yellow tracked excavator (about 10 m long with its arm), arm stretched out to the right, bucket on the ground
+2. the same excavator turned the other way (arm to the lower left)
+3. a yellow wheel loader (about 7 m long)
+4. a large orange-and-grey dump truck (about 9 m long), its body empty
+5. a white concrete mixer truck (about 9 m long)
+6. a stack of two white site-office containers (each 6 x 2.5 m, 2.6 m tall) with small windows and an outside stair
+7. a single blue site container (6 x 2.5 m)
+8. a red/rusty shipping container (12 x 2.5 m)
+9. a row of three green portable toilets
+10. a big heap of grey gravel (about 8 m across)
+11. a heap of brown topsoil (about 8 m across)
+12. a stack of large concrete pipes (about 6 m long)
+13. a stack of steel beams / rebar bundles on timber blocks (about 8 m long)
+14. a pallet stack of bricks / material under a tarp (about 3 m)
+
+Every object casts only a small soft contact shadow directly beneath itself, nothing long.
+BACKGROUND: everything that is not an object is perfectly flat pure magenta #FF00FF: no shading, texture, shadows beyond the contact shadow, gradients, ground plane or outlines on it, and a sharp edge between each object and the magenta. No text, no labels, no numbers.
+Output: one 2048x1536 image.

@@ -5,6 +5,8 @@
  * step turns them into textured art.
  */
 
+import { sitePlan, sunk } from "./sites.ts";
+
 type P2 = [number, number];
 /** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
 /** p, u: pavement sides and surface (src/ground.ts, preset streetDetail); s: a track line's surface kind; ref: a
@@ -14,7 +16,7 @@ interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[n
 
 const FILL: Record<string, string> = {
   residential: "#dcd5c6", commercial: "#dfdbd2", industrial: "#cfcbc2", railyard: "#cfcbc2", campus: "#e1dacb",
-  farm: "#c9cd8c", dirt: "#d2b98f", cemetery: "#b2c798",
+  farm: "#c9cd8c", dirt: "#d2b98f", construction: "#cdb894", cemetery: "#b2c798",
   park: "#9dcb6c", wood: "#73a851", scrub: "#adbb7b", sand: "#eedbab", pitch: "#6db35a", track: "#c97a5c",
   playground: "#dccba1", parking: "#bebcb7", paving: "#e6e0d4", water: "#3f95c2", pool: "#5ccbe6",
   vineyard: "#bfc27a", allotments: "#a9c676", orchard: "#b4cc7e", meadow: "#b6cf7e",
@@ -30,7 +32,7 @@ const NESTED = new Set(["park", "flowerbed", "paving", "gravel"]);
 const BLOOM = ["#e0525e", "#f2c94c", "#f4f1ea", "#c86bb0"];
 /** paint order of area kinds: broad landuse first, details on top */
 const AREA_ORDER = ["residential", "commercial", "industrial", "railyard", "campus", "lawn", "farm", "meadow", "orchard", "vineyard", "allotments",
-  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "sandpit", "playpad", "drybasin", "water", "wastewater", "pool"];
+  "dirt", "construction", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "sandpit", "playpad", "drybasin", "water", "wastewater", "pool"];
 /** rubber safety surface under playground equipment: red-brown, green, blue (v) */
 const PADS = ["#b8604c", "#5f9c4c", "#557fb5"];
 const BASE = "#d9d3c4";
@@ -128,6 +130,10 @@ function grassTexture(): HTMLCanvasElement {
   return (grassTile = c);
 }
 
+/** construction sites (preset constructionSites): the pads, pits and haul roads of each site's plan (page/sites.ts) */
+let sites = false, siteSand: CanvasPattern | undefined;
+export function enableSites() { sites = true; }
+
 export function drawGround(
   ctx: CanvasRenderingContext2D, features: Feature[], [x0, y0, x1, y1]: number[], mpt: number,
   objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR, grass = false,
@@ -208,6 +214,47 @@ export function drawGround(
     path(f.r!); ctx.fillStyle = k === "playpad" ? PADS[f.v ?? 0] : water && k === "water" ? "#3786b5" : (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL_[k] : FILL_[k];
     if (k === "railyard" && styled) ctx.fillStyle = yardGravel ??= gravelPattern(mpt, "#c2bcb0", "#aaa499", "#d4cfc4"); // lighter than the beds
     ctx.fill("evenodd");
+    if (k === "construction" && sites) { // the site's plan (sites.ts): earth patches, pads, pits, haul roads; a fence round it
+      const plan = sitePlan(f);
+      ctx.save(); ctx.clip("evenodd");
+      // crisp sand, as AI repaints draw a site: warm tan, fine dark and light grains
+      ctx.fillStyle = siteSand ??= gravelPattern(mpt, "#d5bc95", "#b99c76", "#e7d6b7"); ctx.fill("evenodd");
+      for (const p of plan.pads) {
+        path([p.pts]); ctx.fillStyle = p.c; ctx.fill();
+      }
+      for (const l of plan.roads) {
+        stroke(l, 7, "rgba(178,158,122,0.55)");
+        for (const o of [-1.4, 1.4]) stroke(offset(l, o), 0.45, "rgba(120,100,72,0.30)"); // ruts
+      }
+      // excavations: what the camera sees of a pit `depth` deep is its far walls (sheet piles) and its floor, drawn
+      // where they show on the ground (sites.ts sunk); struts and walers at 40% depth, a red and white rail round it
+      for (const p of plan.pits) {
+        const D = p.depth, at = (q: P2[], d: number) => q.map((v) => sunk(v, d));
+        ctx.save(); path([p.rim]); ctx.clip();
+        path([p.rim]); ctx.fillStyle = "#6e4e36"; ctx.fill();
+        ctx.beginPath(); // the piles' folds, straight down the walls
+        for (let i = 0; i < 4; i++) {
+          const [ax, ay] = p.rim[i], [bx, by] = p.rim[(i + 1) % 4], L = Math.hypot(bx - ax, by - ay);
+          for (let t = 0; t < L; t += 0.7) { const q: P2 = [ax + ((bx - ax) * t) / L, ay + ((by - ay) * t) / L], e = sunk(q, D); ctx.moveTo(q[0], q[1]); ctx.lineTo(e[0], e[1]); }
+        }
+        ctx.lineWidth = 0.22; ctx.strokeStyle = "rgba(35,22,14,0.45)"; ctx.setLineDash([]); ctx.stroke();
+        path([at(p.rim, D)]); ctx.fillStyle = "#a98a66"; ctx.fill();                       // the floor: damp earth
+        path([at(p.slab, D)]); ctx.fillStyle = "#c9c6bf"; ctx.fill();                      // the base slab
+        ctx.lineWidth = 0.18; ctx.strokeStyle = "rgba(90,85,80,0.6)"; ctx.stroke();
+        path([at(p.rim, D * 0.4)]); ctx.lineWidth = 0.9; ctx.strokeStyle = "#3a2c1c"; ctx.stroke(); // walers
+        ctx.lineWidth = 0.55; ctx.strokeStyle = "#e3ad1c"; ctx.stroke();
+        for (const [a, b] of p.struts) {
+          const l = [sunk(a, D * 0.4), sunk(b, D * 0.4)];
+          stroke(l, 0.9, "#3a2c1c"); stroke(l, 0.55, "#e3ad1c");
+        }
+        ctx.restore();
+        line([...p.rim, p.rim[0]]); ctx.lineWidth = 0.35; ctx.strokeStyle = "#3a2c1c"; ctx.stroke();  // the rim
+        const rail = offset([...p.rim, p.rim[0]], -0.9); // the rim runs anticlockwise: outside is right
+        stroke(rail, 0.35, "#f4f1ea"); stroke(rail, 0.35, "#d6382c", [1, 1]);
+      }
+      ctx.restore();
+      for (const r of f.r!) { line([...r, r[0]]); ctx.lineWidth = 0.7; ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.stroke(); ctx.lineWidth = 0.25; ctx.strokeStyle = "rgba(55,55,50,0.85)"; ctx.stroke(); }
+    }
     if (k === "farm" && f.v !== undefined) { // tramlines / furrows: faint parallel lines, own angle per field
       ctx.save(); ctx.clip("evenodd");
       const [bx0, by0, bx1, by1] = bounds(f.r!), cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, R = Math.hypot(bx1 - bx0, by1 - by0) / 2;
