@@ -26,3 +26,10 @@ pasted back by box are listed per landmark below, so a landmark can be recreated
   model first (`landmarks.ts` `johanneskirche`: a 45 m tower from OSM's bell_tower part, `REBUILDS` by wikidata, which
   the LGL fetch now includes), then two refs and a prompt that keeps the render's outlines and the pond exactly.
   Lesson: give a landmark its massing in the model before painting; photos carry materials, never the view. Mask 18.7 %.
+- `liederhalle` (stuttgart-core, Liederhalle with the Hegelsaal, CinemaxX, Maritim Hotel and Alte Reithalle): one native frame
+  690,-3720,1536,1024 (`--frame=`), `--base render --aerial --aerial-source city --style reference-simple.png`, NO photo refs
+  (aerial tiles 1..2,-4 draped first with `aerial.ts --near 48.78082,9.16643 --source city`). The first try (massing kept,
+  four photos for materials) was rejected: LoD2 massing painted literally, photos pulled the views. The Wilhelma way works:
+  the prompt calls image 1 a rough massing model and the pixel-aligned orthophoto the truth for every roof, terrace and
+  hedge; wall materials as text only. Key mask 16.9 %, then trimmed by hand at art x ≥ 1372 (the university blocks east
+  of the Maritim, which the key kept; the unedited key is mask-key.png).
