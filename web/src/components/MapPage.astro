@@ -133,6 +133,16 @@ const pageUrl = new URL(Astro.url.pathname.replace(/(.)\/$/, "$1"), site).href, 
 			#mine-toggle { order: 2; }
 			#fly-toggle { order: 3; }
 			body.video #corner-buttons { display: none; }
+			/* zoom pill, last in the corner column (map.ts): quiet until hovered */
+			#zoom { order: 9; width: 40px; display: flex; flex-direction: column; align-items: center; border-radius: 20px;
+				background: rgba(255, 255, 255, 0.55); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18); color: #444; font-size: 10px;
+				font-variant-numeric: tabular-nums; opacity: 0.7; transition: opacity 0.2s, background 0.2s; backdrop-filter: blur(3px); user-select: none; }
+			#zoom:hover { opacity: 1; background: rgba(255, 255, 255, 0.85); }
+			#zoom button { width: 40px; height: 30px; padding: 0; border: 0; background: none; color: inherit; font-size: 17px; line-height: 1;
+				cursor: pointer; touch-action: manipulation; }
+			#zoom span { padding: 1px 0; }
+			#zoom span.over { color: #9a6a00; }
+			body.video #zoom { display: none; }
 		</style>
 
 		<script>

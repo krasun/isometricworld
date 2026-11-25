@@ -138,6 +138,32 @@ function updateTransform() {
   ty = a.y * dpr - oy * k;
 }
 const toScreen = (x: number, y: number): [number, number] => [x * k + tx, y * k + ty];
+
+// zoom pill under the corner buttons (MapPage.astro styles it): + 100% −, where 100% is one map pixel per screen pixel
+// (full detail)
+const zoomUi = document.createElement("div");
+zoomUi.id = "zoom";
+zoomUi.innerHTML = `<button type="button" aria-label="Zoom in">+</button><span title="100% = full detail; above it the map is enlarged"></span><button type="button" aria-label="Zoom out">−</button>`;
+(document.getElementById("corner-buttons") ?? document.body).appendChild(zoomUi);
+const [zoomIn, zoomLabel, zoomOut] = zoomUi.children as unknown as [HTMLButtonElement, HTMLSpanElement, HTMLButtonElement];
+// steps on a ladder through 100%: 100% × √2ⁿ (… 50, 71, 100, 141, 200 …); the label goes to 100%
+const kGoal = () => k * viewer.viewport.getZoom(false) / viewer.viewport.getZoom(true); // where a running zoom ends
+const zoomTo = (target: number) => { viewer.viewport.zoomBy(target / kGoal()); viewer.viewport.applyConstraints(); };
+const rung = (dir: 1 | -1) => {
+  const n = Math.log(kGoal()) / Math.log(Math.SQRT2);
+  return Math.SQRT2 ** (dir > 0 ? Math.floor(n + 1e-3) + 1 : Math.ceil(n - 1e-3) - 1);
+};
+zoomIn.onclick = () => zoomTo(rung(1));
+zoomOut.onclick = () => zoomTo(rung(-1));
+zoomLabel.onclick = () => zoomTo(1);
+zoomLabel.style.cursor = "pointer";
+let zoomShown = "";
+function updateZoomUi() {
+  const pct = k * 100, txt = `${pct >= 10 ? Math.round(pct) : pct.toFixed(1)}%`;
+  if (txt === zoomShown) return;
+  zoomShown = txt; zoomLabel.textContent = txt;
+  zoomLabel.classList.toggle("over", pct > 105);
+}
 const globalToViewport = (x: number, y: number) => base().imageToViewportCoordinates(x - ox, y - oy);
 
 // ---- overlay: borders, labels, traffic ------------------------------------------------------
@@ -321,6 +347,7 @@ function frame(t: number) {
   const w = Math.round(canvas.clientWidth * dpr), hgt = Math.round(canvas.clientHeight * dpr);
   if (canvas.width !== w || canvas.height !== hgt) { canvas.width = w; canvas.height = hgt; }
   updateTransform();
+  updateZoomUi();
   ctx.clearRect(0, 0, w, hgt);
   // film mode (pipeline/src/film.ts): the recorder hands out exactly one frame of sim time per capture
   const film = (window as { __film?: { dt: number } }).__film;
