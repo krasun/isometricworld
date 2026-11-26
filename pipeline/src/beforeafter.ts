@@ -1,7 +1,7 @@
 /**
  * Before/after clip: two renders of the same film.ts path (production and the dev cache), wiped into each other.
  *
- *   npx tsx src/film.ts https://isometricworld.dmytrokrasun.com/ before.mp4 --city stuttgart --film stuttgart-before-after --seconds 24 --grain 0
+ *   npx tsx src/film.ts https://isometriccity.com/ before.mp4 --city stuttgart --film stuttgart-before-after --seconds 24 --grain 0
  *   npx tsx src/film.ts http://localhost:<port>/ after.mp4 --city stuttgart --film stuttgart-before-after --seconds 24 --grain 0
  *   npx tsx src/beforeafter.ts before.mp4 after.mp4 ../video/stuttgart-before-after.mp4 --holds 0,7.35,19 [--hold 5]
  *
