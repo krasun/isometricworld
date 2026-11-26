@@ -61,6 +61,8 @@ const LAWNS = STYLED && styleOf(region.style).lawns && region.sources === "gugik
 /** Preset `waterDetail`: watercourses as lines, treatment basins murky, dry (intermittent) reservoirs a grassy
  *  basin (page/ground.ts draws the water's depth). */
 const WATER_DETAIL = STYLED && styleOf(region.style).waterDetail;
+/** Preset `pitchMarkings`: football pitches carry v: 1 (page/ground.ts marks them out). */
+const PITCH_MARKINGS = STYLED && styleOf(region.style).pitchMarkings;
 /** Preset `closedLines`: closed roads and paths (one-way roundabouts, loops) simplified as rings, not collapsed. */
 const CLOSED_LINES = STYLED && styleOf(region.style).closedLines;
 /** preset repaint: rail yards and platforms beside open-air track (page/ground.ts draws them) */
@@ -354,7 +356,8 @@ for (const el of osm.elements) {
   if (!k) continue;
   const r = rings.map((q) => simplifyRing(q, 0.3)).filter((q) => q.length >= 4);
   if (!r.length) continue;
-  features.push(k === "farm" || k === "meadow" ? { k, r, v: fieldShade(t, el.id) } : { k, r });
+  features.push(k === "farm" || k === "meadow" ? { k, r, v: fieldShade(t, el.id) }
+    : k === "pitch" && PITCH_MARKINGS && t.leisure === "pitch" && /(^|;)\s*soccer\s*(;|$)/.test(t.sport ?? "") ? { k, r, v: 1 } : { k, r });
   if (k === "water" || k === "wastewater") water.push({ r, river: /^(river|canal|stream|rapids)$/.test(t.water ?? "") || t.waterway === "riverbank" });
 }
 

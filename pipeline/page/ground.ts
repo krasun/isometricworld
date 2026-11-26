@@ -292,7 +292,8 @@ export function drawGround(
       }
       ctx.restore();
     }
-    if (k === "pitch") { ctx.lineWidth = 0.25; ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.stroke(); }
+    if (k === "pitch" && f.v === 1) { ctx.save(); ctx.clip("evenodd"); pitchMarks(ctx, f.r![0]); ctx.restore(); }
+    else if (k === "pitch") { ctx.lineWidth = 0.25; ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.stroke(); }
     if (k === "vineyard") {   // vine rows ~2 m apart, up and down the slope (drawn north-south: most Stuttgart slopes face south)
       ctx.save(); ctx.clip("evenodd");
       const [bx0, by0, bx1, by1] = bounds(f.r!);
@@ -674,6 +675,66 @@ function offset(l: P2[], d: number): P2[] {
     const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
     return [p[0] - (dy / L) * d, p[1] + (dx / L) * d];
   });
+}
+
+/** The smallest rectangle round a ring (one side on a hull edge): centre, unit long axis, length, width. */
+function fitRect(ring: P2[]) {
+  let best: { c: P2; u: P2; L: number; W: number } | null = null, bestA = Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length], d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (d < 1e-6) continue;
+    const ux = (b[0] - a[0]) / d, uy = (b[1] - a[1]) / d;
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const [x, y] of ring) { const pu = x * ux + y * uy, pv = -x * uy + y * ux; u0 = Math.min(u0, pu); u1 = Math.max(u1, pu); v0 = Math.min(v0, pv); v1 = Math.max(v1, pv); }
+    const A = (u1 - u0) * (v1 - v0);
+    if (A >= bestA) continue;
+    bestA = A;
+    const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2, c: P2 = [cu * ux - cv * uy, cu * uy + cv * ux];
+    best = u1 - u0 >= v1 - v0 ? { c, u: [ux, uy], L: u1 - u0, W: v1 - v0 } : { c, u: [-uy, ux], L: v1 - v0, W: u1 - u0 };
+  }
+  return best;
+}
+
+/**
+ * A football pitch marked out (preset pitchMarkings; ground.ts tags sport=soccer with v: 1), on its tightest
+ * rectangle: mowing stripes across it, then touchlines, halfway line, centre circle and spot, penalty and goal
+ * areas, penalty spots and arcs, goals behind the lines. Full-size measures (105 × 68 m), scaled down on small pitches.
+ */
+function pitchMarks(ctx: CanvasRenderingContext2D, ring: P2[]) {
+  const R = fitRect(ring);
+  if (!R || R.W < 12 || R.L < 18) return;
+  const inset = Math.min(2, R.W * 0.04), L = R.L / 2 - inset, W = R.W / 2 - inset; // lines a little inside the fence
+  const s = Math.min(1, (2 * L) / 100, (2 * W) / 64);
+  ctx.save();
+  ctx.translate(R.c[0], R.c[1]);
+  ctx.transform(R.u[0], R.u[1], -R.u[1], R.u[0], 0, 0); // x along the pitch, y across
+  // mowing stripes: bands across the pitch, ~1/14 of its length each
+  const n = Math.max(6, Math.round((2 * L) / 7) & ~1), band = (2 * L) / n;
+  ctx.fillStyle = "rgba(255,255,255,0.09)";
+  for (let i = 0; i < n; i += 2) ctx.fillRect(-L + i * band, -W - inset, band, 2 * (W + inset));
+  ctx.lineWidth = 0.3; ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.rect(-L, -W, 2 * L, 2 * W);
+  ctx.moveTo(0, -W); ctx.lineTo(0, W);
+  ctx.moveTo(9.15 * s, 0); ctx.arc(0, 0, 9.15 * s, 0, 2 * Math.PI);
+  for (const e of [-1, 1]) {
+    const x = e * L, pw = Math.min(20.16 * s, W - 1), gw = 9.16 * s, pd = 16.5 * s, gd = 5.5 * s, spot = 11 * s, r = 9.15 * s;
+    ctx.moveTo(x, -pw); ctx.lineTo(x - e * pd, -pw); ctx.lineTo(x - e * pd, pw); ctx.lineTo(x, pw);
+    ctx.moveTo(x, -gw); ctx.lineTo(x - e * gd, -gw); ctx.lineTo(x - e * gd, gw); ctx.lineTo(x, gw);
+    // the arc outside the penalty area, round the spot
+    const t = Math.acos(Math.min(1, (pd - spot) / r)), c = x - e * spot, a0 = e > 0 ? Math.PI - t : -t, a1 = e > 0 ? Math.PI + t : t;
+    ctx.moveTo(c + r * Math.cos(a0), r * Math.sin(a0)); ctx.arc(c, 0, r, a0, a1);
+  }
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.95)";
+  for (const [x, y] of [[0, 0], [-L + 11 * s, 0], [L - 11 * s, 0]]) { ctx.beginPath(); ctx.arc(x, y, 0.35, 0, 2 * Math.PI); ctx.fill(); }
+  // goals: a frame 7.32 m wide, its net 1.5 m behind the line
+  ctx.lineWidth = 0.35; ctx.strokeStyle = "rgba(250,250,250,0.95)";
+  for (const e of [-1, 1]) {
+    const x = e * L, g = 3.66 * s, d = e * Math.min(1.5, inset * 0.8);
+    ctx.beginPath(); ctx.moveTo(x, -g); ctx.lineTo(x + d, -g); ctx.lineTo(x + d, g); ctx.lineTo(x, g); ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function bounds(rings: P2[][]) {

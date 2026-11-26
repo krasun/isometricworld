@@ -102,6 +102,9 @@ export interface StylePreset {
    *  material yards and slabs being poured from AI sprite sheets (construction-sprites*.png), tower cranes beside the
    *  slabs (page/renderer.ts). Brownfields and the rest of "dirt" keep the plain fill. */
   constructionSites: boolean;
+  /** Football pitches (OSM leisure=pitch, sport=soccer) marked out (page/ground.ts): touchlines, halfway line, centre
+   *  circle, penalty and goal areas, spots, arcs and goals, scaled to the pitch, over mowing stripes. */
+  pitchMarkings: boolean;
   /** Lessons from AI repaints of the render (Stuttgart): the ground in the painted house style (green gardens and
    *  parks, one dark asphalt with an ink kerb line, kerb shadows, bold markings, rounded inside corners; ponds with a
    *  shore path; runways with markings and lights, mown grass strips; tracks on shared gravel beds with bold rails,
@@ -131,13 +134,13 @@ const PL_HOMES = [
 ];
 
 /** Stuttgart (the first styled region): contact shadows only. */
-const STUTTGART: StylePreset = { castShadow: null, walls: null, monumental: [], eaves: { overhang: 0.4, verge: 0.25, gutters: false }, creaseInk: 0.55, eavesShadow: true, sawtoothRoofs: 10000, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, bridgeAbutments: true, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: true, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, bigRoofs: true, flatRoofDetail: true, insetWindows: true, wholeWindows: true, constructionSites: true, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } };
+const STUTTGART: StylePreset = { castShadow: null, walls: null, monumental: [], eaves: { overhang: 0.4, verge: 0.25, gutters: false }, creaseInk: 0.55, eavesShadow: true, sawtoothRoofs: 10000, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, bridgeAbutments: true, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: true, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, bigRoofs: true, flatRoofDetail: true, insetWindows: true, wholeWindows: true, constructionSites: true, pitchMarkings: true, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } };
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
   stuttgart: STUTTGART,
   /** Zagreb: Stuttgart's look as it was before parked cars and big roofs (the input its painter repaints). */
-  zagreb: { ...STUTTGART, eaves: null, sawtoothRoofs: 0, parkedCars: false, bigRoofs: false, insetWindows: false, wholeWindows: false, constructionSites: false, bridgeAbutments: false },
+  zagreb: { ...STUTTGART, eaves: null, sawtoothRoofs: 0, parkedCars: false, bigRoofs: false, insetWindows: false, wholeWindows: false, constructionSites: false, pitchMarkings: false, bridgeAbutments: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -176,6 +179,7 @@ export const STYLES = {
     insetWindows: false,
     wholeWindows: false,
     constructionSites: false,
+    pitchMarkings: false,
     repaint: false,
     // crisper: lines from smaller creases and darker, deeper corners
     ink: { strength: 0.9, from: 0.2, to: 0.75, ao: 0.55 },
