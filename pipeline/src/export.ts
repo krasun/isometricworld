@@ -750,7 +750,7 @@ async function exportCranes(areas: string[], heights: Heights) {
     }
     return false;
   };
-  let painted = 0;
+  let painted = 0, off = 0;
   for (const a of areas) {
     const f = join(DERIVED, a, "ground", "features.json");
     if (!existsSync(f)) continue;
@@ -762,13 +762,17 @@ async function exportCranes(areas: string[], heights: Heights) {
         const tx = Math.floor(g.x / CAMERA.tile), ty = Math.floor(g.y / CAMERA.tile), at: [number, number] = [(tx + 0.5) * CAMERA.tile, (ty + 0.5) * CAMERA.tile];
         const mine = insideDistance(at, outlines[areas.indexOf(a)]);
         if (areas.some((b, i) => b !== a && existsSync(join(DERIVED, b, "render", `${tx}_${ty}.png`)) && insideDistance(at, outlines[i]) > mine)) continue;
+        // the area's features reach past the map: no crane where no tile is rendered (outside the region's outline)
+        // or where the edge has faded the map more than half away
+        if (!existsSync(join(DERIVED, a, "render", `${tx}_${ty}.png`)) || edgeDistance(g.x, g.y) < (EDGE0 + EDGE1) / 2) { off++; continue; }
         if (await onPainting(g.x, g.y)) { painted++; continue; }
         const [e, n, u] = ecefToEnu(llhToEcef(lat, lon, g.h));
         out.push([e, n, u, c.a, c.h, c.jib, c.counter].map((v) => Math.round(v * 10) / 10));
       }
   }
   writeData("cranes", JSON.stringify(out));
-  console.log(`  cranes: ${out.length}${painted ? ` (${painted} on painted ground left out)` : ""}`);
+  const left = [painted && `${painted} on painted ground`, off && `${off} off the map`].filter(Boolean);
+  console.log(`  cranes: ${out.length}${left.length ? ` (left out: ${left.join(", ")})` : ""}`);
 }
 
 async function exportBorders(heights: Heights) {

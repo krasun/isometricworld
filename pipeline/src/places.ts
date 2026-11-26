@@ -202,7 +202,7 @@ export const REGIONS: Record<string, Region> = {
     headingDeg: 257, // looks WSW from the Neckar side, where the Kessel opens; main grid (Königstraße, 212°) at 45°
     country: "Germany",
     municipalities: [
-      "Stuttgart", "Fellbach", "Kernen im Remstal", "Esslingen am Neckar", "Ostfildern", "Neuhausen auf den Fildern",
+      "Stuttgart", "Fellbach", "Kernen im Remstal", "Esslingen am Neckar", "Ostfildern", "Denkendorf", "Neuhausen auf den Fildern",
       "Filderstadt", "Leinfelden-Echterdingen", "Sindelfingen", "Leonberg", "Gerlingen", "Ditzingen",
       "Korntal-Münchingen", "Kornwestheim", "Remseck am Neckar", "Waiblingen", "Ludwigsburg", "Böblingen",
     ],
@@ -250,10 +250,11 @@ export const REGIONS: Record<string, Region> = {
     look: "styled",
     // Stuttgart (OSM relation 62375, Stadtkreis) and the towns around it (admin_level 8): Fellbach, Waiblingen,
     // Remseck am Neckar, Ludwigsburg, Kornwestheim, Korntal-Münchingen, Gerlingen, Ditzingen, Böblingen,
-    // Sindelfingen, Leonberg, Esslingen am Neckar, Ostfildern, Filderstadt, Leinfelden-Echterdingen;
+    // Sindelfingen, Leonberg, Esslingen am Neckar, Ostfildern, Denkendorf, Neuhausen auf den Fildern, Filderstadt,
+    // Leinfelden-Echterdingen;
     // plus a box over Stuttgart Airport (EDDS) and the Messe, which straddle the borders
     outline: {
-      relations: [62375, 401692, 401697, 405291, 405292, 405293, 405811, 405812, 405817, 722090, 722092, 722150, 2792882, 2793022, 2796535, 2796536],
+      relations: [62375, 401692, 401697, 405291, 405292, 405293, 405811, 405812, 405817, 722090, 722092, 722150, 2792882, 2793020, 2793022, 2796535, 2796536, 2796537],
       add: [[48.672, 9.17, 48.712, 9.262]],
     },
   },
