@@ -207,7 +207,7 @@ ${output(join(dir, "key.png"))}`;
   for (const v of out) if (v) n++;
   console.log(`key: ${s.toFixed(0)}s, kept pixels drift ${(drift / Math.max(1, kept) / 3).toFixed(1)} (0 = untouched), mask ${(n / out.length * 100).toFixed(1)}% of the frame`);
   const listFile = join(base, "cutouts.json"), list: any[] = existsSync(listFile) ? readJson(listFile) : [];
-  const key = { mask: `landmark-${name}/mask.png`, frame: meta.frame, grow: 5, feather: 4, ...(native ? { art: `landmark-${name}/art.png` } : {}) };
+  const key = { mask: `landmark-${name}/mask.png`, frame: meta.frame, grow: 5, feather: 4, edge: "out" as const, ...(native ? { art: `landmark-${name}/art.png` } : {}) };
   const old = list.find((c) => c.name === name);
   if (old) old.key = key; else list.push({ name, key });
   writeFileSync(listFile + ".tmp", JSON.stringify(list, null, 2) + "\n");

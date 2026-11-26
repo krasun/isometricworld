@@ -732,6 +732,25 @@ async function exportCranes(areas: string[], heights: Heights) {
   const missing = areas.filter((a) => !existsSync(join(DERIVED, a, "ground", "features.json")));
   if (missing.length) { if (!PARTIAL) console.log(`  cranes: no ground/features.json for ${missing.join(", ")}`); if (PARTIAL) return; }
   const out: number[][] = [];
+  // no crane on painted ground (paint/ tiles, landmark cutouts): where the tile the map shows differs from the render
+  // round the crane's foot, the site under it is a painting
+  const tiles = new Map<string, Promise<Buffer | null>>(), raw = (f: string) => {
+    if (!tiles.has(f)) tiles.set(f, existsSync(f) ? sharp(f).removeAlpha().raw().toBuffer() : Promise.resolve(null));
+    return tiles.get(f)!;
+  };
+  const onPainting = async (x: number, y: number) => {
+    const T = CAMERA.tile, tx = Math.floor(x / T), ty = Math.floor(y / T), lx = Math.floor(x - tx * T), ly = Math.floor(y - ty * T);
+    for (const b of areas) for (const layer of ["cutout", "paint"]) {
+      const shown = await raw(join(DERIVED, b, layer, `${tx}_${ty}.png`)), render = shown && await raw(join(DERIVED, b, "render", `${tx}_${ty}.png`));
+      if (!shown || !render) continue;
+      let d = 0, n = 0;
+      for (let v = Math.max(0, ly - 4); v <= Math.min(T - 1, ly + 4); v++) for (let u = Math.max(0, lx - 4); u <= Math.min(T - 1, lx + 4); u++)
+        for (let c = 0; c < 3; c++) { const k = (v * T + u) * 3 + c; d += Math.abs(shown[k] - render[k]); n++; }
+      if (d / n > 12) return true;
+    }
+    return false;
+  };
+  let painted = 0;
   for (const a of areas) {
     const f = join(DERIVED, a, "ground", "features.json");
     if (!existsSync(f)) continue;
@@ -743,12 +762,13 @@ async function exportCranes(areas: string[], heights: Heights) {
         const tx = Math.floor(g.x / CAMERA.tile), ty = Math.floor(g.y / CAMERA.tile), at: [number, number] = [(tx + 0.5) * CAMERA.tile, (ty + 0.5) * CAMERA.tile];
         const mine = insideDistance(at, outlines[areas.indexOf(a)]);
         if (areas.some((b, i) => b !== a && existsSync(join(DERIVED, b, "render", `${tx}_${ty}.png`)) && insideDistance(at, outlines[i]) > mine)) continue;
+        if (await onPainting(g.x, g.y)) { painted++; continue; }
         const [e, n, u] = ecefToEnu(llhToEcef(lat, lon, g.h));
         out.push([e, n, u, c.a, c.h, c.jib, c.counter].map((v) => Math.round(v * 10) / 10));
       }
   }
   writeData("cranes", JSON.stringify(out));
-  console.log(`  cranes: ${out.length}`);
+  console.log(`  cranes: ${out.length}${painted ? ` (${painted} on painted ground left out)` : ""}`);
 }
 
 async function exportBorders(heights: Heights) {

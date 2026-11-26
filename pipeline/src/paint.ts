@@ -298,6 +298,15 @@ function regionFile(kind: "render" | "height", tx: number, ty: number) {
 }
 const renderFile = (tx: number, ty: number) => regionFile("render", tx, ty);
 const winFile = (i: number, j: number) => join(winDir, `${i}_${j}.png`);
+/** the image model's own output per window, before registration (kept for a re-cut or a later re-registration at
+ *  another resolution); a repaint moves the previous one to windows-raw/replaced/ */
+const rawDir = join(base, `windows-raw${SUFFIX}`);
+function keepRaw(i: number, j: number, out: string) {
+  mkdirSync(join(rawDir, "replaced"), { recursive: true });
+  const f = join(rawDir, `${i}_${j}.png`);
+  if (existsSync(f)) renameSync(f, join(rawDir, "replaced", `${i}_${j}-${Math.round(statSync(f).mtimeMs)}.png`));
+  copyFileSync(out, f);
+}
 
 /** Crop a global-pixel box out of tiles produced by `load(tx, ty)` (1024² PNG buffers or null). */
 async function cropGlobal(x: number, y: number, w: number, h: number,
@@ -707,6 +716,7 @@ async function paintWindow(i: number, j: number) {
         continue;
       }
       const warp = structured && r.score > r.identity + 0.01;
+      keepRaw(i, j, join(work, "out.png"));
       await applyRegistration(join(work, "out.png"), winFile(i, j), warp ? r : { ...r, scale: 1, dx: 0, dy: 0 });
       console.log(`  ${i}_${j}: ${((Date.now() - t0) / 1000).toFixed(0)}s edges=${edges.join("+") || "-"} match=${r.score.toFixed(2)}`
         + (structured ? "" : " (low texture)") + (warp ? ` shift=(${r.dx},${r.dy}) scale=${r.scale.toFixed(2)}` : ""));
