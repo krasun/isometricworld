@@ -213,7 +213,7 @@ export const REGIONS: Record<string, Region> = {
     credits: [
       "Map data © OpenStreetMap contributors · Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (verändert)",
       "Buildings: LGL LoD2 · Terrain: LGL DGM1, Copernicus DEM © DLR, Airbus DS · Trees: LGL nDOM1",
-      "Luftbilder: Landeshauptstadt Stuttgart, Stadtmessungsamt, CC BY 4.0 (verändert) · Centre painted with AI",
+      "Luftbilder: Landeshauptstadt Stuttgart, Stadtmessungsamt, CC BY 4.0; LGL DOP20 (verändert) · Centre painted with AI",
       // reference photos of the painted landmarks (ATTRIBUTION.md): the CC BY authors are named
       "Landmarks painted after Wikimedia Commons photos by J. Herzog, A. Praefcke, F. König, Enslin et al. (CC BY; verändert)",
     ],

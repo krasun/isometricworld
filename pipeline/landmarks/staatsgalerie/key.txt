@@ -1,0 +1,3 @@
+This is a map around the Staatsgalerie in Stuttgart: the old neoclassical gallery (a cream sandstone U-shaped building with glass skylight halls) and the Neue Staatsgalerie beside it (striped ochre and pale stone terraces and ramps round an open round drum courtyard, green-framed glass, pink and blue handrails).
+- KEEP, pixel for pixel exactly as they are: both gallery buildings, all their walls, roofs, skylights, terraces, ramps and the round courtyard down to their foot.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the streets, squares, pavements, lawns, all trees, cars, the road junction and every other building.

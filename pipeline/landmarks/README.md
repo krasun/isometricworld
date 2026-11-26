@@ -33,3 +33,35 @@ pasted back by box are listed per landmark below, so a landmark can be recreated
   the prompt calls image 1 a rough massing model and the pixel-aligned orthophoto the truth for every roof, terrace and
   hedge; wall materials as text only. Key mask 16.9 %, then trimmed by hand at art x ≥ 1372 (the university blocks east
   of the Maritim, which the key kept; the unedited key is mask-key.png).
+- `solitude` (stuttgart-west, Schloss Solitude and the crescent of its Kavaliershäuser): one native frame
+  9209,-20812,1536,1024, `--base render --aerial --aerial-source city --style reference-simple.png`, no photo refs (aerial
+  draped with `aerial.ts --near 48.7870,9.0830 --source city`). The Liederhalle prompt: render as rough massing, orthophoto
+  as the truth, wall materials as text. First try accepted (match 0.87); it leaves a gap where the left arm of the crescent
+  meets the upper one. Key mask 4.5 %: buildings only, the gravel court stays the render's.
+- `baerenschloessle` (stuttgart-west, the Bärenschlössle above the Bärensee and its gravel terrace): one native frame
+  -2488,-21170,1536,1024, same flags, aerial draped with `--near 48.76087,9.09137`. First try accepted (match 0.96); the key
+  keeps the pavilion and the gravel terrace with its tables, walls and the trees on it.
+- `grabkapelle` (stuttgart-east, the Grabkapelle on the Württemberg and its round terrace): one native frame
+  -5044,16431,1536,1024, `--base render --aerial --aerial-source city --style reference-simple.png`, aerial draped with
+  `--near 48.78204,9.26874`. First try accepted (match 0.95); the key keeps the chapel and its round terrace.
+- `staatsgalerie` (stuttgart-core, the old Staatsgalerie and Stirling's Neue Staatsgalerie): one native frame
+  -407,220,1536,1024, same flags (aerial already draped there). First try accepted (match 0.89): Stirling's building came
+  out a little blockier than its stepped terraces, and its plain long wing on the upper left merged into the main block.
+- `glaswuerfel` (stuttgart-south-west, the blue glass office tower by the Vaihingen viaduct): no overview. art.png is the
+  native frame -8384,-11984,1536,1024 cropped from the window paintings of Nov 17 that were withdrawn from the area
+  (`paint-withdrawn/20261126-140239/`), landmark.json written by hand (`base: render`), then `key` only. Mask 1.9 %: the
+  tower alone; painted trees in front of its foot leave small notches where the render shows through.
+- `flughafen-terminal` (stuttgart-south-east, Stuttgart Airport's terminal halls, gate pier and jet bridges): portrait
+  frame -39700,-5560,1024,1536, `--base render --aerial --aerial-source lgl --style reference-simple.png` (the city's photos
+  stop at the city boundary; LGL DOP20 was already draped there). First try accepted (match 0.66: the apron was
+  repainted, the key drops it). Key mask 29.7 %: halls, glass-grid block, pier and eight jet bridges; no aircraft.
+- `skyloop` (stuttgart-south-east, the figure-eight office building by the airport): native frame -38740,-4620,1536,1024,
+  same flags as the terminal. First try accepted (match 0.95); the key keeps the building and its two courtyards (9.5 %).
+- `schillerplatz` (stuttgart-core, the square with the Stiftskirche, Altes Schloss, Fruchtkasten, Alte Kanzlei and
+  Prinzenbau): native frame -1428,-1812,1536,1024, `--aerial-source city`. First try accepted (match 0.90). Key 14.3 %;
+  a stray fleck left of the square erased from the mask by hand (the unedited key is mask-key.png).
+- `rathaus` (stuttgart-core, the town hall and the Marktplatz after its renovation): native frame -2068,-2102,1536,1024
+  (the first frame, 350 px lower, cut the back wing at its top edge), `--aerial-source city`. The third try is the one:
+  walls, tower clock, steps, beige paving and fountain field described in words from two CC BY-SA Commons photos
+  (ATTRIBUTION.md; not given to the model). Match 0.83 (the square was cleared of the render's trees, as in the photos).
+  The key keeps the building and the whole Marktplatz (13.7 %).
