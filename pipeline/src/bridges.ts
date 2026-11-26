@@ -48,7 +48,13 @@ export function deckHeight(l: P2[], ground: Ground, ends?: number[] | null) {
 export const isBridge = (t: Record<string, string>) => !!t.bridge && t.bridge !== "no";
 
 /** ext: how far its deck runs on past each end (m, abutment ends only; ground.ts extendBridges) */
-export type GraphWay = { id: number; nodes: number[]; l: P2[]; kind: "rail" | "road" | "path"; bridge: boolean; ext?: [number, number] };
+export type GraphWay = { id: number; nodes: number[]; l: P2[]; kind: "rail" | "road" | "path"; bridge: boolean; ext?: [number, number]; w?: number };
+
+/** Roof height (ENU up) of the building under (x, y), -Infinity where there is none. */
+type Roofs = (x: number, y: number) => number;
+/** clearance a deck keeps over a roof it crosses, and the highest roof above the deck it lifts over (a taller one
+ *  the line passes beside or under, a tower by a ramp, is not something the deck climbs) */
+const CLEAR = 1.5, CLIMB = 2;
 
 /** A line's end point carried on `d` metres along its last segment (i = 1: the far end). */
 export function carried(l: P2[], i: 0 | 1, d: number): P2 {
@@ -67,16 +73,66 @@ export function carried(l: P2[], i: 0 | 1, d: number): P2 {
  * (the look-ahead of endHeight would climb the hill above the tunnel and leave the deck in mid-air).
  * ground.ts computes this once (ground/bridge-ends.json); the renderer, export and scene read it.
  */
-export function bridgeEnds(ways: GraphWay[], ground: Ground, portals = new Set<number>()) {
+export function bridgeEnds(ways: GraphWay[], ground: Ground, portals = new Set<number>(), roofs?: Roofs) {
   const out = new Map<number, number[]>();
-  solve(ways, ground, ["rail"], ["rail"], new Map(), out, portals);
-  const road = solve(ways, ground, ["road"], ["road"], new Map(), out, portals);
-  solve(ways, ground, ["path"], ["road", "path"], road, out, portals);
+  solve(ways, ground, ["rail"], ["rail"], new Map(), out, portals, roofs);
+  const road = solve(ways, ground, ["road"], ["road"], new Map(), out, portals, roofs);
+  solve(ways, ground, ["path"], ["road", "path"], road, out, portals, roofs);
   return out;
 }
 
+/**
+ * `roofs`: a deck that runs through a low roof under it (a car park below a viaduct: the straight line between
+ * far abutments sags into it) is lifted to clear it by CLEAR across its width. Only joints move, never an
+ * abutment on the terrain; the ways meeting at a lifted joint follow it, so a chain becomes a ramp, not a step.
+ */
+function clearRoofs(bridges: GraphWay[], ground: Ground, out: Map<number, number[]>, fixedEnd: (k: number) => boolean, roofs: Roofs) {
+  const endNode = (w: GraphWay, i: 0 | 1) => (i ? w.nodes.at(-1)! : w.nodes[0]);
+  const lifted = new Map<number, number>();
+  for (let iter = 0; iter < 6; iter++) {
+    let moved = false;
+    for (const w of bridges) {
+      const e = out.get(w.id);
+      if (!e) continue;
+      const dh = deckHeight(w.l, ground, e), half = (w.w ?? (w.kind === "rail" ? 5 : w.kind === "road" ? 7 : 3)) / 2;
+      const ea = e[2] ?? 0, eb = e[3] ?? 0, span = dh.len + ea + eb || 1;
+      const free = ([0, 1] as const).map((i) => !fixedEnd(endNode(w, i)));
+      if (!free[0] && !free[1]) continue;
+      let lift = 0;
+      for (let i = 1; i < w.l.length; i++) {
+        const a = w.l[i - 1], b = w.l[i], L = dh.cum[i] - dh.cum[i - 1], ux = (b[0] - a[0]) / (L || 1), uy = (b[1] - a[1]) / (L || 1);
+        for (let s = 0; s <= L; s += 2) {
+          const x = a[0] + ux * s, y = a[1] + uy * s, z = dh.at(dh.cum[i - 1] + s, x, y);
+          let need = 0;
+          for (let o = -half; o <= half; o += 1.5) {
+            const r = roofs(x - uy * o, y + ux * o);
+            if (r > -Infinity && r < z + CLIMB) need = Math.max(need, r + CLEAR - z);
+          }
+          if (need <= 0.05) continue;
+          // the lift at the free end(s) that raises this point by `need` (the line pivots on a fixed end)
+          const t = (dh.cum[i - 1] + s + ea) / span, share = free[0] && free[1] ? 1 : free[1] ? t : 1 - t;
+          if (share > 0.05) lift = Math.max(lift, need / share);
+        }
+      }
+      // more than a deck's sag (a roof by a fixed end, which only a steep tilt would clear): not ours to fix
+      if (lift <= 0.05 || lift > CLIMB + CLEAR) continue;
+      for (const i of [0, 1] as const) if (free[i]) {
+        const k = endNode(w, i), h = e[i] + lift;
+        if (h > (lifted.get(k) ?? -Infinity) + 0.01) { lifted.set(k, h); moved = true; }
+      }
+    }
+    // every way meeting a lifted joint takes its height there
+    for (const w of bridges) {
+      const e = out.get(w.id);
+      if (e) for (const i of [0, 1] as const) { const h = lifted.get(endNode(w, i)); if (h !== undefined && h > e[i]) e[i] = Math.round(h * 100) / 100; }
+    }
+    if (!moved) break;
+  }
+  return lifted.size;
+}
+
 /** deck heights of the bridge ways of `kinds` into `out`; returns the height at each bridge way end node */
-function solve(ways: GraphWay[], ground: Ground, kinds: GraphWay["kind"][], groundKinds: GraphWay["kind"][], pinned: Map<number, number>, out: Map<number, number[]>, portals: Set<number>) {
+function solve(ways: GraphWay[], ground: Ground, kinds: GraphWay["kind"][], groundKinds: GraphWay["kind"][], pinned: Map<number, number>, out: Map<number, number[]>, portals: Set<number>, roofs?: Roofs) {
   const fixed = new Set<number>(), uses = new Map<number, number>(), adj = new Map<number, Array<[number, number]>>();
   const bridges = ways.filter((w) => w.bridge && kinds.includes(w.kind) && w.nodes.length >= 2 && w.nodes.length === w.l.length);
   for (const w of ways) if (!w.bridge && groundKinds.includes(w.kind)) for (const n of w.nodes) fixed.add(n);
@@ -127,6 +183,10 @@ function solve(ways: GraphWay[], ground: Ground, kinds: GraphWay["kind"][], grou
   for (const w of bridges) {
     const z = ([0, 1] as const).map((i) => at(endNode(w, i)) ?? own(w, i));
     if (z.every(Number.isFinite)) out.set(w.id, [Math.round(z[0] * 100) / 100, Math.round(z[1] * 100) / 100, ...(w.ext ? w.ext.map((e) => Math.round(e * 10) / 10) : [])]);
+  }
+  if (roofs) {
+    const n = clearRoofs(bridges, ground, out, (k) => abut.has(k), roofs);
+    if (n) console.log(`  bridge decks lifted over roofs: ${n} joint(s) (${kinds.join("/")})`);
   }
   // every node of these bridges (a footpath may meet a road deck mid-way)
   const nodes = new Map<number, number>();

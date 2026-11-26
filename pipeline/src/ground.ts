@@ -26,7 +26,8 @@ import { fromPuwg, gugikTerrain, orthoChunks, toPuwg } from "./gugik.ts";
 import { lawns } from "./lawns.ts";
 import { playLayout } from "./playgrounds.ts";
 import { parkLayout } from "./parking.ts";
-import { rasterSampler, toUtm } from "./lgl.ts";
+import { lod2Files, rasterSampler, toUtm } from "./lgl.ts";
+import { parseLod2 } from "./lod2.ts";
 import { DERIVED, RAW, readJson } from "./paths.ts";
 import { REGIONS } from "./places.ts";
 import { ROAD, isOneway, roadWidth } from "./roadspec.ts";
@@ -306,7 +307,7 @@ for (const el of osm.elements) {
       }
       const layer = Number(t.layer) || (t.bridge && t.bridge !== "no" ? 1 : 0);
       const deck = isBridge(t) ? { b: 1 as const } : {}; // own deck in the render (bridges.ts)
-      if (el.nodes?.length === g.length) graph.push({ id: el.id, nodes: el.nodes, l: g, kind: t.railway ? "rail" : ROAD[t.highway] ? "road" : "path", bridge: isBridge(t) });
+      if (el.nodes?.length === g.length) graph.push({ id: el.id, nodes: el.nodes, l: g, kind: t.railway ? "rail" : ROAD[t.highway] ? "road" : "path", bridge: isBridge(t), ...(ROAD[t.highway] ? { w: roadWidth(t) } : {}) });
       if (t.railway) {
         const f: Feature = { k: "rail", l, ...(layer > 0 ? { y: layer } : {}), ...deck };
         features.push(f);
@@ -725,7 +726,40 @@ for (const f of ["roads.json", "rails.json"]) {
   if (!existsSync(join(RAW, name, f))) continue;
   for (const e of readJson(join(RAW, name, f)).elements) if (e.tags?.tunnel === "yes" && e.nodes?.length) portals.add(e.nodes[0]).add(e.nodes.at(-1));
 }
-const ends = bridgeEnds(graph, sample, portals);
+// LoD2 roofs under the bridge decks (lgl): a deck never runs through a low roof below it (bridges.ts clearRoofs)
+let roofs: ((x: number, y: number) => number) | undefined;
+if (region.sources === "lgl" && graph.some((w) => w.bridge)) {
+  const G = 10, grid = new Map<string, number[][]>();
+  const near = new Set<string>(); // only the 10 m cells round a bridge are indexed
+  for (const w of graph) if (w.bridge) for (let i = 1; i < w.l.length; i++) {
+    const [a, b] = [w.l[i - 1], w.l[i]], n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 5);
+    for (let j = 0; j <= n; j++) {
+      const x = a[0] + ((b[0] - a[0]) * j) / n, y = a[1] + ((b[1] - a[1]) * j) / n;
+      for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) near.add(`${Math.floor(x / G) + dx}_${Math.floor(y / G) + dy}`);
+    }
+  }
+  for (const f of lod2Files(area.bbox)) for (const b of parseLod2(f.xml, area.bbox, region.geoidM)) for (let i = 0; i < b.roof.length; i += 9) {
+    const t = b.roof.slice(i, i + 9);
+    for (let gx = Math.floor(Math.min(t[0], t[3], t[6]) / G); gx <= Math.floor(Math.max(t[0], t[3], t[6]) / G); gx++)
+      for (let gy = Math.floor(Math.min(t[1], t[4], t[7]) / G); gy <= Math.floor(Math.max(t[1], t[4], t[7]) / G); gy++) {
+        const k = `${gx}_${gy}`;
+        if (!near.has(k)) continue;
+        if (!grid.has(k)) grid.set(k, []);
+        grid.get(k)!.push(t);
+      }
+  }
+  roofs = (x, y) => {
+    let top = -Infinity;
+    for (const [ax, ay, az, bx, by, bz, cx, cy, cz] of grid.get(`${Math.floor(x / G)}_${Math.floor(y / G)}`) ?? []) {
+      const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+      if (Math.abs(d) < 1e-9) continue;
+      const l1 = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d, l2 = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d, l3 = 1 - l1 - l2;
+      if (l1 >= 0 && l2 >= 0 && l3 >= 0) top = Math.max(top, l1 * az + l2 * bz + l3 * cz);
+    }
+    return top;
+  };
+}
+const ends = bridgeEnds(graph, sample, portals, roofs);
 for (const [id, e] of ends) { const f = deckFeatures.get(id); if (f) f.e = e; }
 writeFileSync(join(out, "bridge-ends.json"), JSON.stringify(Object.fromEntries(ends)));
 // watercourses: rivers, streams, canals, ditches and drains above ground, at their OSM width or the usual one
