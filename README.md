@@ -38,6 +38,13 @@ the Old Town and Wawel to Nowa Huta, on the same map and in the same style as Wi
 with MPK's trams on their real lines and dorożki (horse-drawn carriages) round Rynek Główny. Full-quality clip:
 [`video/krakow.mp4`](video/krakow.mp4). Same credits as Wieliczka, without the salt mine's plan.
 
+[![Tbilisi](video/tbilisi.gif)](https://isometriccity.com/tbilisi)
+
+Sixth city: **[Tbilisi](https://isometriccity.com/tbilisi)** (`/tbilisi`), by Jaba Shavishvili: the built-up city and the Tbilisi Sea, north up,
+from OpenStreetMap alone (pitched roofs from its `roof:shape` tags) and Copernicus terrain, drawn procedurally, with the
+metro, Georgian Railway trains and the Mtatsminda funicular. Full-quality clip: [`video/tbilisi.mp4`](video/tbilisi.mp4).
+Map data © OpenStreetMap contributors · Terrain: Copernicus DEM © DLR, Airbus DS.
+
 Elsewhere: **[Bratislava](https://bratislava.jantursky.com/)**, by [Ján Turský](https://jantursky.com/), a fork on its own site: the whole city from
 OpenStreetMap and Copernicus terrain, styled, with a landmarks guide and a flight over the city.
 
