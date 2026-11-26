@@ -45,7 +45,7 @@ async function confirm(question = "publish? [y/N] ") {
 }
 
 const rank = (f: string) => (f.startsWith("tiles/") ? 0 : f.endsWith("world.json") ? 2 : 1);
-const files = STATE_ONLY ? [] : readdirSync(dir, { recursive: true }).map(String).filter((f) => /\.(avif|webp|json)$/.test(f))
+const files = STATE_ONLY ? [] : readdirSync(dir, { recursive: true }).map((f) => String(f).replaceAll("\\", "/")).filter((f) => /\.(avif|webp|json)$/.test(f))
   .sort((a, b) => rank(a) - rank(b));
 const bytes = files.reduce((s, f) => s + statSync(join(dir, f)).size, 0);
 const tiles = files.filter((f) => f.startsWith("tiles/")).length;
