@@ -346,6 +346,8 @@ export const REGIONS: Record<string, Region> = {
     geoidM: 22.8,
     groundH: 473, // city centre ~450 m a.s.l. + geoid 22.8 m
     heightBase: 470, // TV tower tip ~1036 m, Mtkvari below Ponichala 359 m ellipsoid: 370…1025 m fits all but the antenna tip and the river bed there
+    // search places (export), tree rows (scene) and POIs; read with osmium-tool (osmlocal.ts)
+    osmExtract: "https://download.geofabrik.de/asia/georgia-latest.osm.pbf",
     look: "styled",
     style: "tbilisi",
     // metro: about every 5 min by day; OSM maps every mainline train as its own route (801, 6413…): single trains
