@@ -90,6 +90,14 @@ export interface StylePreset {
   /** The post pass's ink: outlines darken a pixel by up to `strength` where the depth creases by `from` m (none) to `to`
    *  m (full) over 2 px; ambient occlusion darkens a fully occluded corner by `ao`. */
   ink: { strength: number; from: number; to: number; ao: number };
+  /** Regions built from OSM alone (scene.ts): low houses without a `roof:shape` get a hipped or gabled roof in one of
+   *  these colours, and every mapped shape is drawn on any outline (osmroof.ts). null: flat unless four-cornered. */
+  osmRoofs: number[][] | null;
+  /** Regions built from OSM alone: buildings mapped as building:parts (osm-building-parts.json) drawn part by part. */
+  osmParts: boolean;
+  /** Regions built from OSM alone: storeys of a building without `height` and `building:levels`, by its kind and
+   *  footprint ([up to m², storeys] …; kinds left out: `other`). null: 14 m over 1500 m², small houses 5 m, else 13 m. */
+  osmLevels: Record<string, Array<[number, number]>> | null;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -102,7 +110,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 }, osmRoofs: null, osmParts: false, osmLevels: null },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -138,6 +146,23 @@ export const STYLES = {
     repaint: false,
     // crisper: lines from smaller creases and darker, deeper corners
     ink: { strength: 0.9, from: 0.2, to: 0.75, ao: 0.55 },
+    osmRoofs: null, osmParts: false, osmLevels: null,
+  },
+  /** Tbilisi: Stuttgart's look; sheet-metal roofs on the low houses, storeys from the city's own tagged buildings. */
+  tbilisi: {
+    castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: true, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 },
+    // galvanised and weathered sheet, painted rust-red, brown and green, some new clay tile
+    osmRoofs: [
+      [0.68, 0.69, 0.70], [0.68, 0.69, 0.70], [0.60, 0.61, 0.63], [0.60, 0.61, 0.63], [0.72, 0.70, 0.66],
+      [0.63, 0.45, 0.40], [0.63, 0.45, 0.40], [0.56, 0.41, 0.36], [0.54, 0.46, 0.40], [0.50, 0.58, 0.51], [0.74, 0.39, 0.28],
+    ],
+    osmParts: true,
+    // medians of the buildings tagged with levels (OSM extract of November 2026)
+    osmLevels: {
+      house: [[120, 1], [Infinity, 2]], detached: [[60, 1], [Infinity, 2]], yes: [[60, 1], [350, 2], [700, 3], [Infinity, 4]],
+      apartments: [[200, 2], [350, 3], [1500, 8], [Infinity, 9]], residential: [[60, 1], [350, 2], [Infinity, 5]],
+      other: [[700, 1], [1500, 3], [Infinity, 4]],
+    },
   },
 } satisfies Record<string, StylePreset>;
 
