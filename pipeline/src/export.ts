@@ -865,15 +865,16 @@ const latLonEnu = (lat: number, lon: number): [number, number] => { const e = ec
 
 /**
  * Painted-over ground (cutout.ts `key` masks, e.g. the Wasen fairground): the OSM service roads under it are gone in
- * the painting, so traffic must not drive there. Returns a test: is this map pixel inside any key mask?
+ * the painting, so traffic must not drive there. Returns a test: is this map pixel inside any key mask? `only` picks
+ * the keys (trains: those with `hideTrains`, a station roof painted over its tracks).
  */
-async function keyMasks(areas: string[]) {
+async function keyMasks(areas: string[], only: (key: any) => boolean = () => true) {
   const masks: Array<{ x: number; y: number; sx: number; sy: number; mw: number; mh: number; a: Buffer }> = [];
   for (const area of areas) {
     const f = join(DERIVED, area, "cutouts.json");
     if (!existsSync(f)) continue;
     for (const c of readJson(f)) {
-      if (!c.key) continue;
+      if (!c.key || !only(c.key)) continue;
       const [x, y, w, h] = c.key.frame, { data, info } = await sharp(join(DERIVED, area, c.key.mask)).extractChannel(0).raw().toBuffer({ resolveWithObject: true });
       masks.push({ x, y, sx: info.width / w, sy: info.height / h, mw: info.width, mh: info.height, a: data });
     }
@@ -1084,6 +1085,7 @@ async function exportTrains(areas: string[], heights: Heights) {
   // sample every track a chosen line runs on, once
   const index = new Map<number, number>(), tracks: number[][] = [];
   let hidden = 0, total = 0;
+  const roofed = await keyMasks(areas, (k) => k.hideTrains); // painted station roofs: trains run under them
   for (const c of chosen) for (const id of c.run.ids) {
     if (index.has(id)) continue;
     const w = ways.get(id), t = w.tags ?? {}, line = lineOf(w);
@@ -1098,7 +1100,7 @@ async function exportTrains(areas: string[], heights: Heights) {
         const [e0, n0] = latLonEnu(lat, lon), ground = terrainU(e0, n0);
         const ud = deck ? deck.at(cum + d * f, e0, n0) : ground;
         const p = await placePoint(heights, lat, lon, ud !== null && Number.isFinite(ud) ? ud : null);
-        const vis = tunnel || edgeDistance(p.x, p.y) < (EDGE0 + EDGE1) / 2 ? 0 : p.vis;
+        const vis = tunnel || edgeDistance(p.x, p.y) < (EDGE0 + EDGE1) / 2 || roofed(p.x, p.y) ? 0 : p.vis;
         total++; hidden += 1 - vis;
         samples.push(Math.round(p.e[0] * 10) / 10, Math.round(p.e[1] * 10) / 10, Math.round(p.e[2] * 10) / 10, vis);
       }

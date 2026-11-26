@@ -43,7 +43,8 @@ type Tri = Array<[number, number, number]>;
 /** `art`: one painting covering exactly `frame` (an overview painted at native scale), used instead of windows */
 // `holes`: ground feature kinds (ground/features.json, e.g. "construction") cut out of the mask, so the render's own
 // ground shows through there (the Wilhelma's building site)
-interface Key { mask: string; frame: [number, number, number, number]; grow?: number; feather?: number; art?: string; holes?: string[]; edge?: "out" }
+// `hideTrains`: the painting roofs over tracks (the Hbf platforms): export hides trains under the mask
+interface Key { mask: string; frame: [number, number, number, number]; grow?: number; feather?: number; art?: string; holes?: string[]; edge?: "out"; hideTrains?: boolean }
 interface Cutout { name: string; at?: [number, number]; window?: [number, number]; windows?: Array<[number, number]>; lot?: number | string[]; grow?: number; key?: Key }
 /** the art px rectangle a cutout's mask covers: one window, or the bounding box of a block of windows */
 type Frame = { ox: number; oy: number; w: number; h: number };

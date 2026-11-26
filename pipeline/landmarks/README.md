@@ -65,3 +65,17 @@ pasted back by box are listed per landmark below, so a landmark can be recreated
   walls, tower clock, steps, beige paving and fountain field described in words from two CC BY-SA Commons photos
   (ATTRIBUTION.md; not given to the model). Match 0.83 (the square was cleared of the render's trees, as in the photos).
   The key keeps the building and the whole Marktplatz (13.7 %).
+- `hauptbahnhof` (stuttgart-core, the Bonatzbau with its gutted wings and the Stuttgart 21 roof with its light eyes):
+  native frame 1600,-560,1536,1024, `--base render --aerial --aerial-source city`. First try accepted (match 0.65).
+  It replaces the old window-painted `hbf` lot cut-out (removed from cutouts.json; its paint-cutout-hbf/ windows kept).
+  In cutouts.json before hbf-gleisvorfeld and hbf-steg.
+- `hbf-gleisvorfeld` (stuttgart-core, the old terminus still in use during Stuttgart 21: platform roofs, buffer stops,
+  the temporary halls): native frame 2200,-100,1536,1024, `--base render --aerial --aerial-source city`. Match 0.55
+  (the roofs are new over bare tracks). One edit (`edit-bridge.txt`, box 600,420,1180,820) removed an invented
+  footbridge across the tracks. Key 41.3 %, plus the strip x 2200–2218, y 300–485 by hand (grass over the render's flat
+  path; the unedited key is mask-key.png). `hideTrains`: trains run under its roofs.
+- `hbf-steg` (stuttgart-core, the temporary covered footbridge, OSM way 1016875485, from the Bonatzbau round the S21
+  pit to the platform heads; the render draws it as a flat path): native frame 1300,-250,1536,1024, same flags. First
+  try accepted (match 0.89). Key 5.6 %, cut by hand where it meets the gleisvorfeld gallery's corner: nothing at
+  x ≥ 2232, nor its rising leg (x ≥ 2160, y < 482); the unedited key is mask-key.png. Last in cutouts.json, so no
+  other painting's fade lies over its end.
