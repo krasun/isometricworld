@@ -70,6 +70,8 @@ const PARKED = STYLED && styleOf(region.style).parkedCars;
 const PLAYGROUNDS = STYLED && styleOf(region.style).playgrounds;
 /** Preset `bridgeDetail`: bridge decks carried on to their abutments (below). */
 const BRIDGE_DETAIL = STYLED && styleOf(region.style).bridgeDetail;
+/** Preset `softBanks`: rivers smoothed along their fall, their banks eased down to the water (Copernicus terrain alone). */
+const SOFT_BANKS = !region.sources && styleOf(region.style).softBanks;
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
 const GEOID = region.geoidM;
 /** Terrain grid posting (m) and how far past the area it reaches (deg; the render footprint of an edge tile). */
@@ -508,10 +510,10 @@ for (const { r: w } of DGM ? [] : water) { // DGM1 already holds each river's su
   for (const i of idx) { if (!isWater[i]) h[i] = level; isWater[i] = 2; }
 }
 for (let i = 0; i < n; i++) if (!isWater[i]) h[i] = Math.max(h[i], 0.8);
-// OSM-only regions (sources unset: Copernicus is their only terrain): smooth river surfaces (the DSM staircases
-// across a narrow river) and blend bank terrain toward the water level over ~30 m so the bank is a slope, not a
-// cliff. Not for "tlv"/"zg3d", whose ground stays as it was.
-if (!region.sources) {
+// Preset softBanks (regions whose only terrain is Copernicus: sources unset): smooth river surfaces (the DSM
+// staircases across a narrow river) and blend bank terrain toward the water level over ~30 m so the bank is a
+// slope, not a cliff. Not for "tlv"/"zg3d", whose ground stays as it was.
+if (SOFT_BANKS) {
   // river smoothing: mean of water neighbours within ~30 m, twice (removes DSM staircase, keeps the river's fall)
   const inside = new Uint8Array(n);
   for (const w of water) {

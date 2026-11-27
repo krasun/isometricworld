@@ -98,6 +98,9 @@ export interface StylePreset {
   /** Regions built from OSM alone: storeys of a building without `height` and `building:levels`, by its kind and
    *  footprint ([up to m², storeys] …; kinds left out: `other`). null: 14 m over 1500 m², small houses 5 m, else 13 m. */
   osmLevels: Record<string, Array<[number, number]>> | null;
+  /** Regions on Copernicus terrain alone (ground.ts): river surfaces smoothed along their fall (the DSM steps across
+   *  a narrow river) and the banks eased down to the water over ~30 m, a slope instead of a cliff. */
+  softBanks: boolean;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -110,7 +113,7 @@ const PL_HOMES = [
 
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 }, osmRoofs: null, osmParts: false, osmLevels: null },
+  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 }, osmRoofs: null, osmParts: false, osmLevels: null, softBanks: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -146,7 +149,7 @@ export const STYLES = {
     repaint: false,
     // crisper: lines from smaller creases and darker, deeper corners
     ink: { strength: 0.9, from: 0.2, to: 0.75, ao: 0.55 },
-    osmRoofs: null, osmParts: false, osmLevels: null,
+    osmRoofs: null, osmParts: false, osmLevels: null, softBanks: false,
   },
   /** Tbilisi: Stuttgart's look; sheet-metal roofs on the low houses, storeys from the city's own tagged buildings. */
   tbilisi: {
@@ -163,6 +166,7 @@ export const STYLES = {
       apartments: [[200, 2], [350, 3], [1500, 8], [Infinity, 9]], residential: [[60, 1], [350, 2], [Infinity, 5]],
       other: [[700, 1], [1500, 3], [Infinity, 4]],
     },
+    softBanks: true,
   },
 } satisfies Record<string, StylePreset>;
 
