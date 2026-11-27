@@ -480,7 +480,7 @@ document.getElementById("credits")!.innerHTML = [
         `<a href="https://data.gov.hr/otvorena-dozvola">Otvorena dozvola</a>, izmijenjeno`]
       : REGION === "wieliczka" // GUGiK (PZGiK material, CC BY 4.0) requires this notice: "prepared from the national geodetic and cartographic resource"
         ? [`Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (<a href="https://www.geoportal.gov.pl/">GUGiK</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>)`]
-        : /^tbilisi/.test(REGION) ? [] // OSM and Copernicus only
+        : REGION === "tbilisi-north" ? [] // OSM and Copernicus only
           : [`<a href="https://opendatasource.tel-aviv.gov.il/">Tel Aviv-Yafo Municipality</a>`]),
   `<span title="© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA">Copernicus DEM</span>`,
   // the salt mine's levels (mine.ts): Hondius's 1645 plan; the facts' sources are listed in the mine panel.
@@ -498,7 +498,7 @@ document.getElementById("credits")!.innerHTML = [
         ? `Made by <a href="https://kulpinski.dev">Piotr Kulpiński</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
       : REGION === "wieliczka" // the Wieliczka region was built by Maciek Chmura
         ? `Made by <a href="https://maciek.cloud/">Maciek Chmura</a> with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
-        : /^tbilisi/.test(REGION)
+        : REGION === "tbilisi-north" // the Tbilisi region was built by Jaba Shavishvili
           ? `Made by Jaba Shavishvili with <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`
           : `Made by <a href="https://dmytrokrasun.com">Dmytro Krasun</a>`,
 // each credit stays on one line; the separator rides at the end of the previous one so no line starts with "·"

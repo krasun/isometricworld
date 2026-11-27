@@ -105,24 +105,10 @@ export const AREAS: Record<string, Area> = {
   "zagreb-sesvete-east": { title: "Sesvete (east)", region: "zagreb", bbox: [45.770, 16.160, 45.874, 16.245] },
   /** Between Žitnjak, the Sava and the airport (Kosnica, Ivanja Reka). */
   "zagreb-southeast": { title: "Žitnjak · Ivanja Reka", region: "zagreb", bbox: [45.755, 16.040, 45.800, 16.170] },
-  /** Tbilisi pilot patch: Freedom Square, Old Town, Narikala, Abanotubani, Rustaveli Ave (~2.5 × 2.7 km). */
-  "tbilisi-pilot": { title: "Tbilisi · Freedom Square · Old Town", region: "tbilisi", bbox: [41.687, 44.788, 41.712, 44.815] },
   /** Tbilisi core: from Vake to Avlabari, Didube to Marjanishvili, covering the dense city. */
-  "tbilisi-core": { title: "Tbilisi · core", region: "tbilisi", bbox: [41.683, 44.765, 41.738, 44.830] },
-  // The built-up city around the core, overlapping it and each other by ~1 km; the bare slopes and the mountain
-  // villages (Kojori, Tskneti …) stay out.
-  "tbilisi-west": { title: "Vake · Saburtalo", region: "tbilisi", bbox: [41.695, 44.682, 41.753, 44.779] },
-  "tbilisi-dighomi": { title: "Dighomi · Didube", region: "tbilisi", bbox: [41.728, 44.706, 41.782, 44.806] },
-  "tbilisi-nadzaladevi": { title: "Nadzaladevi · Temka", region: "tbilisi", bbox: [41.718, 44.793, 41.782, 44.866] },
-  "tbilisi-gldani-west": { title: "Dighomi Massive · Mukhatgverdi", region: "tbilisi", bbox: [41.772, 44.720, 41.812, 44.772] },
-  "tbilisi-gldani": { title: "Gldani · Avchala", region: "tbilisi", bbox: [41.772, 44.745, 41.834, 44.872] },
-  "tbilisi-isani": { title: "Isani · Varketili", region: "tbilisi", bbox: [41.656, 44.816, 41.724, 44.908] },
-  "tbilisi-samgori": { title: "Samgori · Orkhevi", region: "tbilisi", bbox: [41.664, 44.894, 41.724, 44.965] },
-  "tbilisi-east": { title: "Orkhevi · Airport", region: "tbilisi", bbox: [41.664, 44.950, 41.724, 45.020] },
-  "tbilisi-ponichala": { title: "Ponichala", region: "tbilisi", bbox: [41.614, 44.880, 41.676, 44.944] },
-  "tbilisi-krtsanisi": { title: "Krtsanisi · Ortachala", region: "tbilisi", bbox: [41.660, 44.742, 41.696, 44.830] },
-  // The same areas north up, and the Tbilisi Sea east of Nadzaladevi.
   "tbn-core": { title: "Tbilisi · core", region: "tbilisi-north", bbox: [41.683, 44.765, 41.738, 44.830] },
+  // The built-up city around the core, overlapping it and each other by ~1 km, and the Tbilisi Sea east of
+  // Nadzaladevi; the bare slopes and the mountain villages (Kojori, Tskneti …) stay out.
   "tbn-west": { title: "Vake · Saburtalo", region: "tbilisi-north", bbox: [41.695, 44.682, 41.753, 44.779] },
   "tbn-dighomi": { title: "Dighomi · Didube", region: "tbilisi-north", bbox: [41.728, 44.706, 41.782, 44.806] },
   "tbn-nadzaladevi": { title: "Nadzaladevi · Temka", region: "tbilisi-north", bbox: [41.718, 44.793, 41.782, 44.866] },

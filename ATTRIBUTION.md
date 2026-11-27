@@ -32,7 +32,7 @@ Wieliczka (region `wieliczka`, rendered procedurally, not painted):
 
 > Map data © OpenStreetMap contributors · Opracowano na podstawie materiałów państwowego zasobu geodezyjnego i kartograficznego (GUGiK) · Buildings: GUGiK 3D models, BDOT10k, OSM · Roofs: GUGiK orthophoto · Terrain: GUGiK NMT, Copernicus DEM © DLR, Airbus DS · Trees: GUGiK NMPT · Salt mine: W. Hondius 1645 (public domain), facts from M.P. 1994/424 and open publications
 
-Tbilisi (region `tbilisi`, rendered procedurally, not painted):
+Tbilisi (region `tbilisi-north`, rendered procedurally, not painted):
 
 > Map data © OpenStreetMap contributors · Terrain: Copernicus DEM © DLR, Airbus DS
 

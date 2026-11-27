@@ -310,28 +310,7 @@ export const REGIONS: Record<string, Region> = {
       clip: [45.5, 15.5, 45.87, 16.5],
     },
   },
-  tbilisi: {
-    title: "Tbilisi",
-    origin: { lat: 41.69338, lon: 44.80152, h: 0 }, // Freedom Square (Tavisuplebis moedani)
-    headingDeg: 215, // SSW: Mtkvari and Chugureti in front, Mtatsminda rises behind; diagonal to the main grid
-    country: "Georgia",
-    adminLevels: ["10"], // the ten districts (the city itself is level 4)
-    municipalities: ["სამგორის რაიონი", "ნაძალადევის რაიონი", "დიდუბის რაიონი", "საბურთალოს რაიონი", "ვაკის რაიონი", "ისნის რაიონი", "კრწანისის რაიონი", "ჩუღურეთის რაიონი", "მთაწმინდის რაიონი", "გლდანის რაიონი"],
-    credits: [
-      "Map data © OpenStreetMap contributors",
-      "Terrain: Copernicus DEM © DLR, Airbus DS",
-    ],
-    geoidM: 22.8,
-    groundH: 473, // city centre ~450 m a.s.l. + geoid 22.8 m
-    heightBase: 470, // TV tower tip ~1036 m, Mtkvari below Ponichala 359 m ellipsoid: 370…1025 m fits all but the antenna tip and the river bed there
-    look: "styled",
-    style: "tbilisi",
-    // metro: about every 5 min by day; OSM maps every mainline train as its own route (801, 6413…): single trains
-    rail: { stock: "tbilisi", interval: { "1": 5, "2": 5 }, mainline: { line: "(?!)", every: 60, single: 240 } },
-    effects: { fly: true, clouds: true, search: true },
-    life: { vehicles: "detailed", foreground: true },
-  },
-  /** Tbilisi again, north up (the one above looks SSW): its own region, as tiles fix a region's heading. */
+  /** Tbilisi, north up. The id keeps its "-north": the tiles are published under it (a first draft looked SSW). */
   "tbilisi-north": {
     title: "Tbilisi",
     origin: { lat: 41.69338, lon: 44.80152, h: 0 }, // Freedom Square (Tavisuplebis moedani)
