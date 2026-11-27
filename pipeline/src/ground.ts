@@ -76,6 +76,8 @@ const PLAYGROUNDS = STYLED && styleOf(region.style).playgrounds;
 const BRIDGE_DETAIL = STYLED && styleOf(region.style).bridgeDetail;
 /** Preset bridgeAbutments (or bridgeDetail): the same, the abutments only. */
 const ABUTMENTS = BRIDGE_DETAIL || (STYLED && styleOf(region.style).bridgeAbutments);
+/** Preset `softBanks`: rivers smoothed along their fall, their banks eased down to the water (Copernicus terrain alone). */
+const SOFT_BANKS = !region.sources && styleOf(region.style).softBanks;
 /** Geoid undulation: orthometric (MSL) + this = ellipsoid height (= sea level). */
 const GEOID = region.geoidM;
 /** Terrain grid posting (m) and how far past the area it reaches (deg; the render footprint of an edge tile). LGL:
@@ -265,9 +267,11 @@ function areaKind(t: Record<string, string>): string | null {
 }
 
 const osm = readJson(join(RAW, name, "ground.json"));
-// funicular tracks (Zagreb's Uspinjača) are only in rails.json (fetched since funiculars were added there): drawn as rail
+// funicular tracks (Zagreb's Uspinjača) are only in rails.json (fetched since funiculars were added there): drawn as rail;
+// so is the open-air track of Tbilisi's metro
 if (existsSync(join(RAW, name, "rails.json")))
-  osm.elements.push(...readJson(join(RAW, name, "rails.json")).elements.filter((e: any) => e.type === "way" && e.tags?.railway === "funicular"));
+  osm.elements.push(...readJson(join(RAW, name, "rails.json")).elements.filter((e: any) => e.type === "way" && (e.tags?.railway === "funicular"
+    || (region.rail?.stock === "tbilisi" && e.tags?.railway === "subway" && e.tags.tunnel !== "yes"))));
 const features: Feature[] = [];
 /** lakes, ponds, basins and river areas (river: flowing water, its surface falls along it) */
 const water: Array<{ r: P2[][]; river: boolean }> = [];
@@ -422,19 +426,22 @@ const grid: Grid = { x0, y0, nx: Math.ceil((x1 - x0) / STEP) + 1, ny: Math.ceil(
  * 3600 columns below 50° latitude, fewer further north (2400 at 50–60°: 1.5″ in longitude).
  */
 async function loadDem() {
-  const dir = join(RAW, "dem"), tiles = new Map<string, { t: Float32Array; w: number }>();
+  const dir = join(RAW, "dem"), tiles = new Map<string, { t: Float32Array; w: number; rows: number }>();
   for (const f of readdirSync(dir).filter((f) => f.endsWith(".tif"))) {
     const m = f.match(/N(\d+)_00_E(\d+)_00/)!;
     const { data, info } = await sharp(join(dir, f)).extractChannel(0).raw({ depth: "float" }).toBuffer({ resolveWithObject: true });
-    if (info.height !== 3600 || ![3600, 2400, 1800, 1200, 720, 360].includes(info.width)) throw new Error(`${f}: unexpected size ${info.width}×${info.height}`);
-    tiles.set(`${Number(m[1])}_${Number(m[2])}`, { t: new Float32Array(data.buffer, data.byteOffset, data.length / 4), w: info.width });
+    // GLO-30 has 3600 rows; GLO-90 (1200 rows, 3″) stands in where a GLO-30 tile is not public (e.g. N41 E044, Tbilisi)
+    const ok = (info.height === 3600 && [3600, 2400, 1800, 1200, 720, 360].includes(info.width))
+      || (info.height === 1200 && [1200, 800, 600, 400, 240, 120].includes(info.width));
+    if (!ok) throw new Error(`${f}: unexpected size ${info.width}×${info.height}`);
+    tiles.set(`${Number(m[1])}_${Number(m[2])}`, { t: new Float32Array(data.buffer, data.byteOffset, data.length / 4), w: info.width, rows: info.height });
   }
   return (lat: number, lon: number) => {
     const tile = tiles.get(`${Math.floor(lat)}_${Math.floor(lon)}`);
     if (!tile) return 0;
-    const { t, w } = tile;
-    const fx = (lon - Math.floor(lon)) * w, fy = (Math.floor(lat) + 1 - lat) * 3600;
-    const ix = Math.min(w - 2, Math.floor(fx)), iy = Math.min(3598, Math.floor(fy)), ax = fx - ix, ay = fy - iy;
+    const { t, w, rows } = tile;
+    const fx = (lon - Math.floor(lon)) * w, fy = (Math.floor(lat) + 1 - lat) * rows;
+    const ix = Math.min(w - 2, Math.floor(fx)), iy = Math.min(rows - 2, Math.floor(fy)), ax = fx - ix, ay = fy - iy;
     const v = (x: number, y: number) => t[y * w + x];
     return (v(ix, iy) * (1 - ax) + v(ix + 1, iy) * ax) * (1 - ay) + (v(ix, iy + 1) * (1 - ax) + v(ix + 1, iy + 1) * ax) * ay;
   };
@@ -512,6 +519,60 @@ for (const { r: w } of DGM ? [] : water) { // DGM1 already holds each river's su
   for (const i of idx) { if (!isWater[i]) h[i] = level; isWater[i] = 2; }
 }
 for (let i = 0; i < n; i++) if (!isWater[i]) h[i] = Math.max(h[i], 0.8);
+// Preset softBanks (regions whose only terrain is Copernicus: sources unset): smooth river surfaces (the DSM
+// staircases across a narrow river) and blend bank terrain toward the water level over ~30 m so the bank is a
+// slope, not a cliff. Not for "tlv"/"zg3d", whose ground stays as it was.
+if (SOFT_BANKS) {
+  // river smoothing: mean of water neighbours within ~30 m, twice (removes DSM staircase, keeps the river's fall)
+  const inside = new Uint8Array(n);
+  for (const w of water) {
+    if (!w.river) continue;
+    const idx: number[] = [];
+    fillGrid(w.r, grid, (i) => idx.push(i));
+    if (!idx.length) continue;
+    for (const i of idx) inside[i] = 1;
+    const r = Math.max(1, Math.round(30 / STEP));
+    for (let pass = 0; pass < 2; pass++) {
+      const next = idx.map((i) => {
+        const ix = i % grid.nx, iy = (i - ix) / grid.nx;
+        let s = 0, c = 0;
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          const x = ix + dx, y = iy + dy, j = y * grid.nx + x;
+          if (x >= 0 && y >= 0 && x < grid.nx && y < grid.ny && inside[j]) { s += h[j]; c++; }
+        }
+        return s / c;
+      });
+      idx.forEach((i, k) => (h[i] = next[k]));
+    }
+    for (const i of idx) inside[i] = 0;
+  }
+  // bank transition: land cells within ~30 m of water blend toward the nearest water level
+  const BANK = Math.max(1, Math.round(30 / STEP));
+  const bankDist = new Float32Array(n).fill(Infinity);
+  const bankLevel = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!isWater[i]) continue;
+    const ix = i % grid.nx, iy = (i - ix) / grid.nx;
+    for (let dy = -BANK; dy <= BANK; dy++) for (let dx = -BANK; dx <= BANK; dx++) {
+      const x = ix + dx, y = iy + dy;
+      if (x < 0 || y < 0 || x >= grid.nx || y >= grid.ny) continue;
+      const j = y * grid.nx + x;
+      if (isWater[j]) continue;
+      const d = Math.hypot(dx, dy);
+      if (d < bankDist[j]) { bankDist[j] = d; bankLevel[j] = h[i]; }
+    }
+  }
+  let blended = 0;
+  for (let i = 0; i < n; i++) {
+    if (isWater[i] || bankDist[i] >= BANK) continue;
+    const t = bankDist[i] / BANK; // 0 at water edge, 1 at BANK distance
+    const s = t * t * (3 - 2 * t); // smoothstep: blend from water level to terrain
+    const v = bankLevel[i] + (h[i] - bankLevel[i]) * s;
+    if (Math.abs(v - h[i]) > 0.05) blended++;
+    h[i] = v;
+  }
+  console.log(`  bank smoothing: ${blended} land nodes blended near water`);
+}
 // GUGiK NMT has no water surface: it is interpolated across a lake from its shores, wavy by half a metre and more,
 // which the hillshade draws as a sculpted bottom. Still water gets one level, its lowest tenth (below the shores);
 // a river area the mean of its own nodes within ~15 m, twice (no waves, its fall kept).

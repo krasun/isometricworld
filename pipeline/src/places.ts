@@ -50,9 +50,11 @@ export interface Region {
    * out (the map shows the day); `interval`: minutes between trams of a line (default `tramInterval`).
    * `mainline`: where route relations are single trains rather than lines (HŽPP: "Vlak 983"), refs matching `line`
    * are lines running every `every` min, the others single trains `single` min apart (a few a day: rarely seen).
+   * "tbilisi": the metro (route=subway, kind 0, `interval` per line), mainline trains in Georgian Railway colours and
+   * the funicular, two cars on one track with a passing loop (kind 6).
    */
   rail?: {
-    stock: "zet" | "mpk"; tramInterval: number; interval?: Record<string, number>; night?: string[];
+    stock: "zet" | "mpk" | "tbilisi"; tramInterval?: number; interval?: Record<string, number>; night?: string[];
     mainline?: { line: string; every: number; single: number };
   };
   /** Squares the pigeon flocks wheel over (web/src/scripts/sky.ts Pigeons), lat/lon; Tel Aviv has its parakeets instead. */
@@ -63,6 +65,11 @@ export interface Region {
    * name (search.ts; export.ts writes the index).
    */
   effects?: { fly?: boolean; clouds?: boolean; search?: boolean };
+  /**
+   * More OSM name tags the search index lists a street or place under, each as an entry of its own beside `name`
+   * (export.ts exportSearch): `["name:en"]` where the local script is not Latin (Tbilisi).
+   */
+  searchNames?: string[];
   /**
    * Life on the map (web/src/scripts). `vehicles: "detailed"`: cars drawn as body and cabin with windows and
    * lights (hatchbacks, saloons, SUVs, vans), buses with their window band, shadows cast like the render's
@@ -310,6 +317,31 @@ export const REGIONS: Record<string, Region> = {
       clip: [45.5, 15.5, 45.87, 16.5],
     },
   },
+  /** Tbilisi, north up. The id keeps its "-north": the tiles are published under it (a first draft looked SSW). */
+  "tbilisi-north": {
+    title: "Tbilisi",
+    origin: { lat: 41.69338, lon: 44.80152, h: 0 }, // Freedom Square (Tavisuplebis moedani)
+    headingDeg: 0, // north up, like a street map; the main grid runs NW-SE, so two facades show
+    country: "Georgia",
+    adminLevels: ["10"], // the ten districts (the city itself is level 4)
+    municipalities: ["სამგორის რაიონი", "ნაძალადევის რაიონი", "დიდუბის რაიონი", "საბურთალოს რაიონი", "ვაკის რაიონი", "ისნის რაიონი", "კრწანისის რაიონი", "ჩუღურეთის რაიონი", "მთაწმინდის რაიონი", "გლდანის რაიონი"],
+    credits: [
+      "Map data © OpenStreetMap contributors",
+      "Terrain: Copernicus DEM © DLR, Airbus DS",
+    ],
+    geoidM: 22.8,
+    groundH: 473, // city centre ~450 m a.s.l. + geoid 22.8 m
+    heightBase: 470, // TV tower tip ~1036 m, Mtkvari below Ponichala 359 m ellipsoid: 370…1025 m fits all but the antenna tip and the river bed there
+    // search places (export), tree rows (scene) and POIs; read with osmium-tool (osmlocal.ts)
+    osmExtract: "https://download.geofabrik.de/europe/georgia-latest.osm.pbf",
+    look: "styled",
+    style: "tbilisi",
+    // metro: about every 5 min by day; OSM maps every mainline train as its own route (801, 6413…): single trains
+    rail: { stock: "tbilisi", interval: { "1": 5, "2": 5 }, mainline: { line: "(?!)", every: 60, single: 240 } },
+    effects: { fly: true, clouds: true, search: true },
+    searchNames: ["name:en"], // OSM names are in Georgian script: "რუსთაველის გამზირი" is found as "Rustaveli Avenue" too
+    life: { vehicles: "detailed", foreground: true },
+  },
   wieliczka: {
     title: "Wieliczka",
     origin: { lat: 49.98236, lon: 20.06018, h: 0 }, // Rynek Górny (centre of its OSM pedestrian area)
@@ -377,6 +409,7 @@ export const CITIES: Record<string, City> = {
   zagreb: { title: "Zagreb", region: "zagreb", center: [45.8131, 15.9772], widthM: 3000 },
   wieliczka: { title: "Wieliczka", region: "wieliczka", center: [49.9825, 20.0585], widthM: 2000 },
   krakow: { title: "Kraków", region: "wieliczka", center: [50.0585, 19.9365], widthM: 1600 },
+  tbilisi: { title: "Tbilisi", region: "tbilisi-north", center: [41.6945, 44.8045], widthM: 2200 },
 };
 
 export const DEFAULT_CITY = "tel-aviv-yafo";

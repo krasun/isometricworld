@@ -9,6 +9,7 @@
  * data/raw/<area>/osm.json               OSM buildings + trees (outside Tel Aviv-Yafo coverage; none where LoD2
  *                                        has the buildings), roof/facade looks + landmarks (styled regions)
  * data/raw/<area>/osm_parts.json         OSM building:parts (Tel Aviv-Yafo: towers on podiums)
+ * data/raw/<area>/osm-building-parts.json OSM building:parts (preset osmParts)
  * data/raw/<area>/osm-buildings.json     every OSM building (sources "gugik": the ones the 3D models and BDOT10k lack)
  * data/raw/<area>/osm-power.json         OSM high-voltage power lines and their towers (preset powerLines)
  * data/raw/<area>/osm-play.json          OSM playgrounds and their equipment (preset playgrounds)
@@ -151,6 +152,15 @@ out body geom;`);
   writeFileSync(join(dir, "osm_parts.json"), JSON.stringify(data));
   console.log(`  osm building parts: ${data.elements.length}`);
 }
+// building:parts of regions built from OSM alone (preset osmParts)
+if (!sources && STYLED && styleOf(REGIONS[area.region].style).osmParts && !existsSync(join(dir, "osm-building-parts.json"))) {
+  const [s, w, n, e] = area.bbox, b = `(${s},${w},${n},${e})`;
+  const data = await osmQuery(`[out:json][timeout:300];
+(way["building:part"]${b}; relation["building:part"]${b};);
+out body geom;`, area.bbox, (type, t) => type !== "node" && !!t["building:part"]);
+  writeFileSync(join(dir, "osm-building-parts.json"), JSON.stringify(data));
+  console.log(`  osm building parts: ${data.elements.length}`);
+}
 // GUGiK: every building, for those the 3D models and BDOT10k lack (gugik.ts); kept apart from osm.json, which
 // holds what the look takes from OSM
 if (sources === "gugik" && !existsSync(join(dir, "osm-buildings.json"))) {
@@ -275,12 +285,14 @@ mkdirSync(join(RAW, "dem"), { recursive: true });
   const [s, w, n, e] = area.bbox;
   for (let lat = Math.floor(s - 0.03); lat <= Math.floor(n + 0.03); lat++)
     for (let lon = Math.floor(w - 0.03); lon <= Math.floor(e + 0.03); lon++) {
-      const id = `Copernicus_DSM_COG_10_N${String(lat).padStart(2, "0")}_00_E${String(lon).padStart(3, "0")}_00_DEM`;
-      const file = join(RAW, "dem", `${id}.tif`);
-      if (existsSync(file)) continue;
-      const r = await fetch(`https://copernicus-dem-30m.s3.amazonaws.com/${id}/${id}.tif`, { headers: UA });
-      if (!r.ok) throw new Error(`DEM ${id}: ${r.status}`);
-      writeFileSync(file, Buffer.from(await r.arrayBuffer()));
-      console.log(`  dem: ${id}`);
+      const cell = `N${String(lat).padStart(2, "0")}_00_E${String(lon).padStart(3, "0")}_00_DEM`;
+      const id = `Copernicus_DSM_COG_10_${cell}`, id90 = `Copernicus_DSM_COG_30_${cell}`;
+      if (existsSync(join(RAW, "dem", `${id}.tif`)) || existsSync(join(RAW, "dem", `${id90}.tif`))) continue;
+      let r = await fetch(`https://copernicus-dem-30m.s3.amazonaws.com/${id}/${id}.tif`, { headers: UA }), got = id;
+      // a few GLO-30 tiles are not public (border areas, e.g. N41 E044 with Tbilisi): GLO-90 covers them
+      if (r.status === 404) { r = await fetch(`https://copernicus-dem-90m.s3.amazonaws.com/${id90}/${id90}.tif`, { headers: UA }); got = id90; }
+      if (!r.ok) throw new Error(`DEM ${got}: ${r.status}`);
+      writeFileSync(join(RAW, "dem", `${got}.tif`), Buffer.from(await r.arrayBuffer()));
+      console.log(`  dem: ${got}`);
     }
 }

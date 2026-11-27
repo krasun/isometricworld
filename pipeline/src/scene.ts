@@ -24,6 +24,7 @@ import { CAMERA, ecefToEnu, enuToLlh, enuToPixel, llhToEcef } from "./camera.ts"
 import { isBridge } from "./bridges.ts";
 import { crowns } from "./canopy.ts";
 import { styleOf } from "./styles.ts";
+import { enclosing, roofed } from "./osmroof.ts";
 import { powerLines } from "./power.ts";
 import { playLayout, playPieces } from "./playgrounds.ts";
 import { parkLayout, parkPieces } from "./parking.ts";
@@ -659,6 +660,84 @@ function osmMesh(ring: P2[], h: number, t: Record<string, string>, addRoof: bool
   return { id: "osm", fn: "zg3d", roofType: pitched ? "3100" : "1000", height: h, base, roof, wall, footprint: ring, center: [c[1] / 1e5, c[0] / 1e5], xy: [] };
 }
 
+/** Presets osmRoofs, osmParts, osmLevels (styles.ts): how regions built from OSM alone draw its buildings. */
+const OSM_PRESET = OSM_MESH && !region.sources ? styleOf(region.style) : null;
+/** Low houses whose roof nobody mapped: kinds that are not halls, blocks or sheds of their own. */
+const PLAIN = /^(yes|house|detached|semidetached_house|residential|terrace|historic|farm|hut|cabin|bungalow|villa|guest_house)$/;
+const GOLD = [0.86, 0.70, 0.32]; // gilded domes
+const CHURCH = /^(church|cathedral|chapel|monastery)$/;
+const ROOF_SHAPE = /^(gabled|hipped|half-hipped|side_hipped|pyramidal|crosspitched|skillion|gambrel|mansard|round|half_round|cone|dome|onion)$/;
+const CURVED = /^(dome|cone|onion|round|half_round)$/;
+const roofStats: Record<string, number> = {};
+/** osmMesh for the presets above: any outline, `h` m to the eaves if `addRoof`, else to the top. */
+function osmRoofMesh(ring: P2[], h: number, t: Record<string, string>, addRoof: boolean, id: number): Lod2Building {
+  const gs = ring.map(([x, y]) => groundAt(x, y)), base = Math.min(...gs), R = enclosing(ring);
+  h = Math.max(h, Math.max(...gs) - base + 2.8); // on a slope the uphill side keeps a storey
+  const A = Math.abs(area2(ring)), fill = A / Math.max(1, 4 * R.a * R.b);
+  let shape = t["roof:shape"] ?? "flat";
+  const mapped = ROOF_SHAPE.test(shape);
+  if (!t["roof:shape"]) {
+    const church = CHURCH.test(t.building ?? "");
+    if ((church && fill > 0.6) || (PLAIN.test(t.building ?? "") && h <= 11 && A >= 25 && A <= 700 && fill > 0.72)) shape = church || hash(id) < 0.4 ? "gabled" : "hipped";
+  }
+  if (!ROOF_SHAPE.test(shape)) shape = "flat";
+  let rh = 0;
+  if (shape !== "flat") {
+    rh = parseFloat(t["roof:height"]) || (CURVED.test(shape) ? R.b : Math.min(shape === "skillion" ? 2 : 4.5, (shape === "skillion" ? 0.25 : 0.55) * R.b));
+    if (!addRoof) rh = Math.min(rh, 0.75 * h);
+    else h += rh;
+  }
+  const key = `${shape}${mapped ? " (mapped)" : ""}`;
+  roofStats[key] = (roofStats[key] ?? 0) + 1;
+  const m = roofed(ring, base, 0, h, shape, rh, t["roof:orientation"] === "across"), c = centre(ring), P = OSM_PRESET!.osmRoofs!;
+  const pitched = shape !== "flat";
+  return { id: "osm", fn: "zg3d", roofType: pitched ? "3100" : "1000", height: h, base, ...m, footprint: ring, center: [c[1] / 1e5, c[0] / 1e5], xy: [],
+    ...(pitched ? { roofRgb: P[Math.floor(hash(id * 31 + 7) * P.length)] } : {}) };
+}
+/** building:parts of the area (preset osmParts), in a 50 m grid by their centre */
+type OsmPart = { ring: P2[]; t: Record<string, string> };
+const osmParts = new Map<string, OsmPart[]>();
+if (OSM_PRESET?.osmParts && existsSync(join(raw, "osm-building-parts.json")))
+  for (const el of readJson(join(raw, "osm-building-parts.json")).elements) {
+    if (el.tags?.["building:part"] === "no" || el.tags?.location === "underground" || parseFloat(el.tags?.layer) < 0) continue;
+    const g = el.type === "way" ? el.geometry : el.members?.find((m: any) => m.role === "outer" && m.geometry?.length)?.geometry;
+    const ring = g?.length >= 4 ? ringFromLonLat(g.map((q: any) => [q.lon, q.lat])) : null;
+    if (!ring) continue;
+    const c = centre(ring), k = `${Math.floor(c[0] / 50)}_${Math.floor(c[1] / 50)}`;
+    (osmParts.get(k) ?? osmParts.set(k, []).get(k)!).push({ ring, t: el.tags });
+  }
+function partsIn(ring: P2[]) {
+  const xs = ring.map((p) => p[0]), ys = ring.map((p) => p[1]), found: OsmPart[] = [];
+  if (!osmParts.size) return found;
+  for (let gx = Math.floor(Math.min(...xs) / 50); gx <= Math.floor(Math.max(...xs) / 50); gx++)
+    for (let gy = Math.floor(Math.min(...ys) / 50); gy <= Math.floor(Math.max(...ys) / 50); gy++)
+      for (const p of osmParts.get(`${gx}_${gy}`) ?? []) if (inside(centre(p.ring), ring)) found.push(p);
+  return found;
+}
+/** The building:parts of one building as meshes on its ground; null: too few of them, the outline is drawn. */
+function partMeshes(ring: P2[], t: Record<string, string>): Lod2Building[] | null {
+  const ps = partsIn(ring).filter((p) => p.t.height || p.t["building:levels"]);
+  if (!ps.length || ps.reduce((s, p) => s + Math.abs(area2(p.ring)), 0) < 0.7 * Math.abs(area2(ring))) return null;
+  const base = Math.min(...ring.map(([x, y]) => groundAt(x, y))), church = CHURCH.test(t.building ?? ""), own = wallLook(t);
+  return ps.map((p) => {
+    const levels = parseFloat(p.t["building:levels"]), top = parseFloat(p.t.height) || levels * FLOOR + 1;
+    const min = Math.max(0, Math.min(parseFloat(p.t.min_height) || (parseFloat(p.t["building:min_level"]) || 0) * FLOOR, top - 0.5));
+    const shape = ROOF_SHAPE.test(p.t["roof:shape"] ?? "") ? p.t["roof:shape"] : "flat", R = enclosing(p.ring);
+    const rh = shape === "flat" ? 0 : Math.max(0, Math.min(parseFloat(p.t["roof:height"]) || (CURVED.test(shape) ? R.b : 0.55 * R.b), top - min - 0.2));
+    const w = wallLook(p.t), c = centre(p.ring);
+    const gold = /^gold(en)?$/.test(p.t["roof:colour"] ?? "") ? GOLD : null, paint = PAINT[t.name] ?? {};
+    const look = { roof: gold ?? roofRgb(p.t) ?? paint.roof ?? (church ? ROOF_NAMED.grey : null), wall: w.wall ?? paint.wall ?? own.wall, style: w.style ?? own.style ?? (church ? 4 : null), bare: church };
+    return { id: "osm", fn: "zg3d", roofType: shape === "flat" ? "1000" : "3100", height: top, base, ...roofed(p.ring, base, min, top, shape, rh, p.t["roof:orientation"] === "across"),
+      footprint: p.ring, center: [c[1] / 1e5, c[0] / 1e5], xy: [], look } as unknown as Lod2Building;
+  });
+}
+/** Storeys of a building nobody counted, by the preset's table. */
+function guessLevels(kind: string, A: number) {
+  const tab = OSM_PRESET!.osmLevels!, row = tab[kind] ?? (/^(semidetached_house|terrace|farm|villa|bungalow)$/.test(kind) ? tab.house : tab.other);
+  return row.find(([to]) => A <= to)![1];
+}
+let partBuildings = 0;
+
 let osmCount = 0;
 // styled regions: OSM roof:colour / roof:material, building:colour / building:material per footprint or building part
 // tall towers (TV towers…): LoD2 has only a stump, OSM often has the whole shape as building:parts with min_height
@@ -733,7 +812,15 @@ for (const el of osm.elements) {
   }
   const levels = parseFloat(t["building:levels"]);
   let h = parseFloat(t.height) || (levels ? levels * FLOOR + 1 : 0);
+  if (!h && OSM_PRESET?.osmLevels) h = guessLevels(t.building ?? "yes", Math.abs(area2(ring))) * FLOOR + 1;
   if (!h) h = Math.abs(area2(ring)) > 1500 ? 14 : ["house", "garage", "shed", "kiosk"].includes(t.building) ? 5 : 13;
+  if (OSM_PRESET?.osmRoofs) {
+    const tower = /^(tower|communications_tower)$/.test(t.man_made ?? "") && parseFloat(t.height) >= 60; // built below
+    const ps = OSM_PRESET.osmParts && !tower ? partMeshes(ring, t) : null;
+    if (ps) { meshes.push(...ps); partBuildings++; } else meshes.push(osmRoofMesh(ring, h, t, !t.height, el.id));
+    osmCount++;
+    continue;
+  }
   if (OSM_MESH) {
     meshes.push(osmMesh(ring, h, t, !t.height));
     osmCount++;
@@ -751,6 +838,7 @@ if (fountains.length) {
   console.log(`  fountains: ${fountains.length}, ${n0 - trees.length} crown(s) on them dropped`);
 }
 console.log(`  osm buildings (outside municipal layer): ${osmCount}`);
+if (OSM_PRESET?.osmRoofs) console.log(`  osm roofs: ${Object.entries(roofStats).map(([k, v]) => `${v} ${k}`).join(", ")}; ${partBuildings} buildings from building:parts`);
 if (looks.length) console.log(`  osm roof/wall looks: ${looks.length}`);
 // the smallest OSM footprint (a building:part before its building) holding a LoD2 building's centre, per attribute; 50 m grid
 looks.sort((a, b) => a.area - b.area);

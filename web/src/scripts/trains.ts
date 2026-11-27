@@ -1,7 +1,7 @@
 /**
  * Trains on the real lines (OSM route relations, exported by pipeline/src/export.ts exportTrains): Stadtbahn,
- * S-Bahn, regional and long-distance trains; in regions with local stock (places.ts `rail`, Zagreb) street
- * trams and funicular cars too. Each line shuttles: out along one direction's relation, a
+ * S-Bahn, regional and long-distance trains; in regions with local stock (places.ts `rail`: Zagreb, Tbilisi) street
+ * trams, the metro and funicular cars too. Each line shuttles: out along one direction's relation, a
  * turnaround at the end, back along the other's (the Stadtbahn end to end; mainline trains come in over the
  * map edge to the Hbf terminus and leave the same way). Between stops a train accelerates, cruises and
  * brakes; it dwells at every stop of its relation. Trains of a line run its interval apart.
@@ -57,7 +57,7 @@ interface Livery { body: RGB; roof: RGB; bands: Array<[number, number, RGB]> }
 /** `tilt`: the body follows the track's grade (a funicular car on its incline); otherwise it stands level */
 interface Car { len: number; wid: number; hei: number; liv: Livery; gap: number; tilt?: boolean }
 /** whose rolling stock (places.ts Region `rail.stock`); default Stuttgart's SSB and DB */
-export type Stock = "zet" | "mpk" | undefined;
+export type Stock = "zet" | "mpk" | "tbilisi" | undefined;
 
 const RED: RGB = [206, 32, 38], LIGHT: RGB = [208, 210, 214], GLASS: RGB = [34, 40, 52];
 // SSB DT 8 (yellow, navy window band, grey roof), DB ET 430 S-Bahn, DB double-deck regional coaches and
@@ -78,6 +78,26 @@ const USPINJACA: Livery = { body: ZET, roof: [190, 194, 200], bands: [[1.0, 1.2,
 const HZ_EMU: Livery = { body: WHITE, roof: LIGHT, bands: [[0.3, 1.05, HZ], [1.4, 2.35, GLASS]] };
 const HZ_LOCO: Livery = { body: HZ, roof: [150, 152, 158], bands: [[0.3, 0.8, [60, 62, 68]], [1.0, 1.15, WHITE], [2.7, 3.3, GLASS]] };
 const HZ_COACH: Livery = { body: WHITE, roof: [196, 198, 202], bands: [[0.5, 0.95, HZ], [1.55, 2.4, GLASS]] };
+// Tbilisi. Metro 81-717M (light grey, red lines at the waist and under the roof); Georgian Railway: the Stadler KISS
+// (white, red band between the decks, grey roof), the 4E10 locomotive (dark red over grey) with coaches whose white
+// and red is assumed; the funicular (red frame, black glass)
+const METRO_GREY: RGB = [222, 221, 220], GE_RED: RGB = [200, 34, 44], BLACK: RGB = [26, 28, 32];
+const M81717: Livery = { body: METRO_GREY, roof: [186, 187, 190], bands: [[0.95, 1.15, GE_RED], [1.5, 2.4, GLASS], [2.95, 3.2, GE_RED]] };
+const KISS: Livery = { body: WHITE, roof: [150, 153, 158], bands: [[0.75, 1.5, GLASS], [1.95, 2.45, GE_RED], [2.75, 3.5, GLASS]] };
+const E4E10: Livery = { body: [126, 40, 50], roof: [132, 128, 128], bands: [[0.3, 1.4, [118, 122, 134]], [2.4, 3.1, GLASS]] };
+const GR_COACH: Livery = { body: WHITE, roof: [168, 170, 174], bands: [[0.5, 1.1, GE_RED], [1.55, 2.4, GLASS]] };
+const FUNICULAR: Livery = { body: GE_RED, roof: [60, 62, 68], bands: [[0.5, 2.7, BLACK]] };
+
+/** Tbilisi's stock: kind 0 metro, 6 funicular cars, mainline trains (801–804 to Batumi: KISS) */
+function tbilisiConsist(line: Line, add: (n: number, c: Omit<Car, "gap">, gap: number) => void) {
+  if (line.k === 0) add(4, { len: 19, wid: 2.7, hei: 3.65, liv: M81717 }, 0.6);
+  else if (line.k === 6) add(1, { len: 11, wid: 2.4, hei: 3.2, liv: FUNICULAR, tilt: true }, 0);
+  else if (/^80\d$/.test(line.ref)) add(4, { len: 25, wid: 2.9, hei: 4.6, liv: KISS }, 0.6);
+  else {
+    add(1, { len: 19, wid: 2.95, hei: 4.2, liv: E4E10 }, 1);
+    add(5, { len: 24.5, wid: 2.9, hei: 4, liv: GR_COACH }, 0.8);
+  }
+}
 
 /** Zagreb's stock: kind 4 street trams, 5 funicular cars, mainline trains in HŽPP colours */
 function zetConsist(line: Line, rand: () => number, add: (n: number, c: Omit<Car, "gap">, gap: number) => void) {
@@ -127,6 +147,7 @@ function consist(line: Line, rand: () => number, stock: Stock): Car[] {
   const add = (n: number, c: Omit<Car, "gap">, gap: number) => { for (let i = 0; i < n; i++) cars.push({ ...c, gap }); };
   if (stock === "zet") zetConsist(line, rand, add);
   else if (stock === "mpk") mpkConsist(line, rand, add);
+  else if (stock === "tbilisi") tbilisiConsist(line, add);
   else if (line.k === 0) { // DT 8: 2 cars per unit, single or double traction
     const units = rand() < 0.5 ? 2 : 1;
     for (let u = 0; u < units; u++) { add(2, { len: 19.2, wid: 2.65, hei: 3.4, liv: DT8 }, 0.5); cars.at(-1)!.gap = 1.2; }
@@ -158,6 +179,8 @@ const RUN: Array<{ v: number; a: number; dwell: number; turn: number; leg?: numb
   // Uspinjača: 66 m in ~55 s at 1.2 m/s, half a minute at the station, every 3 minutes (really every 10: the
   // map shows it more often)
   { v: 1.2, a: 0.2, dwell: 0, turn: 0, leg: 90 },
+  // Tbilisi funicular: 3 m/s along the incline (491 m for 425 m on the map), half a minute at the stations
+  { v: 2.6, a: 0.3, dwell: 0, turn: 0, leg: 200 },
 ];
 
 /** a stretch of one leg: from s0 to s1 (front of the train), starting at t0, running for `run` s, then waiting `wait` s */
@@ -219,8 +242,8 @@ export class Trains {
           leg.dur = tt - leg.t0;
         }
         cycle = n * headway;
-      } else if (stock && A.k < 4) {
-        // HŽPP, PKP: an exact headway too (see stagger), the slack spent at a turnaround off the map (over the faded
+      } else if ((stock && stock !== "tbilisi" && A.k < 4) || (stock === "tbilisi" && A.k >= 1 && A.k < 4)) {
+        // HŽPP, PKP, Georgian Railway: an exact headway too (see stagger), the slack spent at a turnaround off the map (over the faded
         // edge); a single train (a few a day) so waits out its interval there and passes rarely
         const hw = Math.round(A.interval * 60), off = legs.findIndex((leg) => this.hidden(leg, leg.hops.at(-1)!.s1, L));
         if (off >= 0) {

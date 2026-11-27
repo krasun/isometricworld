@@ -112,6 +112,16 @@ const FILMS: Record<string, Film> = {
     { at: [50.0471, 19.9467], scale: 0.6, hold: 1.4, note: "the Vistula: the Bernatek footbridge to Podgórze" },
     { at: [50.0585, 19.9365], scale: 0.12, hold: 2.4, out: 0, title: true, note: "the Old Town in its Planty ring, the Vistula (title)" },
   ] },
+  // the README clip (--city tbilisi --seconds 12): the old town under Narikala, the Mtkvari at Metekhi, Sameba, Rustaveli
+  // Avenue, the city. Poses are in art px of the search index (on the ground at each place's own height: the old
+  // town and Sameba's hill lie well off groundH)
+  tbilisi: { settle: true, moveZoomOut: 0.4, shots: [
+    { at: [2700, 450], px: true, scale: 0.7, hold: 1.4, note: "Abanotubani and the sulphur baths under Narikala fortress" },
+    { at: [2900, -500], px: true, scale: 0.6, hold: 1.2, note: "the Mtkvari at Metekhi: the bridge, Metekhi church on its cliff, Rike park" },
+    { at: [5002, -2722], px: true, scale: 0.8, hold: 1.3, note: "Sameba, the Holy Trinity Cathedral on Elia hill" },
+    { at: [-1750, -3735], px: true, scale: 0.75, hold: 1.2, note: "Rustaveli Avenue: the Opera and Ballet Theatre" },
+    { at: [900, -2500], px: true, scale: 0.08, hold: 2.4, out: 0, title: true, note: "the city along the Mtkvari, Mtatsminda above it (title)" },
+  ] },
   // before/after: the same path rendered from production and from the dev cache (--city stuttgart --film stuttgart-before-after)
   "stuttgart-before-after": { shots: [
     { at: [48.7792, 9.1812], scale: 0.62, hold: 5.0, note: "Schlossplatz: Neues Schloss, Königsbau, Kunstgebäude, Landtag, Staatstheater" },

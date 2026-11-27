@@ -235,7 +235,7 @@ function deckSvg(x0: number, y0: number) {
 }
 
 /** Run tile jobs a few at a time (AVIF encoding is the slow part; sharp works off the main thread). */
-const PARALLEL = 8;
+const PARALLEL = Number(process.env.EXPORT_JOBS) || 8; // fewer when memory is short
 async function pool(jobs: Array<() => Promise<void>>) {
   let next = 0;
   await Promise.all(Array.from({ length: PARALLEL }, async () => { while (next < jobs.length) await jobs[next++](); }));
@@ -543,20 +543,27 @@ function placeKind(t: Record<string, string>) {
  * The viewer's search index (places.ts effects.search; web search.ts): every named street (from the areas' roads,
  * at the point of its line nearest the middle of all its parts) and the named places of the region's OSM extract
  * (FILTERS.search: settlements, sights, public buildings, parks, stations…), on the real ground, inside the map.
+ * Where the region lists more name tags (places.ts `searchNames`: `name:en` in Tbilisi), a street or place is listed
+ * under each of them too, as entries of their own.
  * data/search: [name, kind (0 street, 1 settlement or district, 2 place), x, y (global art px), what it is].
  */
 async function exportSearch(areas: string[], heights: Heights, [bx0, by0, bx1, by1]: number[]) {
   const items: Array<[string, number, number, number, string]> = [];
   const inside = (x: number, y: number) => x > bx0 && x < bx1 && y > by0 && y < by1;
+  const also = REGIONS[activeRegion()].searchNames ?? [];
+  /** what a street or place is listed under: its `name`, then the region's other name tags where they differ */
+  const namesOf = (t?: Record<string, string>): string[] =>
+    t?.name ? [...new Set([t.name, ...also.map((k) => t[k])])].filter((n): n is string => !!n) : [];
   const streets = new Map<string, Array<[number, number]>>();
   for (const a of areas) {
     const f = join(RAW, a, "roads.json");
     if (!existsSync(f)) continue;
     for (const el of readJson(f).elements ?? []) {
-      const n = el.tags?.name;
-      if (!n || !el.geometry?.length) continue;
-      const pts = streets.get(n) ?? streets.set(n, []).get(n)!;
-      for (const g of el.geometry) pts.push([g.lat, g.lon]);
+      if (!el.geometry?.length) continue;
+      for (const n of namesOf(el.tags)) {
+        const pts = streets.get(n) ?? streets.set(n, []).get(n)!;
+        for (const g of el.geometry) pts.push([g.lat, g.lon]);
+      }
     }
   }
   for (const [name, pts] of streets) {
@@ -578,11 +585,14 @@ async function exportSearch(areas: string[], heights: Heights, [bx0, by0, bx1, b
       const g = el.type === "node" ? [{ lat: el.lat!, lon: el.lon! }] : el.geometry ?? (el.members ?? []).flatMap((m) => m.geometry ?? []);
       if (!g.length) continue;
       const lat = g.reduce((s, q) => s + q.lat, 0) / g.length, lon = g.reduce((s, q) => s + q.lon, 0) / g.length;
-      const { x, y } = await onGround(heights, lat, lon), name = el.tags.name, kind = el.tags.place ? 1 : 2;
-      const k = `${name}@${Math.round(x / 400)},${Math.round(y / 400)}`; // a node and the area it lies in: once
-      if (!inside(x, y) || seen.has(k)) continue;
-      seen.add(k);
-      items.push([name, kind, Math.round(x), Math.round(y), placeKind(el.tags)]);
+      const { x, y } = await onGround(heights, lat, lon), kind = el.tags.place ? 1 : 2;
+      if (!inside(x, y)) continue;
+      for (const name of namesOf(el.tags)) {
+        const k = `${name}@${Math.round(x / 400)},${Math.round(y / 400)}`; // a node and the area it lies in: once
+        if (seen.has(k)) continue;
+        seen.add(k);
+        items.push([name, kind, Math.round(x), Math.round(y), placeKind(el.tags)]);
+      }
     }
   }
   items.sort((a, b) => a[0].localeCompare(b[0], "pl") || a[1] - b[1]);
@@ -664,6 +674,8 @@ class Heights {
   private cache = new Map<string, Float32Array | null>();
   private lx = NaN; private ly = NaN; private lh: Float32Array | null | undefined;
   constructor(private dirs: string[]) {}
+  /** Forget the loaded tiles (~1 GB for a whole city); they load again when needed. */
+  clear() { this.cache.clear(); this.lx = NaN; this.lh = undefined; }
   async ensure(x: number, y: number, r = 32) {
     for (let ty = Math.floor((y - r) / CAMERA.tile); ty <= Math.floor((y + r) / CAMERA.tile); ty++)
       for (let tx = Math.floor((x - r) / CAMERA.tile); tx <= Math.floor((x + r) / CAMERA.tile); tx++) {
@@ -983,7 +995,8 @@ async function exportRoads(areas: string[], heights: Heights) {
  *   n, s, vis  tracks (each OSM way once): samples [e, n, u] in 0.1 m, delta-coded per track; visible runs.
  *              Tunnels are hidden, bridges run on the deck (bridges.ts).
  *   l          lines: k kind (0 Stadtbahn, 1 S-Bahn, 2 regional, 3 long distance, 4 street tram, 5 funicular car;
- *              4 and 5 only in regions with local stock, places.ts `rail`), r ref, c colour,
+ *              6 funicular car on one track with a passing loop; 4–6 only in regions with local stock, places.ts
+ *              `rail`), r ref, c colour,
  *              i interval (min), w tracks in running order (~index: run backwards), st stops (m along the
  *              run), b the line back (-1: back along the same run)
  */
@@ -1038,13 +1051,13 @@ async function exportTrains(areas: string[], heights: Heights) {
     if (refs.some((x) => /^(ICE|IC|EC|ECE|EN|NJ|TGV|RJX?|FLX)\b/.test(x)) || /long_distance|high_speed/.test(t.service ?? "")) return 3;
     return 2;
   };
-  const DEFAULT_INTERVAL = [10, 15, 30, 60, RAIL?.tramInterval ?? 10, 60];
+  const DEFAULT_INTERVAL = [10, 15, 30, 60, RAIL?.tramInterval ?? 10, 60, 60];
   const refOf = (t: Record<string, string>) => String(t.ref ?? "").split(";").at(-1)!.trim();
   const intervalOf = (t: Record<string, string>, k: number) => {
     const m = /^(?:(\d+):)?(\d+)/.exec(t.interval ?? "");
     const v = m ? (m[1] ? Number(m[1]) * 60 : 0) + Number(m[2]) : 0;
     if (v >= 3 && v <= 240) return v;
-    if (k === 4) return RAIL?.interval?.[refOf(t)] ?? DEFAULT_INTERVAL[k];
+    if (k === 4 || t.route === "subway") return RAIL?.interval?.[refOf(t)] ?? DEFAULT_INTERVAL[k];
     if (k < 4 && RAIL?.mainline) return new RegExp(RAIL.mainline.line).test(refOf(t)) ? RAIL.mainline.every : RAIL.mainline.single;
     return DEFAULT_INTERVAL[k];
   };
@@ -1077,10 +1090,32 @@ async function exportTrains(areas: string[], heights: Heights) {
   const terrainU = terrainSampler(areas), ends = bridgeEndsOf(areas);
   // funiculars have no route relation: each track is a line of its own, run bottom to top, the cars
   // counterweighted (the next track's car starts at the top: its run is reversed)
-  if (RAIL) [...ways.values()].filter((w) => w.tags?.railway === "funicular" && lenOf(w) > 20).forEach((w, i) => {
+  if (RAIL && RAIL.stock !== "tbilisi") [...ways.values()].filter((w) => w.tags?.railway === "funicular" && lenOf(w) > 20).forEach((w, i) => {
     const l = lineOf(w), up = (terrainU(...l.at(-1)!) ?? 0) >= (terrainU(...l[0]) ?? 0);
     chosen.push({ r: { tags: { route: "funicular", ref: w.tags.name ?? "" }, members: [] }, run: { ids: [w.id], fwd: [up === (i % 2 === 0)], len: lenOf(w) }, k: 5, back: -1 });
   });
+  // Tbilisi's is one track with a passing loop: two runs end to end, one over each side of the loop, the second from
+  // the top, so the two cars meet in it
+  if (RAIL?.stock === "tbilisi") {
+    const at = new Map<number, any[]>();
+    for (const w of ways.values()) if (w.tags?.railway === "funicular") for (const n of [w.nodes[0], w.nodes.at(-1)]) at.set(n, [...(at.get(n) ?? []), w]);
+    const h = (n: number) => { const w = at.get(n)![0], l = lineOf(w); return terrainU(...(w.nodes[0] === n ? l[0] : l.at(-1)!)) ?? 0; };
+    const [from, to] = [...at.keys()].filter((n) => at.get(n)!.length === 1).sort((a, b) => h(a) - h(b));
+    const paths: Run[] = [];
+    const walk = (n: number, run: Run, seen: number[]) => {
+      if (n === to) { paths.push(run); return; }
+      for (const w of at.get(n)!) {
+        const fwd = w.nodes[0] === n, next = fwd ? w.nodes.at(-1) : w.nodes[0];
+        if (!seen.includes(next)) walk(next, { ids: [...run.ids, w.id], fwd: [...run.fwd, fwd], len: run.len + lenOf(w) }, [...seen, next]);
+      }
+    };
+    if (from !== undefined && to !== undefined) walk(from, { ids: [], fwd: [], len: 0 }, [from]);
+    if (paths.length === 2) paths.forEach((run, i) => chosen.push({
+      r: { tags: { route: "funicular", ref: ways.get(run.ids[0]).tags.name ?? "" }, members: [] }, k: 6, back: -1,
+      run: i ? { ids: [...run.ids].reverse(), fwd: run.fwd.map((f) => !f).reverse(), len: run.len } : run,
+    }));
+    else console.warn(`  funicular: expected two ways up around the passing loop, found ${paths.length}`);
+  }
 
   // sample every track a chosen line runs on, once
   const index = new Map<number, number>(), tracks: number[][] = [];
@@ -1158,8 +1193,8 @@ async function exportTrains(areas: string[], heights: Heights) {
     out.vis.push(runs.length, ...runs);
   }
   writeData("trains", JSON.stringify(out));
-  const kinds = [0, 1, 2, 3, 4, 5].map((k) => lines.filter((l) => l.k === k).length);
-  const local = RAIL ? `, ${kinds[4]} tram, ${kinds[5]} funicular` : "";
+  const kinds = [0, 1, 2, 3, 4, 5, 6].map((k) => lines.filter((l) => l.k === k).length);
+  const local = RAIL ? `, ${kinds[4]} tram, ${kinds[5] + kinds[6]} funicular` : "";
   console.log(`  trains: ${lines.length} lines (${kinds[0]} Stadtbahn, ${kinds[1]} S-Bahn, ${kinds[2]} regional, ${kinds[3]} long distance${local}) on ${tracks.length} tracks, ${total} samples, ${((hidden / Math.max(1, total)) * 100).toFixed(1)}% hidden`);
 }
 
@@ -1419,6 +1454,7 @@ async function main() {
   await exportRoads(areas, heights); // first: the bridge decks are drawn into the painted tiles
   await exportTrains(areas, heights);
   await exportCranes(areas, heights);
+  heights.clear(); // encoding the tiles doesn't need them
   if (!process.argv.includes("--data-only")) {
     await exportLayer("map", new Map([...mapOnly, ...photo, ...art, ...cut])); // painted wins; cutouts win over both: cutout.ts lays them on the painted tile where there is one
     await exportLayer("photo", photo);

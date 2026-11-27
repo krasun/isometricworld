@@ -6,7 +6,9 @@
  */
 import * as stuttgart from "./landmarks/stuttgart.ts";
 import { graduationTower } from "./landmarks/structures.ts";
+import * as tbilisi from "./landmarks/tbilisi.ts";
 import * as wieliczka from "./landmarks/wieliczka.ts";
+import * as zagreb from "./landmarks/zagreb.ts";
 import { CLAD, lathe, type P2, type Piece } from "./landmarks/shapes.ts";
 
 export { lathe, type Piece };
@@ -108,8 +110,8 @@ export type Placed = {
 export const PLACED: Placed[] = [...wieliczka.PLACED];
 
 // Zagreb (landmarks/zagreb.ts): looks set directly, rebuilt LoD2 landmarks, the market umbrellas
-import * as zagreb from "./landmarks/zagreb.ts";
 import type { RebuildCtx } from "./landmarks/zagreb.ts";
-export { PAINT, UMBRELLAS, umbrellas, type MeshRef, type RebuildCtx } from "./landmarks/zagreb.ts";
+export const PAINT: Record<string, { wall?: number[]; roof?: number[]; style?: number }> = { ...zagreb.PAINT, ...tbilisi.PAINT };
+export { UMBRELLAS, umbrellas, type MeshRef, type RebuildCtx } from "./landmarks/zagreb.ts";
 /** Landmarks rebuilt in part from their LoD2 meshes and OSM building:parts, keyed by OSM wikidata (names repeat). */
 export const REBUILDS: Record<string, (ctx: RebuildCtx) => Piece[]> = { ...zagreb.REBUILDS, ...stuttgart.REBUILDS };
