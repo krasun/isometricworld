@@ -140,7 +140,7 @@ export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
   stuttgart: STUTTGART,
   /** Zagreb: Stuttgart's look as it was before parked cars and big roofs (the input its painter repaints). */
-  zagreb: { ...STUTTGART, eaves: null, sawtoothRoofs: 0, parkedCars: false, bigRoofs: false, insetWindows: false, wholeWindows: false, constructionSites: false, pitchMarkings: false, bridgeAbutments: false },
+  zagreb: { ...STUTTGART, eaves: null, sawtoothRoofs: 0, parkedCars: false, bigRoofs: false, insetWindows: false, wholeWindows: false, constructionSites: false, pitchMarkings: false, bridgeAbutments: false, creaseInk: 0, eavesShadow: false, flatRoofDetail: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -175,7 +175,7 @@ export const STYLES = {
     closedLines: true,
     roofDetail: true,
     bigRoofs: false,
-    flatRoofDetail: true,
+    flatRoofDetail: false,
     insetWindows: false,
     wholeWindows: false,
     constructionSites: false,
@@ -183,8 +183,8 @@ export const STYLES = {
     repaint: false,
     // crisper: lines from smaller creases and darker, deeper corners
     ink: { strength: 0.9, from: 0.2, to: 0.75, ao: 0.55 },
-    creaseInk: 0.55,
-    eavesShadow: true,
+    creaseInk: 0,
+    eavesShadow: false,
     sawtoothRoofs: 0,
   },
 } satisfies Record<string, StylePreset>;
