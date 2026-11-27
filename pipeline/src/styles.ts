@@ -54,6 +54,9 @@ export interface StylePreset {
   /** Bridges built out (ground.ts, page/renderer.ts): decks carried on to where the embankment tops out (an OSM
    *  bridge often ends over the gap under it). */
   bridgeDetail: boolean;
+  /** Only the abutments of bridgeDetail (ground.ts): decks carried on to where the embankment tops out, so the road
+   *  meets its deck instead of sagging into the dip under the bridge end; parapets stay as they are. */
+  bridgeAbutments: boolean;
   /** High-voltage power lines from OSM (fetch.ts osm-power.json, power.ts): lattice pylons and sagging conductors. */
   powerLines: boolean;
   /** Playground equipment (fetch.ts osm-play.json, playgrounds.ts): what OSM maps, on public playgrounds without
@@ -81,6 +84,27 @@ export interface StylePreset {
    *  (sheet metal) ones with standing seams down the slope, brick chimneys on homes' pitched roofs; false: plain tile
    *  courses, no chimneys. */
   roofDetail: boolean;
+  /** Big flat roofs read as what they are: no random green roof on footprints over 1,500 m², and big, low industrial
+   *  buildings are halls (style 4: shed walls, skylight strips) instead of offices; big roofs carry one or two large
+   *  air-handling units, or (flatRoofDetail) a few small units scattered over them (page/renderer.ts). */
+  bigRoofs: boolean;
+  /** Flat roofs as AI repaints draw them: membrane sheets along the building's axis, fine grain, green roofs a fine
+   *  olive mottle; big roofs carry a few small scattered units instead of big plant (page/renderer.ts). */
+  flatRoofDetail: boolean;
+  /** Windows set into the wall (learned from an AI repaint): a shadow band inside the top of the frame, the glass
+   *  lighter toward the sill (page/renderer.ts, the punched-window styles). */
+  insetWindows: boolean;
+  /** Only whole windows: none cut by a gable's slope or by a lower roof in front of the wall (the wall's clean band,
+   *  wallFacts in page/renderer.ts). */
+  wholeWindows: boolean;
+  /** Construction sites (OSM landuse=construction) as sites (page/sites.ts plans them): earth pads, haul roads with
+   *  ruts and a fence line, the hillshade damped over the earthworks; machines at work spots, container compounds,
+   *  material yards and slabs being poured from AI sprite sheets (construction-sprites*.png), tower cranes beside the
+   *  slabs (page/renderer.ts). Brownfields and the rest of "dirt" keep the plain fill. */
+  constructionSites: boolean;
+  /** Football pitches (OSM leisure=pitch, sport=soccer) marked out (page/ground.ts): touchlines, halfway line, centre
+   *  circle, penalty and goal areas, spots, arcs and goals, scaled to the pitch, over mowing stripes. */
+  pitchMarkings: boolean;
   /** Lessons from AI repaints of the render (Stuttgart): the ground in the painted house style (green gardens and
    *  parks, one dark asphalt with an ink kerb line, kerb shadows, bold markings, rounded inside corners; ponds with a
    *  shore path; runways with markings and lights, mown grass strips; tracks on shared gravel beds with bold rails,
@@ -90,6 +114,15 @@ export interface StylePreset {
   /** The post pass's ink: outlines darken a pixel by up to `strength` where the depth creases by `from` m (none) to `to`
    *  m (full) over 2 px; ambient occlusion darkens a fully occluded corner by `ao`. */
   ink: { strength: number; from: number; to: number; ao: number };
+  /** Ink also where the surface turns (ridges, hips, roof meets wall, wall meets ground), not only at depth steps:
+   *  up to this strength, as AI repaints line every edge of a house. 0: depth steps only. */
+  creaseInk: number;
+  /** A soft shadow on the wall under the roof's edge (eaves and gable verges) of pitched roofs. */
+  eavesShadow: boolean;
+  /** Industrial halls (facade style 4) whose flat roof is at least this big (m²) get sawtooth roofs: rows of sheds
+   *  along the building axis closer to east-west, north-light glazing on their steep side (most big halls are built
+   *  so; neither LoD2 nor OSM records it). 0: off. */
+  sawtoothRoofs: number;
 }
 
 /** Polish town plaster: mostly white, ecru and beige, some sand, pale yellow, salmon and grey, a little old pale green. */
@@ -100,9 +133,14 @@ const PL_HOMES = [
   [0.66, 0.67, 0.69],
 ];
 
+/** Stuttgart (the first styled region): contact shadows only. */
+const STUTTGART: StylePreset = { castShadow: null, walls: null, monumental: [], eaves: { overhang: 0.4, verge: 0.25, gutters: false }, creaseInk: 0.55, eavesShadow: true, sawtoothRoofs: 10000, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, bridgeAbutments: true, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: true, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, bigRoofs: true, flatRoofDetail: true, insetWindows: true, wholeWindows: true, constructionSites: true, pitchMarkings: true, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } };
+
 export const STYLES = {
   /** Stuttgart (the first styled region): contact shadows only. */
-  stuttgart: { castShadow: null, walls: null, monumental: [], eaves: null, trunks: false, streetDetail: false, lawns: false, richTrees: false, bushes: false, bridgeDetail: false, powerLines: false, playgrounds: false, waterDetail: false, parkedCars: false, barriers: false, streetLamps: false, roofsOnPosts: false, streetFurniture: false, closedLines: true, roofDetail: false, repaint: true, ink: { strength: 0.75, from: 0.35, to: 1.2, ao: 0.38 } },
+  stuttgart: STUTTGART,
+  /** Zagreb: Stuttgart's look as it was before parked cars and big roofs (the input its painter repaints). */
+  zagreb: { ...STUTTGART, eaves: null, sawtoothRoofs: 0, parkedCars: false, bigRoofs: false, insetWindows: false, wholeWindows: false, constructionSites: false, pitchMarkings: false, bridgeAbutments: false, creaseInk: 0, eavesShadow: false, flatRoofDetail: false },
   /** Polish towns (Wieliczka): cool, soft cast shadows, the shade side of a sunny day. */
   poland: {
     castShadow: [0.60, 0.64, 0.80],
@@ -125,6 +163,7 @@ export const STYLES = {
     richTrees: true,
     bushes: true,
     bridgeDetail: true,
+    bridgeAbutments: true,
     powerLines: true,
     playgrounds: true,
     waterDetail: true,
@@ -135,9 +174,18 @@ export const STYLES = {
     streetFurniture: true,
     closedLines: true,
     roofDetail: true,
+    bigRoofs: false,
+    flatRoofDetail: false,
+    insetWindows: false,
+    wholeWindows: false,
+    constructionSites: false,
+    pitchMarkings: false,
     repaint: false,
     // crisper: lines from smaller creases and darker, deeper corners
     ink: { strength: 0.9, from: 0.2, to: 0.75, ao: 0.55 },
+    creaseInk: 0,
+    eavesShadow: false,
+    sawtoothRoofs: 0,
   },
 } satisfies Record<string, StylePreset>;
 

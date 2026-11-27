@@ -108,4 +108,8 @@ export type Placed = {
 export const PLACED: Placed[] = [...wieliczka.PLACED];
 
 // Zagreb (landmarks/zagreb.ts): looks set directly, rebuilt LoD2 landmarks, the market umbrellas
-export { PAINT, REBUILDS, UMBRELLAS, umbrellas, type MeshRef, type RebuildCtx } from "./landmarks/zagreb.ts";
+import * as zagreb from "./landmarks/zagreb.ts";
+import type { RebuildCtx } from "./landmarks/zagreb.ts";
+export { PAINT, UMBRELLAS, umbrellas, type MeshRef, type RebuildCtx } from "./landmarks/zagreb.ts";
+/** Landmarks rebuilt in part from their LoD2 meshes and OSM building:parts, keyed by OSM wikidata (names repeat). */
+export const REBUILDS: Record<string, (ctx: RebuildCtx) => Piece[]> = { ...zagreb.REBUILDS, ...stuttgart.REBUILDS };

@@ -1,0 +1,3 @@
+This is a map around the Bärenschlössle near Stuttgart: a small pale historic pavilion standing on a light sand-coloured gravel square above a forest lake.
+- KEEP, pixel for pixel exactly as they are: the pavilion with all its walls and roof down to its foot, and the gravel square around it with its paths, low walls, benches and the trees standing on it.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the lake, the shore, the meadows, the forest and its trees, the other paths and every other building.

@@ -22,6 +22,7 @@
  *   data/borders.<hash>.json           OSM city borders in art-pixel space, on real terrain
  *   data/roads.<hash>.json             drivable roads for traffic (columnar, delta-coded: encodeRoads)
  *   data/trains.<hash>.json            rail lines and their tracks for the trains (exportTrains)
+ *   data/cranes.<hash>.json            the construction sites' tower cranes, turned live by the map (exportCranes)
  *   data/airport.<hash>.json           the airport's taxi network and stands (airport.ts)
  *   preview/<city>-<land|port>.<hash>.avif  the city's opening view, shown until the tiles are in
  * Content-hashed names never change, so browsers keep them for a year; world.json says which are current.
@@ -40,7 +41,7 @@ import { join, relative } from "node:path";
 import sharp from "sharp";
 import { AREAS, groundH, areaPolygon, insideDistance, openArea } from "./areas.ts";
 import { outlineEdgeDistance, outlinePixels } from "./outline.ts";
-import { CAMERA, activeRegion, axes, camera, ecefToEnu, enuHeight, enuToPixel, llhToEcef, llhToPixel } from "./camera.ts";
+import { CAMERA, activeRegion, axes, camera, ecefToEnu, enuHeight, enuToLlh, enuToPixel, llhToEcef, llhToPixel } from "./camera.ts";
 import { HOSTING } from "./hosting.ts";
 import { DERIVED, RAW, WEB_CACHE, WEB_STATE, readJson } from "./paths.ts";
 import { CITIES, REGIONS } from "./places.ts";
@@ -49,6 +50,8 @@ import { FILTERS, localOsm } from "./osmlocal.ts";
 import { airportNetwork } from "./airport.ts";
 import { deckHeight, isBridge } from "./bridges.ts";
 import { fetchPublishedState, stateHash } from "./webstate.ts";
+import { setSiteBlockers, sitePlan } from "../page/sites.ts";
+import { styleOf } from "./styles.ts";
 
 const TS = 512;                  // web tile size
 const SPLIT = CAMERA.tile / TS;  // web tiles per art tile edge
@@ -716,6 +719,62 @@ async function exportAirport(heights: Heights) {
   console.log(`  airport: ${net.n.length / 3} nodes, ${net.w.length} ways, ${net.s.length} stands`);
 }
 
+/**
+ * The tower cranes of the construction sites (page/sites.ts plans them; preset constructionSites), for the live
+ * layer (web cranes.ts): the tiles draw only the mast and ballast, the slewing top turns on the map. Each crane
+ * comes from the area its tile comes from (the deepest inside, as the tiles), so its mast and its top agree.
+ *   [e, n, u, a, h, jib, counter] per crane: base (ENU, m, on the rendered ground), heading of the jib at rest
+ *   (rad), mast height, jib and counter-jib length (m); rounded to 0.1
+ */
+async function exportCranes(areas: string[], heights: Heights) {
+  const R = REGIONS[activeRegion()];
+  if (R.look !== "styled" || !styleOf(R.style).constructionSites) return;
+  const missing = areas.filter((a) => !existsSync(join(DERIVED, a, "ground", "features.json")));
+  if (missing.length) { if (!PARTIAL) console.log(`  cranes: no ground/features.json for ${missing.join(", ")}`); if (PARTIAL) return; }
+  const out: number[][] = [];
+  // no crane on painted ground (paint/ tiles, landmark cutouts): where the tile the map shows differs from the render
+  // round the crane's foot, the site under it is a painting
+  const tiles = new Map<string, Promise<Buffer | null>>(), raw = (f: string) => {
+    if (!tiles.has(f)) tiles.set(f, existsSync(f) ? sharp(f).removeAlpha().raw().toBuffer() : Promise.resolve(null));
+    return tiles.get(f)!;
+  };
+  const onPainting = async (x: number, y: number) => {
+    const T = CAMERA.tile, tx = Math.floor(x / T), ty = Math.floor(y / T), lx = Math.floor(x - tx * T), ly = Math.floor(y - ty * T);
+    for (const b of areas) for (const layer of ["cutout", "paint"]) {
+      const shown = await raw(join(DERIVED, b, layer, `${tx}_${ty}.png`)), render = shown && await raw(join(DERIVED, b, "render", `${tx}_${ty}.png`));
+      if (!shown || !render) continue;
+      let d = 0, n = 0;
+      for (let v = Math.max(0, ly - 4); v <= Math.min(T - 1, ly + 4); v++) for (let u = Math.max(0, lx - 4); u <= Math.min(T - 1, lx + 4); u++)
+        for (let c = 0; c < 3; c++) { const k = (v * T + u) * 3 + c; d += Math.abs(shown[k] - render[k]); n++; }
+      if (d / n > 12) return true;
+    }
+    return false;
+  };
+  let painted = 0, off = 0;
+  for (const a of areas) {
+    const f = join(DERIVED, a, "ground", "features.json");
+    if (!existsSync(f)) continue;
+    const features = readJson(f);
+    setSiteBlockers(features);
+    for (const site of features.filter((x: { k: string }) => x.k === "construction"))
+      for (const c of sitePlan(site).cranes) {
+        const [lat, lon] = enuToLlh([c.x, c.y, 0]), g = await onGround(heights, lat, lon);
+        const tx = Math.floor(g.x / CAMERA.tile), ty = Math.floor(g.y / CAMERA.tile), at: [number, number] = [(tx + 0.5) * CAMERA.tile, (ty + 0.5) * CAMERA.tile];
+        const mine = insideDistance(at, outlines[areas.indexOf(a)]);
+        if (areas.some((b, i) => b !== a && existsSync(join(DERIVED, b, "render", `${tx}_${ty}.png`)) && insideDistance(at, outlines[i]) > mine)) continue;
+        // the area's features reach past the map: no crane where no tile is rendered (outside the region's outline)
+        // or where the edge has faded the map more than half away
+        if (!existsSync(join(DERIVED, a, "render", `${tx}_${ty}.png`)) || edgeDistance(g.x, g.y) < (EDGE0 + EDGE1) / 2) { off++; continue; }
+        if (await onPainting(g.x, g.y)) { painted++; continue; }
+        const [e, n, u] = ecefToEnu(llhToEcef(lat, lon, g.h));
+        out.push([e, n, u, c.a, c.h, c.jib, c.counter].map((v) => Math.round(v * 10) / 10));
+      }
+  }
+  writeData("cranes", JSON.stringify(out));
+  const left = [painted && `${painted} on painted ground`, off && `${off} off the map`].filter(Boolean);
+  console.log(`  cranes: ${out.length}${left.length ? ` (left out: ${left.join(", ")})` : ""}`);
+}
+
 async function exportBorders(heights: Heights) {
   const raw = readJson(join(RAW, "boundaries", `${activeRegion()}.json`));
   const feats = [];
@@ -806,15 +865,16 @@ const latLonEnu = (lat: number, lon: number): [number, number] => { const e = ec
 
 /**
  * Painted-over ground (cutout.ts `key` masks, e.g. the Wasen fairground): the OSM service roads under it are gone in
- * the painting, so traffic must not drive there. Returns a test: is this map pixel inside any key mask?
+ * the painting, so traffic must not drive there. Returns a test: is this map pixel inside any key mask? `only` picks
+ * the keys (trains: those with `hideTrains`, a station roof painted over its tracks).
  */
-async function keyMasks(areas: string[]) {
+async function keyMasks(areas: string[], only: (key: any) => boolean = () => true) {
   const masks: Array<{ x: number; y: number; sx: number; sy: number; mw: number; mh: number; a: Buffer }> = [];
   for (const area of areas) {
     const f = join(DERIVED, area, "cutouts.json");
     if (!existsSync(f)) continue;
     for (const c of readJson(f)) {
-      if (!c.key) continue;
+      if (!c.key || !only(c.key)) continue;
       const [x, y, w, h] = c.key.frame, { data, info } = await sharp(join(DERIVED, area, c.key.mask)).extractChannel(0).raw().toBuffer({ resolveWithObject: true });
       masks.push({ x, y, sx: info.width / w, sy: info.height / h, mw: info.width, mh: info.height, a: data });
     }
@@ -1025,6 +1085,7 @@ async function exportTrains(areas: string[], heights: Heights) {
   // sample every track a chosen line runs on, once
   const index = new Map<number, number>(), tracks: number[][] = [];
   let hidden = 0, total = 0;
+  const roofed = await keyMasks(areas, (k) => k.hideTrains); // painted station roofs: trains run under them
   for (const c of chosen) for (const id of c.run.ids) {
     if (index.has(id)) continue;
     const w = ways.get(id), t = w.tags ?? {}, line = lineOf(w);
@@ -1039,7 +1100,7 @@ async function exportTrains(areas: string[], heights: Heights) {
         const [e0, n0] = latLonEnu(lat, lon), ground = terrainU(e0, n0);
         const ud = deck ? deck.at(cum + d * f, e0, n0) : ground;
         const p = await placePoint(heights, lat, lon, ud !== null && Number.isFinite(ud) ? ud : null);
-        const vis = tunnel || edgeDistance(p.x, p.y) < (EDGE0 + EDGE1) / 2 ? 0 : p.vis;
+        const vis = tunnel || edgeDistance(p.x, p.y) < (EDGE0 + EDGE1) / 2 || roofed(p.x, p.y) ? 0 : p.vis;
         total++; hidden += 1 - vis;
         samples.push(Math.round(p.e[0] * 10) / 10, Math.round(p.e[1] * 10) / 10, Math.round(p.e[2] * 10) / 10, vis);
       }
@@ -1357,6 +1418,7 @@ async function main() {
   const heights = new Heights(areas.map((a) => join(DERIVED, a, "height")));
   await exportRoads(areas, heights); // first: the bridge decks are drawn into the painted tiles
   await exportTrains(areas, heights);
+  await exportCranes(areas, heights);
   if (!process.argv.includes("--data-only")) {
     await exportLayer("map", new Map([...mapOnly, ...photo, ...art, ...cut])); // painted wins; cutouts win over both: cutout.ts lays them on the painted tile where there is one
     await exportLayer("photo", photo);
@@ -1384,7 +1446,7 @@ async function main() {
     airport: REGIONS[activeRegion()].airport ?? null, areas: areas.map((a) => ({ id: a, title: AREAS[a]?.title })),
     layers: { photo: photo.size, art: art.size }, attributions: [...attributions],
     format: FORMAT,
-    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), airport: dataFile("airport"), ...(mineLevels.length || (PARTIAL && dataFile("mine")) ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}), ...(effects.search ? { search: dataFile("search") } : {}) },
+    files: { "tiles-map": dataFile("tiles-map"), "tiles-photo": dataFile("tiles-photo"), "tiles-fg": dataFile("tiles-fg"), borders: dataFile("borders"), roads: dataFile("roads"), trains: dataFile("trains"), cranes: dataFile("cranes"), airport: dataFile("airport"), ...(mineLevels.length || (PARTIAL && dataFile("mine")) ? { mine: dataFile("mine") } : {}), ...(REGIONS[activeRegion()].effects?.fly ? { "tiles-height": dataFile("tiles-height") } : {}), ...(effects.search ? { search: dataFile("search") } : {}) },
     previews,
   }, null, 2);
   if (state.data["world.json"] !== hash(world)) {

@@ -1,0 +1,10 @@
+ref: style/textures/prompts/ref-camera.png
+
+A seamless top-down texture of a large flat COMMERCIAL ROOF sealed with a light grey PVC / bitumen MEMBRANE, 1024x1024 px covering 32 x 32 m (3.2 cm per pixel).
+What it shows: membrane sheets about 2 m wide laid in long parallel strips, each welded seam a thin slightly darker line with a faint highlight; the sheets in very slightly different light greys (some a touch warmer, some a touch cooler) so the strips read; a few square patches where the membrane was repaired; two or three small round roof drains; very faint water marks around the drains. Calm overall: most of it is plain membrane.
+Rules for this texture:
+- Seen STRAIGHT FROM ABOVE (orthographic, top-down, no perspective, no horizon, no tilt), lit evenly by soft daylight with no cast shadows of its own beyond tiny contact shading.
+- It must TILE SEAMLESSLY: what leaves the right edge continues at the left edge, top continues at bottom. No border, no vignette, no frame, no text, no logos.
+- Style: the clean, slightly simplified illustrated look of the attached map render (ref1.png): flat clear colours, crisp but not noisy detail, readable when shrunk to a quarter of its size. No photographic noise or grain, no dark grunge.
+- Keep the overall brightness EVEN across the whole image (no large light or dark patches that would show as a repeating pattern when tiled).
+- Output exactly 1024x1024.

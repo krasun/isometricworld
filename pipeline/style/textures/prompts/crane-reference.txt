@@ -1,0 +1,14 @@
+ref: style/textures/prompts/ref-camera.png
+ref: style/reference.png
+
+A REFERENCE SHEET of one typical European construction TOWER CRANE (a top-slewing hammerhead crane, no brand, no logos, no lettering), to build a simple 3D model from. Yellow lattice mast and jib, white or yellow counter-jib with grey concrete counterweight blocks, a small operator cab under the slewing unit, a trolley with the hook block hanging from the jib.
+Proportions: mast 1.6 x 1.6 m in section and 45 m tall from its concrete foundation to the slewing ring; jib 50 m long; counter-jib 15 m with the counterweights at its end; a short A-frame tower head with tie bars to jib and counter-jib (or a flat-top without one: pick one and keep it consistent).
+
+Show the SAME crane four times, side by side on a plain white background, all at the SAME scale, aligned on a common ground line:
+1. side elevation (jib pointing right), orthographic
+2. front elevation (looking along the jib), orthographic
+3. top view (plan), orthographic
+4. the crane as it appears on the map: the camera of ref1.png (orthographic, tilted 45° down), in the illustrated style of ref1.png and ref2.png (flat-shaded, thin dark outlines), jib turned towards the lower right
+
+Views 1–3 are clean technical line-and-colour drawings: every lattice member visible, flat colours, thin dark outlines, no shading. No text, no labels, no dimension lines, no numbers.
+Output: one 2048x1024 image.

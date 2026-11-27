@@ -49,6 +49,8 @@ for (const e of data.elements) {
   if (!nearest.has(k) || dist(e) < dist(nearest.get(k))) nearest.set(k, e);
 }
 data.elements = [...nearest.values()];
+// an empty answer (Overpass after a 502 retry) would wipe every border: keep the file there is
+if (!data.elements.length) throw new Error(`${id}: no boundaries found, ${id}.json left as it was`);
 mkdirSync(join(RAW, "boundaries"), { recursive: true });
 writeFileSync(join(RAW, "boundaries", `${id}.json`), JSON.stringify(data));
 console.log("  boundaries:", data.elements.map((e: any) => e.tags["name:en"] ?? e.tags.name).join(", "));

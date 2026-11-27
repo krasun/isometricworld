@@ -112,3 +112,23 @@ export function panel(p: Piece, line: P2[], z0: number, z1: number, closed = tru
     s += L;
   }
 }
+
+/** drop the LoD2 triangles whose centre lies in `inside` (e.g. a surveyed spire to be rebuilt) */
+export function cut(m: { roof: number[]; wall: number[] }, inside: (x: number, y: number) => boolean) {
+  const keep = (a: number[], stride: number) => {
+    const out: number[] = [];
+    for (let i = 0; i + 3 * stride - 1 < a.length; i += 3 * stride) {
+      const x = (a[i] + a[i + stride] + a[i + 2 * stride]) / 3, y = (a[i + 1] + a[i + stride + 1] + a[i + 2 * stride + 1]) / 3;
+      if (!inside(x, y)) for (let k = 0; k < 3 * stride; k++) out.push(a[i + k]);
+    }
+    return out;
+  };
+  m.roof.splice(0, m.roof.length, ...keep(m.roof, 3));
+  m.wall.splice(0, m.wall.length, ...keep(m.wall, 5));
+}
+
+/** flat triangle in a vertical plane, both sides (gables in front of a wall) */
+export function tri2(p: Piece, a: number[], b: number[], c: number[], base: number) {
+  const s = (v: number[]) => [v[0], v[1], v[2], (v[0] + v[1]) * 0.7, v[2] - base]; // façade coordinates: any steady along-axis
+  p.wall.push(...s(a), ...s(b), ...s(c), ...s(a), ...s(c), ...s(b));
+}

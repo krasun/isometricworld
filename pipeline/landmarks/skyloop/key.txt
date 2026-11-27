@@ -1,0 +1,3 @@
+This is a map around SkyLoop at Stuttgart Airport: an office building shaped like a figure eight, two linked loops with green roof gardens and white-banded glass walls, each round a courtyard.
+- KEEP, pixel for pixel exactly as they are: the SkyLoop building, all its walls and roofs down to their foot, and the two courtyards inside its loops with their lawn, paths and trees.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the roads, the roundabout, car parks, lawns and trees outside the building, cars, the construction site, the long car park building on the left, the motorway and every other building.

@@ -1,0 +1,3 @@
+This is a map around the Grabkapelle on the Württemberg near Stuttgart: a round domed neoclassical chapel with columned porticoes, on a small round terrace on a vineyard hilltop.
+- KEEP, pixel for pixel exactly as they are: the chapel with its dome, porticoes, steps and walls down to its foot, and the round terrace around it with its gravel path and low wall.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the vineyards, meadows, roads, paths outside the terrace, forest, all trees and every other building.

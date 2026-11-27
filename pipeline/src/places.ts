@@ -202,7 +202,7 @@ export const REGIONS: Record<string, Region> = {
     headingDeg: 257, // looks WSW from the Neckar side, where the Kessel opens; main grid (Königstraße, 212°) at 45°
     country: "Germany",
     municipalities: [
-      "Stuttgart", "Fellbach", "Kernen im Remstal", "Esslingen am Neckar", "Ostfildern", "Neuhausen auf den Fildern",
+      "Stuttgart", "Fellbach", "Kernen im Remstal", "Esslingen am Neckar", "Ostfildern", "Denkendorf", "Neuhausen auf den Fildern",
       "Filderstadt", "Leinfelden-Echterdingen", "Sindelfingen", "Leonberg", "Gerlingen", "Ditzingen",
       "Korntal-Münchingen", "Kornwestheim", "Remseck am Neckar", "Waiblingen", "Ludwigsburg", "Böblingen",
     ],
@@ -213,7 +213,7 @@ export const REGIONS: Record<string, Region> = {
     credits: [
       "Map data © OpenStreetMap contributors · Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (verändert)",
       "Buildings: LGL LoD2 · Terrain: LGL DGM1, Copernicus DEM © DLR, Airbus DS · Trees: LGL nDOM1",
-      "Luftbilder: Landeshauptstadt Stuttgart, Stadtmessungsamt, CC BY 4.0 (verändert) · Centre painted with AI",
+      "Luftbilder: Landeshauptstadt Stuttgart, Stadtmessungsamt, CC BY 4.0; LGL DOP20 (verändert) · Centre painted with AI",
       // reference photos of the painted landmarks (ATTRIBUTION.md): the CC BY authors are named
       "Landmarks painted after Wikimedia Commons photos by J. Herzog, A. Praefcke, F. König, Enslin et al. (CC BY; verändert)",
     ],
@@ -250,10 +250,11 @@ export const REGIONS: Record<string, Region> = {
     look: "styled",
     // Stuttgart (OSM relation 62375, Stadtkreis) and the towns around it (admin_level 8): Fellbach, Waiblingen,
     // Remseck am Neckar, Ludwigsburg, Kornwestheim, Korntal-Münchingen, Gerlingen, Ditzingen, Böblingen,
-    // Sindelfingen, Leonberg, Esslingen am Neckar, Ostfildern, Filderstadt, Leinfelden-Echterdingen;
+    // Sindelfingen, Leonberg, Esslingen am Neckar, Ostfildern, Denkendorf, Neuhausen auf den Fildern, Filderstadt,
+    // Leinfelden-Echterdingen;
     // plus a box over Stuttgart Airport (EDDS) and the Messe, which straddle the borders
     outline: {
-      relations: [62375, 401692, 401697, 405291, 405292, 405293, 405811, 405812, 405817, 722090, 722092, 722150, 2792882, 2793022, 2796535, 2796536],
+      relations: [62375, 401692, 401697, 405291, 405292, 405293, 405811, 405812, 405817, 722090, 722092, 722150, 2792882, 2793020, 2793022, 2796535, 2796536, 2796537],
       add: [[48.672, 9.17, 48.712, 9.262]],
     },
   },
@@ -298,6 +299,7 @@ export const REGIONS: Record<string, Region> = {
     geoidM: 46.06, // EGM2008 at Trg bana Jelačića (PROJ cs2cs EPSG:4326+3855 -> 4979: 46.057 m)
     groundH: 166, // Lower Town ~120 m a.s.l. + geoid
     heightBase: 200, // Sava ~105 m a.s.l. (151 m ellipsoid) … foothills + towers below ~700 m a.s.l.: 100…755 m fits
+    style: "zagreb",
     sources: "zg3d",
     // the 17 city districts (OSM admin_level 9, see municipalities) plus a box over Zagreb Airport (Velika Gorica)
     outline: {

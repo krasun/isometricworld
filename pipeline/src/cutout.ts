@@ -38,9 +38,13 @@ type Tri = Array<[number, number, number]>;
 // grow: art px the lot outline is widened by, for paintings that spill over it (the Wasen's beer tents onto the promenade)
 // key: the mask comes from an AI cut-out instead of the lot: a white-on-black PNG (area-relative path) covering the
 // global art-px box `frame` (the overview painting's frame, any resolution), widened by `grow` px and softened over
-// `feather` px (Gaussian sigma) so the painting fades into the map
+// `feather` px (Gaussian sigma) so the painting fades into the map; `edge: "out"` (written by landmark.ts key) keeps the
+// landmark itself fully opaque and fades only outside it
 /** `art`: one painting covering exactly `frame` (an overview painted at native scale), used instead of windows */
-interface Key { mask: string; frame: [number, number, number, number]; grow?: number; feather?: number; art?: string }
+// `holes`: ground feature kinds (ground/features.json, e.g. "construction") cut out of the mask, so the render's own
+// ground shows through there (the Wilhelma's building site)
+// `hideTrains`: the painting roofs over tracks (the Hbf platforms): export hides trains under the mask
+interface Key { mask: string; frame: [number, number, number, number]; grow?: number; feather?: number; art?: string; holes?: string[]; edge?: "out"; hideTrains?: boolean }
 interface Cutout { name: string; at?: [number, number]; window?: [number, number]; windows?: Array<[number, number]>; lot?: number | string[]; grow?: number; key?: Key }
 /** the art px rectangle a cutout's mask covers: one window, or the bounding box of a block of windows */
 type Frame = { ox: number; oy: number; w: number; h: number };
@@ -302,8 +306,23 @@ async function keyMask(k: Key, fr: Frame) {
   let m = await sharp({ create: { width: fr.w + 2 * pad, height: fr.h + 2 * pad, channels: 3, background: "#000" }, limitInputPixels: false })
     .composite([{ input: scaled, left: kx - fr.ox + pad, top: ky - fr.oy + pad }]).png().toBuffer();
   m = await sharp(m, { limitInputPixels: false }).extract({ left: pad, top: pad, width: fr.w, height: fr.h }).extractChannel(0).png().toBuffer();
-  if (grow > 0) m = await sharp(m).blur(grow / 1.5).threshold(25).extractChannel(0).png().toBuffer(); // ≈ dilate by grow px
+  const dilate = (b: Buffer, px: number) => sharp(b).blur(px / 1.5).threshold(25).extractChannel(0).png().toBuffer(); // ≈ dilate by px
+  // edge "out": the keyed landmark (and its outline, 2 px) stays fully opaque, the fade lies only outside it, so the
+  // render's own building never shows through the landmark's edge
+  let hard = k.edge === "out" ? await dilate(m, 2) : null;
+  if (grow > 0) m = await dilate(m, grow);
+  if (k.holes?.length) {
+    const pt = (p: P2) => `${(p[0] - fr.ox).toFixed(1)},${(p[1] - fr.oy).toFixed(1)}`;
+    const polys = (readJson(join(base, "ground", "features.json")) as Array<{ k: string; r?: P2[][] }>)
+      .filter((f) => k.holes!.includes(f.k) && f.r?.length)
+      .map((f) => `<path fill-rule="evenodd" d="${f.r!.map((r) => `M${lotScreen(r).map(pt).join("L")}Z`).join("")}"/>`);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${fr.w}" height="${fr.h}"><rect width="100%" height="100%" fill="white"/><g fill="black">${polys.join("")}</g></svg>`;
+    const keep = await sharp(Buffer.from(svg), { limitInputPixels: false }).extractChannel(0).png().toBuffer();
+    m = await sharp(m).composite([{ input: keep, blend: "multiply" }]).extractChannel(0).png().toBuffer();
+    if (hard) hard = await sharp(hard).composite([{ input: keep, blend: "multiply" }]).extractChannel(0).png().toBuffer();
+  }
   if (feather > 0) m = await sharp(m).blur(feather).extractChannel(0).png().toBuffer();
+  if (hard) m = await sharp(m).composite([{ input: hard, blend: "lighten" }]).extractChannel(0).png().toBuffer();
   const a = await sharp(m).extractChannel(0).raw().toBuffer();
   if (a.length !== fr.w * fr.h) throw new Error("key mask: expected one channel");
   // window paintings are unreliable at their border; a whole-frame `art` image was checked as a whole
