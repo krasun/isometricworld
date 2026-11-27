@@ -66,6 +66,11 @@ export interface Region {
    */
   effects?: { fly?: boolean; clouds?: boolean; search?: boolean };
   /**
+   * More OSM name tags the search index lists a street or place under, each as an entry of its own beside `name`
+   * (export.ts exportSearch): `["name:en"]` where the local script is not Latin (Tbilisi).
+   */
+  searchNames?: string[];
+  /**
    * Life on the map (web/src/scripts). `vehicles: "detailed"`: cars drawn as body and cabin with windows and
    * lights (hatchbacks, saloons, SUVs, vans), buses with their window band, shadows cast like the render's
    * (traffic.ts). `coaches`: a tourist site's coach parks, each a row of parked coaches as measured on the
@@ -332,6 +337,7 @@ export const REGIONS: Record<string, Region> = {
     // metro: about every 5 min by day; OSM maps every mainline train as its own route (801, 6413…): single trains
     rail: { stock: "tbilisi", interval: { "1": 5, "2": 5 }, mainline: { line: "(?!)", every: 60, single: 240 } },
     effects: { fly: true, clouds: true, search: true },
+    searchNames: ["name:en"], // OSM names are in Georgian script: "რუსთაველის გამზირი" is found as "Rustaveli Avenue" too
     life: { vehicles: "detailed", foreground: true },
   },
   wieliczka: {

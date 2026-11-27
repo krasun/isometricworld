@@ -540,20 +540,27 @@ function placeKind(t: Record<string, string>) {
  * The viewer's search index (places.ts effects.search; web search.ts): every named street (from the areas' roads,
  * at the point of its line nearest the middle of all its parts) and the named places of the region's OSM extract
  * (FILTERS.search: settlements, sights, public buildings, parks, stations…), on the real ground, inside the map.
+ * Where the region lists more name tags (places.ts `searchNames`: `name:en` in Tbilisi), a street or place is listed
+ * under each of them too, as entries of their own.
  * data/search: [name, kind (0 street, 1 settlement or district, 2 place), x, y (global art px), what it is].
  */
 async function exportSearch(areas: string[], heights: Heights, [bx0, by0, bx1, by1]: number[]) {
   const items: Array<[string, number, number, number, string]> = [];
   const inside = (x: number, y: number) => x > bx0 && x < bx1 && y > by0 && y < by1;
+  const also = REGIONS[activeRegion()].searchNames ?? [];
+  /** what a street or place is listed under: its `name`, then the region's other name tags where they differ */
+  const namesOf = (t?: Record<string, string>): string[] =>
+    t?.name ? [...new Set([t.name, ...also.map((k) => t[k])])].filter((n): n is string => !!n) : [];
   const streets = new Map<string, Array<[number, number]>>();
   for (const a of areas) {
     const f = join(RAW, a, "roads.json");
     if (!existsSync(f)) continue;
     for (const el of readJson(f).elements ?? []) {
-      const n = el.tags?.name;
-      if (!n || !el.geometry?.length) continue;
-      const pts = streets.get(n) ?? streets.set(n, []).get(n)!;
-      for (const g of el.geometry) pts.push([g.lat, g.lon]);
+      if (!el.geometry?.length) continue;
+      for (const n of namesOf(el.tags)) {
+        const pts = streets.get(n) ?? streets.set(n, []).get(n)!;
+        for (const g of el.geometry) pts.push([g.lat, g.lon]);
+      }
     }
   }
   for (const [name, pts] of streets) {
@@ -575,11 +582,14 @@ async function exportSearch(areas: string[], heights: Heights, [bx0, by0, bx1, b
       const g = el.type === "node" ? [{ lat: el.lat!, lon: el.lon! }] : el.geometry ?? (el.members ?? []).flatMap((m) => m.geometry ?? []);
       if (!g.length) continue;
       const lat = g.reduce((s, q) => s + q.lat, 0) / g.length, lon = g.reduce((s, q) => s + q.lon, 0) / g.length;
-      const { x, y } = await onGround(heights, lat, lon), name = el.tags.name, kind = el.tags.place ? 1 : 2;
-      const k = `${name}@${Math.round(x / 400)},${Math.round(y / 400)}`; // a node and the area it lies in: once
-      if (!inside(x, y) || seen.has(k)) continue;
-      seen.add(k);
-      items.push([name, kind, Math.round(x), Math.round(y), placeKind(el.tags)]);
+      const { x, y } = await onGround(heights, lat, lon), kind = el.tags.place ? 1 : 2;
+      if (!inside(x, y)) continue;
+      for (const name of namesOf(el.tags)) {
+        const k = `${name}@${Math.round(x / 400)},${Math.round(y / 400)}`; // a node and the area it lies in: once
+        if (seen.has(k)) continue;
+        seen.add(k);
+        items.push([name, kind, Math.round(x), Math.round(y), placeKind(el.tags)]);
+      }
     }
   }
   items.sort((a, b) => a[0].localeCompare(b[0], "pl") || a[1] - b[1]);
