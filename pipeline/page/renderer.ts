@@ -7,7 +7,8 @@ import * as THREE from "three";
 import { CAMERA, axes, ecefToEnu, llhToEcef, tileCamera, useRegion } from "../src/camera.ts";
 import { REGIONS } from "../src/places.ts";
 import { styleOf } from "../src/styles.ts";
-import { drawGround, type Feature } from "./ground.ts";
+import { drawGround, enableSites, type Feature } from "./ground.ts";
+import { setSiteBlockers, sitePlan, type Crane } from "./sites.ts";
 import { richBushes, richTrees } from "./trees.ts";
 import { carried, deckHeight } from "../src/bridges.ts";
 import { MINE_CAP, drawMineCap, drawMineFloor, flatMaterial, mineObjects, mineVisible, preloadMine, type MineFeature } from "./mine.ts";
@@ -59,7 +60,17 @@ const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 10);
 
 // ---- terrain ---------------------------------------------------------------------------------
 const meta: { x0: number; y0: number; nx: number; ny: number; step: number } = await (await fetch("/ground/meta.json")).json();
-const terrain = new Float32Array(await (await fetch("/ground/height.bin")).arrayBuffer());
+// in 32 MB ranges: a fine grid (LGL 1.5 m) is over 100 MB, more than one response through render.ts's route can carry
+const terrain = await (async () => {
+  const n = meta.nx * meta.ny * 4, buf = new Uint8Array(n), CH = 32 << 20;
+  for (let a = 0; a < n; a += CH) {
+    const r = await fetch("/ground/height.bin", { headers: { Range: `bytes=${a}-${Math.min(n, a + CH) - 1}` } });
+    const part = new Uint8Array(await r.arrayBuffer());
+    if (r.status !== 206) { buf.set(part.subarray(0, n)); break; } // the server sent it whole
+    buf.set(part, a);
+  }
+  return new Float32Array(buf.buffer);
+})();
 const features: Feature[] = await (await fetch("/ground/features.json")).json();
 if (MINE) await preloadMine(features as unknown as MineFeature[]);
 const fbox = features.map((f) => {
@@ -91,20 +102,25 @@ const groundTexture = new THREE.CanvasTexture(document.createElement("canvas"));
 // styled: every material is a raw shader writing the canvas colours as they are (the post pass reads them back)
 groundTexture.colorSpace = STYLED ? THREE.NoColorSpace : THREE.SRGBColorSpace;
 groundTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+/** where the hillshade is damped (white): construction sites' spoil heaps (preset constructionSites), 1/4 the ground's resolution */
+const dampTexture = new THREE.CanvasTexture(document.createElement("canvas"));
+dampTexture.colorSpace = THREE.NoColorSpace;
+const NO_DAMP = new THREE.DataTexture(new Uint8Array(4), 1, 1); NO_DAMP.needsUpdate = true;
 /** Ground with hillshade: lit by the sun relative to flat ground, so slopes toward it brighten and away darken. */
 const hillshadeMaterial = new THREE.ShaderMaterial({
   vertexShader: /* glsl */ `
     varying vec2 vUv; varying vec3 vNormal;
     void main() { vUv = uv; vNormal = normal; gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */ `
-    uniform sampler2D map; uniform vec3 sun;
+    uniform sampler2D map, damp; uniform vec3 sun;
     varying vec2 vUv; varying vec3 vNormal;
     void main() {
       vec3 n = normalize(vNormal);
       float shade = clamp(1.0 + 1.0 * (dot(n, sun) - sun.z), 0.80, 1.15); // capped: ramps and stair pits in the DGM stay readable
+      shade = mix(shade, 1.0 + (shade - 1.0) * 0.3, texture2D(damp, vUv).r); // construction sites: spoil heaps, not blobs
       gl_FragColor = vec4(texture2D(map, vUv).rgb * shade, 1.0);
     }`,
-  uniforms: { map: { value: groundTexture }, sun: { value: SUN } },
+  uniforms: { map: { value: groundTexture }, damp: { value: NO_DAMP }, sun: { value: SUN } },
 });
 const groundMesh = new THREE.Mesh(new THREE.BufferGeometry(), MINE ? flatMaterial(groundTexture, false) : STYLED ? hillshadeMaterial : new THREE.MeshBasicMaterial({ map: groundTexture }));
 scene.add(groundMesh);
@@ -170,6 +186,7 @@ function buildGround(tx: number, ty: number, data?: TileObjects) {
   buildDecks(ctx, bridges, [x0, y0, x1, y1], w, h, visible.filter((f) => !f.b && f.l && (f.k === "rail" || ["highway", "street", "lane", "dirtroad"].includes(f.k))));
   if (STYLED) deckShadows(ctx, data);
   groundTexture.needsUpdate = true;
+  if (SITES) buildSites(visible.filter((f) => f.k === "construction"), [x0, y0, x1, y1], w, h);
   // terrain mesh: 5 m grid draped on the terrain, UVs into the canvas
   const step = Math.min(5, meta.step), nx = Math.ceil((x1 - x0) / step) + 1, ny = Math.ceil((y1 - y0) / step) + 1;
   const pos = new Float32Array(nx * ny * 3), uv = new Float32Array(nx * ny * 2), idx: number[] = [];
@@ -228,6 +245,7 @@ deckTexture.colorSpace = THREE.NoColorSpace;
 deckTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 const deckMaterial = hillshadeMaterial.clone();
 deckMaterial.uniforms.map = { value: deckTexture };
+deckMaterial.uniforms.damp = { value: NO_DAMP };
 deckMaterial.side = THREE.DoubleSide;
 /** deck edges: concrete, lit like the hillshade (sunlit side brighter) */
 const fasciaMaterial = new THREE.ShaderMaterial({
@@ -519,6 +537,7 @@ const buildingMaterial = new THREE.ShaderMaterial({
     uniform vec3 sun;
     uniform bool roofDetail; // preset roofDetail (styles.ts)
     uniform bool repaint; // preset repaint (styles.ts): windows learned from an AI facade sheet
+    uniform bool insetWindows; uniform bool eavesShadow; // preset insetWindows
     uniform sampler2D roofTex; uniform float useTex;
     varying vec3 vColor; varying vec3 vNormal; varying vec2 vFacade; varying float vKind; varying vec3 vPos; varying vec4 vFrame; varying vec4 vGrid;
     // the roof sheet's mean colour (dividing by it tints the sheet to each roof's colour); one repeat per
@@ -616,6 +635,30 @@ const buildingMaterial = new THREE.ShaderMaterial({
             } else if (fract(vPos.z / 0.42) < 0.16) c *= 0.93;             // anything else: plain courses
           }
           else if (n.z < 0.97) { if (fract(vPos.z / 0.42) < 0.16) c *= 0.93; }   // tile courses
+          else if (vFacade.y < -1000.5) {
+            // preset flatRoofDetail (learned from AI repaints of big flat roofs): membrane sheets 4 × 2 m, staggered,
+            // along the building's long axis (addMeshes), fine grain; green roofs a fine olive mottle
+            float a = -1001.0 - vFacade.y;
+            vec2 d = vec2(cos(a), sin(a)), q = vec2(dot(vPos.xy, d), dot(vPos.xy, vec2(-d.y, d.x)));
+            if (c.g > 1.15 * c.r && c.g > 1.3 * c.b) {
+              // noise on turned, scaled copies of q so no lattice lines up
+              vec2 q1 = mat2(0.8, 0.6, -0.6, 0.8) * q, q2 = mat2(0.28, 0.96, -0.96, 0.28) * q;
+              float m = 0.45 * vnoise(q1 * 0.7) + 0.35 * vnoise(q2 * 1.9 + 3.1) + 0.2 * vnoise(q1 * 4.3 + 9.7);
+              c = mix(vec3(0.47, 0.54, 0.22), vec3(0.74, 0.72, 0.30), m);
+              c = mix(c, vec3(0.64, 0.50, 0.28), 0.55 * smoothstep(0.6, 0.78, vnoise(q2 * 1.3 + 7.0)));
+              // depth: small clumps, lit on the sun's side, dark gaps between them
+              float cl = vnoise(q1 * 3.1 + 1.7), cs = vnoise(q1 * 3.1 + 1.7 + vec2(0.12, -0.12));
+              c *= 0.78 + 0.32 * cl + 0.9 * (cl - cs);
+              c *= 1.0 - 0.3 * smoothstep(0.62, 0.85, vnoise(q2 * 5.3 + 4.4));
+            } else {
+              // long 2 m strips along the axis, faint end laps every 8 m (staggered); metres to the nearest seam
+              float row = floor(q.y / 2.0), px = length(fwidth(q));
+              float sy = 2.0 * (0.5 - abs(fract(q.y / 2.0) - 0.5)), sx = 8.0 * (0.5 - abs(fract(q.x / 8.0 + 0.37 * row) - 0.5));
+              c *= 1.0 - 0.055 * (1.0 - smoothstep(0.04, 0.04 + px, sy)) - 0.03 * (1.0 - smoothstep(0.04, 0.04 + px, sx));
+              c *= 0.985 + 0.03 * hash(vec2(row, floor(q.x / 8.0 + 0.37 * row)));        // each strip its own shade
+            }
+            c *= 0.97 + 0.05 * hash(floor(vPos.xy * 3.0));
+          }
           else if (abs(floor(vKind + 0.001) - 22.0) > 0.5) c *= 0.95 + 0.07 * hash(floor(vPos.xy * 2.0)); // gravel (car park decks: flat concrete)
           #ifdef ZG
           // old tile weathers in patches (moss, soot, newer tiles): mottle pitched roofs, soften flat ones
@@ -656,6 +699,12 @@ const buildingMaterial = new THREE.ShaderMaterial({
             float s0 = min(fh * 0.3, fh - wh - (orn ? 0.45 : 0.3));
             float bay = floor(x / BAY), cx = mod(x, BAY) - BAY * 0.5;
             if (pairs) { cx = abs(cx) - (hw * 0.5 + 0.12); }
+            if (vGrid.w > 0.5) {
+              // preset wholeWindows: the window (its bay, to be safe) inside the wall's clean band, else plain wall
+              float wb = Y - fy + s0, wt = wb + wh, xc = (bay + 0.5) * BAY - vFrame.x - 0.5 * wW, top = mod(vFrame.w, 1000.0);
+              float slope = wE + (top - wE) * (1.0 - (abs(xc) + 0.5 * BAY) / max(0.5 * wW, 0.01));
+              if (wb < mod(vGrid.w, 1000.0) - 1.0 + 0.15 || (wt > wE - 0.15 && (vGrid.w < 999.5 || wt > slope - 0.3))) hw = -1.0;
+            }
             float rw = hash(vec2(bay, fi) + v * 31.0);
             bool plinth = y < 0.3 + 0.5 * r1;
             if (shop && fi < 0.5) {
@@ -670,6 +719,10 @@ const buildingMaterial = new THREE.ShaderMaterial({
                 if (rw < 0.06) g = mix(vec3(0.50, 0.60, 0.70), WIN, t * 0.7);          // the odd window catching the sky
                 else if (rw < 0.13 && t > 0.62) g = vec3(0.70, 0.69, 0.65);            // a lowered blind
                 c = g;
+                if (insetWindows) {                                                  // set into the wall: lighter toward the sill, the reveal's shadow at the head
+                  c *= 0.95 + 0.25 * (1.0 - t);
+                  if (t > 0.68) c *= 0.58;
+                }
                 float e = min(hw - abs(cx), min(fy - s0, s0 + wh - fy));
                 if (e < 0.08) c = FRAME;                                             // frame
                 else if (k != 1 && hw > 0.35 && abs(cx) < 0.045) c = FRAME;          // mullion: two casements
@@ -864,6 +917,14 @@ const buildingMaterial = new THREE.ShaderMaterial({
               if (d < 2.0 && Y > 0.05 && Y < min(4.5, wE - 1.0)) c = vec3(0.66, 0.67, 0.68) * (fract(Y / 0.25) < 0.15 ? 0.88 : 1.0);
             }
           }
+          // preset eavesShadow: the roof's edge shades the wall just under it (eaves, and the verges up a gable)
+          if (eavesShadow && vFrame.y - vFrame.x > 0.5 && vFrame.z > 0.5) {
+            float wE = vFrame.z, top = mod(vFrame.w, 1000.0), hwid = 0.5 * (vFrame.y - vFrame.x);
+            if (top - wE > 0.5) {
+              float at = vGrid.w > 999.5 ? wE + (top - wE) * max(0.0, 1.0 - abs(vFacade.x - vFrame.x - hwid) / hwid) : wE;
+              c *= mix(0.68, 1.0, smoothstep(0.0, 0.9, at - vFacade.y));
+            }
+          }
         }
         gl_FragColor = vec4(c * light, 1.0);
         return;
@@ -894,7 +955,7 @@ const buildingMaterial = new THREE.ShaderMaterial({
       }
       gl_FragColor = vec4(c * light, 1.0);
     }`,
-  uniforms: { sun: { value: SUN }, roofDetail: { value: STYLED && STYLE.roofDetail }, repaint: { value: STYLED && STYLE.repaint }, roofTex: { value: roofTex }, useTex: { value: TEX ? 1 : 0 } },
+  uniforms: { sun: { value: SUN }, roofDetail: { value: STYLED && STYLE.roofDetail }, repaint: { value: STYLED && STYLE.repaint }, insetWindows: { value: STYLED && STYLE.insetWindows }, eavesShadow: { value: STYLED && STYLE.eavesShadow }, roofTex: { value: roofTex }, useTex: { value: TEX ? 1 : 0 } },
   defines: ZG ? { ZG: 1 } : {},
 });
 
@@ -986,6 +1047,147 @@ function mergeByPosition(g: THREE.BufferGeometry) {
 
 const objects = new THREE.Group();
 scene.add(objects);
+
+// ---- construction sites (preset constructionSites) -----------------------------------------------------------
+// Each site's plan (page/sites.ts: clusters of containers, material, machines) drawn on the ground (page/ground.ts)
+// and its objects from the AI sprite sheets: each one a quad facing the camera, standing on the ground at its foot
+// (only its opaque pixels write depth, so the ink pass outlines the object, not the quad). Vehicles and containers
+// come from the turned sheet in the heading closest to theirs on screen. Hillshade damped over the site. Hidden
+// from the height, foreground and shadow passes.
+const SITES = STYLED && STYLE.constructionSites;
+const sites = new THREE.Group(), siteObjects = new THREE.Group();
+sites.add(siteObjects);
+scene.add(sites);
+/** tower cranes on construction sites (sites.ts plans them): ballast and mast as real geometry (shadows, outlines);
+ *  their tops slew live on the map (web/src/scripts/cranes.ts) */
+const cranes = new THREE.Group();
+scene.add(cranes);
+type Sheet = { tex: THREE.Texture; size: number[]; boxes: number[][] };
+let siteSheets: [Sheet, Sheet] | null = null;
+if (SITES) {
+  enableSites();
+  setSiteBlockers(features);
+  const load = async (name: string): Promise<Sheet> => {
+    const tex = await sheet(`${name}.png`);
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter;
+    return { tex, ...(await (await fetch(`/textures/${name}.json`)).json()) };
+  };
+  siteSheets = [await load("construction-sprites"), await load("construction-sprites-turns")];
+}
+/** a camera-facing quad for sprite `box` of a sheet, standing at (x, y, z), into pos/uv */
+function billboard(pos: number[], uv: number[], x: number, y: number, z: number, [sx, sy, sw, sh]: number[], [SW, SH]: number[], ppm: number) {
+  const { right: R, up: U } = axes(), ww = sw / ppm, hh = sh / ppm;
+  const c = (a: number, b: number) => [x + R[0] * a + U[0] * b, y + R[1] * a + U[1] * b, z + R[2] * a + U[2] * b];
+  const q = [c(-ww / 2, 0), c(ww / 2, 0), c(ww / 2, hh), c(-ww / 2, hh)];
+  const u0 = sx / SW, u1 = (sx + sw) / SW, v0 = 1 - (sy + sh) / SH, v1 = 1 - sy / SH;
+  const t = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+  for (const v of [0, 1, 2, 0, 2, 3]) { pos.push(...q[v]); uv.push(...t[v]); }
+}
+function spriteMesh(pos: number[], uv: number[], material: THREE.ShaderMaterial) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  return new THREE.Mesh(g, material);
+}
+/** sheet px per metre (the prompts' scale) */
+const SPRITE_PPM = 8;
+const spriteMaterials = [0, 1].map(() => new THREE.ShaderMaterial({
+  vertexShader: /* glsl */ `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D map; varying vec2 vUv;
+    void main() { vec4 c = texture2D(map, vUv); if (c.a < 0.5) discard; gl_FragColor = vec4(c.rgb, 1.0); }`,
+  uniforms: { map: { value: null as THREE.Texture | null } },
+}));
+function buildSites(fs: Feature[], [x0, y0, x1, y1]: number[], w: number, h: number) {
+  // hillshade damping mask
+  const cv = dampTexture.image as HTMLCanvasElement, mw = Math.ceil(w / 4), mh = Math.ceil(h / 4);
+  if (cv.width !== mw || cv.height !== mh) { dampTexture.dispose(); cv.width = mw; cv.height = mh; }
+  const g = cv.getContext("2d")!;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = "#000"; g.fillRect(0, 0, mw, mh);
+  const k = mw / (x1 - x0);
+  g.setTransform(k, 0, 0, -k, -x0 * k, y1 * k); g.fillStyle = "#fff";
+  for (const f of fs) { g.beginPath(); for (const r of f.r!) { r.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); } g.fill("evenodd"); }
+  dampTexture.needsUpdate = true;
+  hillshadeMaterial.uniforms.damp.value = fs.length ? dampTexture : NO_DAMP;
+  // site objects
+  siteObjects.children.forEach((o: any) => o.geometry?.dispose());
+  siteObjects.clear();
+  cranes.children.forEach((o: any) => o.geometry?.dispose());
+  cranes.clear();
+  if (!siteSheets || !fs.length) return;
+  const { right: R, dir: D } = axes(), F = new THREE.Vector2(D[0], D[1]).normalize();
+  /** turned sheet column for a world heading: 0 lower right, 1 lower left, 2 upper left, 3 upper right on screen */
+  const column = ([dx, dy]: P2) => {
+    const right = dx * R[0] + dy * R[1] > 0, down = dx * F.x + dy * F.y < 0;
+    return right ? (down ? 0 : 3) : down ? 1 : 2;
+  };
+  const geo = [0, 1].map(() => ({ pos: [] as number[], uv: [] as number[] }));
+  const craneOut: Out = { pos: [], nor: [], col: [], fac: [], kin: [] }, fenceMesh: number[] = [];
+  for (const f of fs) {
+    const outer = f.r![0];
+    let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+    for (const [x, y] of outer) { bx0 = Math.min(bx0, x); bx1 = Math.max(bx1, x); by0 = Math.min(by0, y); by1 = Math.max(by1, y); }
+    if (bx1 < x0 - 40 || bx0 > x1 + 40 || by1 < y0 - 40 || by0 > y1 + 40) continue;
+    for (const c of sitePlan(f).cranes) crane(craneOut, c);
+    siteFence(craneOut, fenceMesh, sitePlan(f).fence);
+    for (const it of sitePlan(f).items) {
+      const s = it.turn !== undefined ? 1 : 0, id = it.turn !== undefined ? it.turn * 4 + column(it.dir!) : it.still!;
+      billboard(geo[s].pos, geo[s].uv, it.x, it.y, ground(it.x, it.y), siteSheets[s].boxes[id], siteSheets[s].size, SPRITE_PPM);
+    }
+  }
+  geo.forEach(({ pos, uv }, s) => {
+    if (!pos.length) return;
+    spriteMaterials[s].uniforms.map.value = siteSheets![s].tex;
+    siteObjects.add(spriteMesh(pos, uv, spriteMaterials[s]));
+  });
+  if (craneOut.pos.length) {
+    const g = new THREE.BufferGeometry(), n = craneOut.pos.length / 3;
+    g.setAttribute("position", new THREE.Float32BufferAttribute(craneOut.pos, 3));
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(craneOut.nor, 3));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(craneOut.col, 3));
+    g.setAttribute("facade", new THREE.Float32BufferAttribute(craneOut.fac, 2));
+    g.setAttribute("kind", new THREE.Float32BufferAttribute(craneOut.kin, 1));
+    g.setAttribute("frame", new THREE.Float32BufferAttribute(new Float32Array(n * 4), 4));
+    g.setAttribute("grid", new THREE.Float32BufferAttribute(new Float32Array(n * 4), 4));
+    cranes.add(new THREE.Mesh(g, buildingMaterial));
+  }
+  if (fenceMesh.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(fenceMesh, 3));
+    cranes.add(new THREE.Mesh(g, fenceMaterial));
+  }
+}
+
+/** the site's mobile fence (as AI repaints draw it): 3.5 m mesh panels between dark posts on orange feet, a rail at the
+ *  top and bottom (panels from sites.ts: none at gates, roads, tracks). The mesh is see-through and writes no depth, so it gets no ink. */
+const fenceMaterial = new THREE.MeshBasicMaterial({ color: 0xd9dbdc, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
+function siteFence(o: Out, mesh: number[], panels: Array<[P2, P2]>) {
+  const POST = [0.3, 0.31, 0.33], FOOT = [0.9, 0.45, 0.14], RAIL = [0.55, 0.57, 0.6], H = 2;
+  for (const [p0, p1] of panels) {
+    const a = Math.atan2(p1[1] - p0[1], p1[0] - p0[0]), l = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+    const m: P2 = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2];
+    const z0 = ground(p0[0], p0[1]), z1 = ground(p1[0], p1[1]), zm = (z0 + z1) / 2;
+    for (const [p, z] of [[p0, z0], [p1, z1]] as Array<[P2, number]>) { // a post at each end (shared ones drawn twice)
+      prism(o, p[0], p[1], z, 0.7, 0.25, 0.14, 0.14, a, FOOT);
+      prism(o, p[0], p[1], z, 0.12, 0.12, H, H, a, POST);
+    }
+    for (const h of [0.15, H - 0.08]) prism(o, m[0], m[1], zm + h, l, 0.05, 0.06, 0.06, a, RAIL);
+    mesh.push(p0[0], p0[1], z0 + 0.15, p1[0], p1[1], z1 + 0.15, p1[0], p1[1], z1 + H - 0.08,
+      p0[0], p0[1], z0 + 0.15, p1[0], p1[1], z1 + H - 0.08, p0[0], p0[1], z0 + H - 0.08);
+  }
+}
+
+/**
+ * A hammerhead tower crane after the AI reference sheet (data/derived/sheets/crane-reference out-1): ballast
+ * block, square lattice mast, slewing deck with the cab, an A-frame head with pendant ties to a triangular
+ * lattice jib and a flat counter-jib carrying concrete counterweights; trolley and hook on the jib.
+ */
+function crane(o: Out, { x, y, a }: Crane) {
+  const GREY = [0.62, 0.62, 0.6], z0 = ground(x, y);
+  prism(o, x, y, z0, 5, 5, 1.4, 1.4, a, GREY); // ballast block
+  // the mast and the slewing top are drawn live on the map (crisp at every zoom): web/src/scripts/cranes.ts, from
+  // export.ts exportCranes
+}
 function pointInRing(x: number, y: number, ring: P2[]) {
   let c = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -1041,7 +1243,7 @@ const WALL_BY_STYLE_ZG: Record<number, number[][]> = {
 const ROOFS_ZG = [[0.69, 0.38, 0.27], [0.56, 0.34, 0.26], [0.43, 0.44, 0.46], [0.74, 0.72, 0.68], [0.44, 0.62, 0.54], [0.78, 0.78, 0.76], [0.56, 0.66, 0.42]];
 const ROOFS = ZG ? ROOFS_ZG : ROOFS_STR;
 
-type Plane = { n: number[]; d: number; tris: number[][]; area: number };
+type Plane = { n: number[]; d: number; tris: number[][]; area: number; loose?: number };
 type Out = { pos: number[]; nor: number[]; col: number[]; fac: number[]; kin: number[] };
 
 /** coloured quad (counter-clockwise from outside), no facade pattern */
@@ -1204,7 +1406,15 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
       out.push([x + i * cu - j * sn, y + i * sn + j * cu]);
     return out;
   };
-  const onPlane = (pl: Plane, p: P2) => pl.tris.some((t) => inTri(p[0], p[1], t));
+  /** on the plane; with pl.loose, also within that distance of it (LoD2 planes have hairline cracks between triangles) */
+  const onPlane = (pl: Plane, p: P2) => pl.tris.some((t) => inTri(p[0], p[1], t)) || (!!pl.loose && pl.tris.some((t) => {
+    for (let k = 0; k < 6; k += 2) {
+      const ax = t[k], ay = t[k + 1], bx = t[(k + 2) % 6], by = t[(k + 3) % 6], dx = bx - ax, dy = by - ay;
+      const f = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy || 1)));
+      if (Math.hypot(p[0] - ax - f * dx, p[1] - ay - f * dy) < pl.loose!) return true;
+    }
+    return false;
+  }));
   const zAt = (pl: Plane, x: number, y: number) => (pl.d - pl.n[0] * x - pl.n[1] * y) / pl.n[2];
   /** place a turned item if it fits on the plane (with margin m) and on free roof */
   const fits = (pl: Plane, x: number, y: number, su: number, sv: number, t: number, m: number) =>
@@ -1246,8 +1456,28 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
   // parapet along the flat roof's edge: the top edges of the walls below it (a horizontal wall edge whose third
   // corner is lower), at the height of a flat plane that lies just inside it
   const flats = planes.filter((q) => q.n[2] > 0.97 && q.area > 25);
+  // preset sawtoothRoofs: a big hall roof drawn as fields of sheds. LoD2 splits one level roof into many planes (a
+  // hair of tilt km from the origin moves the offset by metres): the level planes within 1.5 m of the main one are
+  // laid out as one, at each point the height of the plane it lies on
+  const sawMembers = new Set<Plane>();
+  let saw: Plane | null = null;
+  if (hall && !green && flatShare >= 0.6 && STYLE.sawtoothRoofs > 0) {
+    const level = planes.filter((q) => q.n[2] > 0.995);
+    const mid = (q: Plane) => { const t = q.tris[0]; return zAt(q, (t[0] + t[2] + t[4]) / 3, (t[1] + t[3] + t[5]) / 3); };
+    const main = level.reduce<Plane | null>((a, q) => (!a || q.area > a.area ? q : a), null);
+    if (main) {
+      const z0 = mid(main);
+      for (const q of level) if (Math.abs(mid(q) - z0) < 1.5) sawMembers.add(q);
+      const area = [...sawMembers].reduce((t, q) => t + q.area, 0);
+      if (area >= STYLE.sawtoothRoofs) saw = { n: [0, 0, 1], d: z0, tris: [...sawMembers].flatMap((q) => q.tris), area, loose: 0.6 };
+      else sawMembers.clear();
+    }
+  }
+  const sawtooth = (pl: Plane) => sawMembers.has(pl);
+  const zSaw = (x: number, y: number) => { for (const q of sawMembers) if (onPlane(q, [x, y])) return zAt(q, x, y); return saw!.d; };
   if (flatShare > 0.6 && flats.length) {
-    const cap = green ? [0.7, 0.7, 0.68] : wall.map((q) => q * 0.97), th = 0.3;
+    // preset flatRoofDetail: a light concrete coping, a little wider, so it reads as a crisp rim (as AI repaints draw it)
+    const cap = STYLE.flatRoofDetail ? [0.9, 0.9, 0.88] : green ? [0.7, 0.7, 0.68] : wall.map((q) => q * 0.97), th = STYLE.flatRoofDetail ? 0.45 : 0.3;
     for (let i = 0; i + 14 < walls.length; i += 15) {
       for (let e = 0; e < 3; e++) {
         const p = i + e * 5, q = i + ((e + 1) % 3) * 5, r = i + ((e + 2) % 3) * 5;
@@ -1260,6 +1490,7 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
           const pl = flats.find((f) => Math.abs(zAt(f, mx, my) - az) < 0.3 && onPlane(f, [mx + nx * 0.6, my + ny * 0.6]));
           if (!pl) continue;
           prism(o, mx + (nx * th) / 2, my + (ny * th) / 2, az, L + th, th, parapetH, parapetH, Math.atan2(ey, ex), cap);
+          if (sawtooth(pl)) prism(o, mx + nx * (th + 3), my + ny * (th + 3), az, L, 6, 0.04, 0.04, Math.atan2(ey, ex), [0.56, 0.57, 0.59]); // the darker flat border
           break;
         }
       }
@@ -1269,6 +1500,61 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
     if (pl.n[2] > 0.97) {
       const z = (x: number, y: number) => zAt(pl, x, y); // near level, but coordinates are km from the origin
       if (green || pl.area < 40 || flatShare < 0.6) continue;
+      // preset sawtoothRoofs: a big hall's roof as fields of sheds (as an AI repaint from the orthophoto draws them)
+      if (sawtooth(pl)) {
+        if (pl !== [...sawMembers][0]) continue; // the merged roof is laid out once
+        const sp = saw!, z = zSaw;
+        let t = Math.abs(Math.cos(axis)) >= Math.abs(Math.sin(axis)) ? axis : axis + Math.PI / 2;
+        if (Math.cos(t) < 0) t += Math.PI; // +v points north: the high, glazed side
+        const pitch = 12 + 3 * rnd(), H = 2.4 + 0.6 * rnd(), cu = Math.cos(t), sn = Math.sin(t), w = pitch - 0.2;
+        const GLASS = [0.5, 0.6, 0.68], FRAME = [0.36, 0.38, 0.42], WHITE = [0.86, 0.86, 0.84];
+        const RUST = [[0.62, 0.37, 0.27], [0.65, 0.4, 0.29], [0.59, 0.35, 0.26], [0.63, 0.38, 0.26], [0.61, 0.39, 0.3]];
+        const g = grid(sp, t, 1);
+        // two fields on a very large roof, side by side across the sheds (split by a flat strip), one finish each,
+        // white or weathered rust; a glazed band runs along the middle of the sheds through both
+        const two = sp.area >= 2 * STYLE.sawtoothRoofs && g.v1 - g.v0 > 120, vm = (g.v0 + g.v1) / 2, GAP = 10, BAND = 5;
+        const r0 = rnd() < 0.5, rust = two ? [r0, !r0] : [rnd() < 0.35];
+        const um = (g.u0 + g.u1) / 2, band = g.u1 - g.u0 > 60 ? um : NaN;
+        const at = (u: number, v: number): P2 => [u * cu - v * sn, u * sn + v * cu];
+        rows(sp, t, 3, pitch - 1.2, pitch, 6, (x, y, len) => { // 6 m: a darker flat border shows round the field
+          const uc = x * cu + y * sn, v = -x * sn + y * cu, lo = uc - len / 2, hi = uc + len / 2;
+          if (two && Math.abs(v - vm) < GAP / 2 + w / 2) return; // the flat strip between the fields
+          const k = two && v > vm ? 1 : 0;
+          {
+            const banded = !Number.isNaN(band) && lo < band - BAND / 2 && hi > band + BAND / 2;
+            const cuts: number[][] = banded ? [[lo, band - BAND / 2], [band + BAND / 2, hi]] : [[lo, hi]];
+            if (banded) { // the glazed band, row by row
+              const [bx, by] = at(band, v), zz = z(bx, by);
+              prism(o, bx, by, zz, BAND - 0.6, w, 0.4, 1.4, t, GLASS);
+            }
+            for (const [c0, c1] of cuts) {
+              // the shed in panels of 6–12 m, each its own shade (rust weathers in patches)
+              for (let u = c0; u < c1 - 0.5;) {
+                const u1 = Math.min(c1, u + 6 + 6 * rnd()), [px, py] = at((u + u1) / 2, v), zz = z(px, py);
+                const skin = rust[k] ? RUST[Math.floor(rnd() * RUST.length)] : ((f) => WHITE.map((q) => q * f))(0.97 + 0.04 * rnd());
+                prism(o, px, py, zz, u1 - u, w, 0.15, H, t, skin); // low on its south side, high on its north side
+                u = u1;
+              }
+              const [cx2, cy2] = at((c0 + c1) / 2, v), zz = z(cx2, cy2);
+              const gx = cx2 - sn * (w / 2 + 0.06), gy = cy2 + cu * (w / 2 + 0.06); // the north light before the steep face
+              prism(o, gx, gy, zz + 0.35, c1 - c0 - 0.4, 0.12, H - 0.65, H - 0.65, t, GLASS);
+              prism(o, gx, gy, zz + H - 0.3, c1 - c0, 0.3, 0.3, 0.3, t, FRAME); // the ridge flashing
+            }
+          }
+        });
+        if (two) { // a fan block on the strip between the fields
+          const [fx, fy] = at(um + (rnd() - 0.5) * 0.3 * (g.u1 - g.u0), vm);
+          if (onPlane(sp, [fx, fy])) {
+            const zz = z(fx, fy);
+            prism(o, fx, fy, zz, 6, 9, 1.2, 1.2, t, [0.8, 0.8, 0.78]);
+            for (let a = -1; a <= 1; a += 2) for (let b = -1; b <= 1; b++) {
+              const [qx, qy] = [fx + cu * a * 1.5 - sn * b * 3, fy + sn * a * 1.5 + cu * b * 3];
+              prism(o, qx, qy, zz + 1.2, 2.2, 2.2, 0.12, 0.12, t, [0.24, 0.25, 0.28]);
+            }
+          }
+        }
+        continue;
+      }
       const g = grid(pl, axis, 1);
       const pts: P2[] = [];
       for (let u = g.u0; u <= g.u1; u += 1) for (let v = g.v0; v <= g.v1; v += 1) pts.push(g.at(u, v));
@@ -1282,8 +1568,29 @@ function roofFurniture(o: Out, planes: Plane[], footprint: P2[], walls: number[]
         const p = near.find((q) => fits(pl, q[0], q[1], su, sv, axis, 1.5));
         if (p) { prism(o, p[0], p[1], z(p[0], p[1]), su, sv, h, h, axis, wall.map((q) => q * 0.93)); take(p[0], p[1], su, sv, axis); }
       }
+      // preset flatRoofDetail: a big roof carries a few small units scattered over it (as AI repaints draw big flat
+      // roofs); else (preset bigRoofs) one or two large air-handling units, not a rash of small boxes. Smaller roofs
+      // get a cluster only half the time
+      if (STYLE.bigRoofs && STYLE.flatRoofDetail && pl.area > 600) {
+        const n = Math.min(16, Math.max(2, Math.round((pl.area / 500) * (0.7 + 0.6 * rnd()))));
+        for (let k = 0, tries = 0; k < n && tries < n * 6; tries++) {
+          const [x, y] = pts[Math.floor(rnd() * pts.length)], su = 2 + rnd(), sv = 1.5 + 0.6 * rnd();
+          if (!fits(pl, x, y, su, sv, axis, 3)) continue;
+          prism(o, x, y, z(x, y), su, sv, 1.1, 1.1, axis, [0.9, 0.9, 0.89]); take(x, y, su, sv, axis); k++;
+        }
+      }
+      else if (STYLE.bigRoofs && pl.area > 600) {
+        const n = pl.area > 3000 && rnd() < 0.6 ? 2 : 1, su = 4 + 2 * rnd(), sv = 2.4 + 0.6 * rnd(), h = 1.6 + 0.5 * rnd();
+        for (let k = 0, tries = 0; k < n && tries < 16; tries++) {
+          const [x, y] = pts[Math.floor(rnd() * pts.length)];
+          if (!fits(pl, x, y, su, sv, axis, 2.5)) continue;
+          prism(o, x, y, z(x, y), su, sv, h, h, axis, [0.78, 0.78, 0.77]);
+          prism(o, x, y, z(x, y) + h, su * 0.8, sv * 0.7, 0.06, 0.06, axis, [0.45, 0.46, 0.47]);
+          take(x, y, su, sv, axis); k++;
+        }
+      }
       // AC units: one cluster in a grid of up to 4 per row
-      if (pl.area > 100) {
+      else if (pl.area > 100 && (!STYLE.bigRoofs || rnd() < 0.5)) {
         const n = Math.max(1, Math.min(10, Math.round((pl.area / 220) * (0.5 + rnd())))), per = Math.min(4, n);
         const cu = Math.cos(axis), sn = Math.sin(axis);
         for (let tries = 0, done = 0; tries < 12 && !done; tries++) {
@@ -1387,7 +1694,19 @@ function wallPolygons(wall: number[]) {
  */
 function wallFacts(wall: number[], storeys: number, flags: number) {
   const { walls, of, ends, eaves } = wallPolygons(wall);
+  // preset wholeWindows, per wall: 1 + its clean bottom (the higher of its ends' lowest points: above a lower roof
+  // in front of it) + 1000 when its top is a gable peaking near its middle (the shader keeps windows under the slopes)
+  const clean = new Map(walls.map((w) => {
+    if (!STYLE.wholeWindows) return [w, 0];
+    const at = (e: number) => w.pts.filter((p) => Math.abs(p[0] - e) < 0.3).map((p) => p[1]);
+    const lo = Math.max(...[w.s0, w.s1].map((e) => Math.min(...at(e))));
+    const peak = w.pts.reduce((a, p) => (p[1] > a[1] ? p : a));
+    const gable = w.top - ends(w) > 0.5 && Math.abs(peak[0] - (w.s0 + w.s1) / 2) < 0.15 * (w.s1 - w.s0);
+    return [w, 1 + Math.max(0, lo) + (gable ? 1000 : 0)];
+  }) as Array<[WallPolygon, number]>);
   let fh = 0, y0 = 0;
+  // preset wholeWindows: unknown storeys from the eaves (~3 m each), so the top windows sit under the eaves
+  if (!storeys && STYLE.wholeWindows) storeys = Math.max(1, Math.round(eaves / 3));
   if (storeys && eaves >= 2 && eaves <= storeys * 4.8 + 1.5) { // a height that fits the storeys (else the data disagree)
     const n = Math.max(1, Math.min(storeys, Math.round(eaves / 3)));
     fh = Math.min(4.2, Math.max(2.7, eaves / n));
@@ -1399,7 +1718,7 @@ function wallFacts(wall: number[], storeys: number, flags: number) {
   const doors = (w: WallPolygon) => flags & 4 ? (long < 7.5 ? len(w) >= 2.6 && len(w) <= short + 0.6 : len(w) >= long - 1.5)
     : flags & (8 | 32 | 64) ? len(w) >= Math.max(4, 0.8 * long) : false;
   const frame = new Map(walls.map((w) => [w, [w.s0, w.s1, ends(w), w.top + (doors(w) ? 1000 : 0)]] as [WallPolygon, number[]]));
-  return { grid: [fh, y0, flags, 0], frames: of.map((w) => frame.get(w)!) };
+  return { grids: of.map((w) => [fh, y0, flags, clean.get(w)!]), frames: of.map((w) => frame.get(w)!) };
 }
 
 /**
@@ -1496,6 +1815,15 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
     const green = roofKind % 10 === 6, deck = style === 12, landmark = (style === 4 && !!osmRoof) || !!bare || monumental || deck;
     let deckZ = -Infinity;
     const planes: Plane[] = [];
+    // preset flatRoofDetail: the building's long axis (its longest footprint edge, mod 180°) for the roof's sheets
+    let flatAxis: number | null = null;
+    if (STYLE.flatRoofDetail && !deck) {
+      let best = 0;
+      for (let i = 0; i < footprint.length; i++) {
+        const [ax, ay] = footprint[i], [bx, by] = footprint[(i + 1) % footprint.length], L = Math.hypot(bx - ax, by - ay);
+        if (L > best) { best = L; flatAxis = ((Math.atan2(by - ay, bx - ax) % Math.PI) + Math.PI) % Math.PI; }
+      }
+    }
     for (let i = 0; i + 8 < roof.length; i += 9) {
       a.fromArray(roof, i); b.fromArray(roof, i + 3); c.fromArray(roof, i + 6);
       n.subVectors(b, a).cross(c.clone().sub(a));
@@ -1503,7 +1831,8 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
       n.normalize();
       if (n.z < 0) n.negate();
       const r = n.z > 0.97 ? flatRoof : tileRoof; // planes within ~14° of level are flat roofs
-      for (const v of [a, b, c]) { pos.push(v.x, v.y, v.z); nor.push(n.x, n.y, n.z); col.push(...r); fac.push(0, -1000); kin.push(kind); }
+      const fy = n.z > 0.97 && flatAxis !== null ? -1001 - flatAxis : -1000; // preset flatRoofDetail: the axis to the shader
+      for (const v of [a, b, c]) { pos.push(v.x, v.y, v.z); nor.push(n.x, n.y, n.z); col.push(...r); fac.push(0, fy); kin.push(kind); }
       if (deck && n.z > 0.97 && area > 1) deckZ = Math.max(deckZ, a.z, b.z, c.z);
       if (landmark || area < 0.01 || n.z < 0.3) continue;
       // group triangles into planes (same normal and offset) for the roof furniture
@@ -1515,7 +1844,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
     if (planes.length) roofFurniture({ pos, nor, col, fac, kin }, planes, footprint, wall, style, green, w, rnd);
     if (STYLE.eaves && !bare && wall.length) eaves({ pos, nor, col, fac, kin }, roof, wall, tileRoof, kind, seed, STYLE.eaves);
     const frames = monumental ? wallFrames(wall) : null;
-    const facts = !frames && (storeys || flags) ? wallFacts(wall, storeys ?? 0, flags ?? 0) : null; // window rows, doors
+    const facts = !frames && (storeys || flags || STYLE.wholeWindows) ? wallFacts(wall, storeys ?? 0, flags ?? 0) : null; // window rows, doors
     if (deck && deckZ > -Infinity) parkingDeck({ pos, nor, col, fac, kin }, footprint, deckZ, rnd);
     for (let i = 0; i + 14 < wall.length; i += 15) {
       a.fromArray(wall, i); b.fromArray(wall, i + 5); c.fromArray(wall, i + 10);
@@ -1527,7 +1856,7 @@ function addMeshes(data: TileObjects, pos: number[], nor: number[], col: number[
           while (frm.length < n) frm.push(0, 0, 0, 0);
           while (grd.length < n) grd.push(0, 0, 0, 0);
           frm.push(...(f ? f.frame : facts!.frames[i / 15]));
-          grd.push(...(facts ? facts.grid : [0, 0, 0, 0]));
+          grd.push(...(facts ? facts.grids[i / 15] : [0, 0, 0, 0]));
         }
         const above = wall[i + k + 4];
         // walls reach 3 m below the LoD2 base, so a downhill slope never opens a gap under the house
@@ -1684,9 +2013,11 @@ const postMaterial = new THREE.ShaderMaterial({
     uniform vec2 origin;                  // global art pixel of the tile's top-left corner
     uniform float ss;
     uniform float inkStrength, inkFrom, inkTo, aoStrength;  // preset ink (styles.ts)
+    uniform float creaseInk;                                  // preset creaseInk
     varying vec2 vUv;
     float depth(vec2 uv) { return near + texture2D(tDepth, uv).x * (far - near); }
     vec3 P(vec2 uv) { return vec3(uv * size * px, depth(uv)); }
+    vec3 N(vec2 uv) { vec2 e = vec2(2.0 / size, 0.0), f = vec2(0.0, 2.0 / size); return normalize(cross(P(uv + e) - P(uv - e), P(uv + f) - P(uv - f))); }
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     float vnoise(vec2 p) {
       vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -1701,6 +2032,10 @@ const postMaterial = new THREE.ShaderMaterial({
       float lx = abs(depth(vUv + 2.0 * e) + depth(vUv - 2.0 * e) - 2.0 * z);
       float ly = abs(depth(vUv + 2.0 * f) + depth(vUv - 2.0 * f) - 2.0 * z);
       float edge = smoothstep(inkFrom, inkTo, max(lx, ly));
+      if (creaseInk > 0.0) { // where the surface turns: normals 2 px either side differ
+        float t = min(dot(N(vUv - 3.0 * e), N(vUv + 3.0 * e)), dot(N(vUv - 3.0 * f), N(vUv + 3.0 * f)));
+        edge = max(edge, creaseInk * smoothstep(0.6, 0.3, t)); // a turn of ~53° starts a line, ~72° full (not tree facets)
+      }
       // ambient occlusion: samples above this pixel's tangent plane, within 1.5 m
       vec3 p = P(vUv);
       vec3 n = normalize(cross(P(vUv + e) - P(vUv - e), P(vUv + f) - P(vUv - f)));
@@ -1750,7 +2085,7 @@ const postMaterial = new THREE.ShaderMaterial({
     camPos: { value: new THREE.Vector3() }, camRight: { value: new THREE.Vector3() }, camUp: { value: new THREE.Vector3() },
     camDir: { value: new THREE.Vector3() }, sun: { value: SUN.clone() }, halfW: { value: 1 },
     shade: { value: new THREE.Vector3(...(STYLE.castShadow ?? [1, 1, 1])) },
-    inkStrength: { value: STYLE.ink.strength }, inkFrom: { value: STYLE.ink.from }, inkTo: { value: STYLE.ink.to }, aoStrength: { value: STYLE.ink.ao },
+    inkStrength: { value: STYLE.ink.strength }, inkFrom: { value: STYLE.ink.from }, inkTo: { value: STYLE.ink.to }, aoStrength: { value: STYLE.ink.ao }, creaseInk: { value: STYLE.creaseInk },
   },
   depthTest: false, depthWrite: false,
 });
@@ -1827,6 +2162,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
   let tp = performance.now();
   const lap = (k: string) => { if (!PROFILE) return; gl.finish(); const n = performance.now(); ms[k] = Math.round(n - tp); tp = n; };
   placeCamera(tx, ty);
+  sites.visible = true;
   buildObjects((SHADOWS && casters) || data || { b: [], t: [] });
   lap("objects");
   buildGround(tx, ty, data);
@@ -1834,6 +2170,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
   if (SHADOWS) {
     placeSun(tx, ty);
     groundMesh.visible = false; // the ground receives, it does not cast (hillshade lights the slopes)
+    sites.visible = false; // sprites: their quads would cast
     capMesh.visible = false; // a mine's walls cast for its cut rock (the cap's holes would not survive the override)
     scene.overrideMaterial = casterMaterial;
     renderer.setRenderTarget(shadowTarget);
@@ -1841,6 +2178,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
     renderer.render(scene, sunCamera);
     scene.overrideMaterial = null;
     groundMesh.visible = true;
+    sites.visible = true;
     capMesh.visible = !!MINE;
     postMaterial.uniforms.tShadow.value = shadowTarget.depthTexture;
     postMaterial.uniforms.shadows.value = true;
@@ -1860,6 +2198,7 @@ async function renderTile(tx: number, ty: number, data?: TileObjects, casters?: 
   }
   const color = renderer.domElement.toDataURL("image/png");
   lap("color");
+  sites.visible = false; // sprite quads would stamp rectangles into the height and foreground passes
   let fg: string | undefined;
   if (FOREGROUND && !MINE) {
     renderer.setRenderTarget(null);

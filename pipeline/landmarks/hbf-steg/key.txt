@@ -1,0 +1,3 @@
+This is a map around Stuttgart's main station with a long white covered footbridge on posts: it runs from beside the old station building with the tower, around the building site, to the ends of the platforms on the right.
+- KEEP, pixel for pixel exactly as it is: the whole white covered footbridge along its full length, with its posts and its branch, and the shadow it casts on the ground right beside it.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the station building, the building site with its round skylights, the park, the trees, streets, cars, cranes, the platforms and every other building.

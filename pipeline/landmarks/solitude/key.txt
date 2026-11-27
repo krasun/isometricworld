@@ -1,0 +1,3 @@
+This is a map around Schloss Solitude near Stuttgart: a pale rococo palace on a terrace with an oval domed hall in the middle of its front, standing on an oval lawn, and the long curved crescent of its two-storey outbuildings.
+- KEEP, pixel for pixel exactly as they are: the palace with its terrace, balustrades and outdoor staircases, and the curved outbuildings, all their walls and roofs down to their foot.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the lawn, drive, paths, roads, car parks, forest, fields, all trees and every other building.

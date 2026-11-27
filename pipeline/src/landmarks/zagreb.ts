@@ -3,7 +3,7 @@
  * misses their detail (the cathedral's towers, St Mark's), and the market umbrellas of Dolac. Moved here from
  * landmarks.ts as it is, beside the other cities' landmarks; landmarks.ts exports what scene.ts uses.
  */
-import { disc, lathe, type Look, type P2, piece, type Piece } from "./shapes.ts";
+import { cut, disc, lathe, type Look, type P2, piece, type Piece, tri2 } from "./shapes.ts";
 
 /**
  * Looks set directly (colours as rendered, not OSM tags lifted into the house palette) for Zagreb landmarks whose
@@ -36,26 +36,6 @@ export type RebuildCtx = { ring: P2[]; parts: Part[]; meshes: MeshRef[] };
 
 const centroid = (r: P2[]): P2 => [r.reduce((a, p) => a + p[0], 0) / r.length, r.reduce((a, p) => a + p[1], 0) / r.length];
 const LIMESTONE = [0.9, 0.87, 0.8], SPIRE_STONE = [0.87, 0.86, 0.82], LEDGE = [0.78, 0.75, 0.68], GOLD = [0.88, 0.7, 0.3];
-
-/** drop the LoD2 triangles whose centre lies in `inside` (e.g. a surveyed spire to be rebuilt) */
-function cut(m: MeshRef, inside: (x: number, y: number) => boolean) {
-  const keep = (a: number[], stride: number) => {
-    const out: number[] = [];
-    for (let i = 0; i + 3 * stride - 1 < a.length; i += 3 * stride) {
-      const x = (a[i] + a[i + stride] + a[i + 2 * stride]) / 3, y = (a[i + 1] + a[i + stride + 1] + a[i + 2 * stride + 1]) / 3;
-      if (!inside(x, y)) for (let k = 0; k < 3 * stride; k++) out.push(a[i + k]);
-    }
-    return out;
-  };
-  m.roof.splice(0, m.roof.length, ...keep(m.roof, 3));
-  m.wall.splice(0, m.wall.length, ...keep(m.wall, 5));
-}
-
-/** flat triangle in a vertical plane, both sides (gables in front of a wall) */
-function tri2(p: Piece, a: number[], b: number[], c: number[], base: number) {
-  const s = (v: number[]) => [v[0], v[1], v[2], (v[0] + v[1]) * 0.7, v[2] - base]; // façade coordinates: any steady along-axis
-  p.wall.push(...s(a), ...s(b), ...s(c), ...s(a), ...s(c), ...s(b));
-}
 
 /**
  * One tower of Zagreb Cathedral (Hermann Bollé, 1880–1902): a square stone shaft with corner buttresses, the

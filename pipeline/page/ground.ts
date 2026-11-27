@@ -5,6 +5,8 @@
  * step turns them into textured art.
  */
 
+import { sitePlan, sunk } from "./sites.ts";
+
 type P2 = [number, number];
 /** b: a bridge with its own deck (bridges.ts): drawn on the deck canvas, not the ground */
 /** p, u: pavement sides and surface (src/ground.ts, preset streetDetail); s: a track line's surface kind; ref: a
@@ -14,7 +16,7 @@ interface Objects { b: Array<[P2[], number, number, number | null]>; t: Array<[n
 
 const FILL: Record<string, string> = {
   residential: "#dcd5c6", commercial: "#dfdbd2", industrial: "#cfcbc2", railyard: "#cfcbc2", campus: "#e1dacb",
-  farm: "#c9cd8c", dirt: "#d2b98f", cemetery: "#b2c798",
+  farm: "#c9cd8c", dirt: "#d2b98f", construction: "#cdb894", cemetery: "#b2c798",
   park: "#9dcb6c", wood: "#73a851", scrub: "#adbb7b", sand: "#eedbab", pitch: "#6db35a", track: "#c97a5c",
   playground: "#dccba1", parking: "#bebcb7", paving: "#e6e0d4", water: "#3f95c2", pool: "#5ccbe6",
   vineyard: "#bfc27a", allotments: "#a9c676", orchard: "#b4cc7e", meadow: "#b6cf7e",
@@ -30,7 +32,7 @@ const NESTED = new Set(["park", "flowerbed", "paving", "gravel"]);
 const BLOOM = ["#e0525e", "#f2c94c", "#f4f1ea", "#c86bb0"];
 /** paint order of area kinds: broad landuse first, details on top */
 const AREA_ORDER = ["residential", "commercial", "industrial", "railyard", "campus", "lawn", "farm", "meadow", "orchard", "vineyard", "allotments",
-  "dirt", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "sandpit", "playpad", "drybasin", "water", "wastewater", "pool"];
+  "dirt", "construction", "cemetery", "scrub", "wood", "park", "flowerbed", "fairway", "green", "bunker", "airgrass", "tarmac", "sand", "parking", "paving", "gravel", "pitch", "track", "playground", "sandpit", "playpad", "drybasin", "water", "wastewater", "pool"];
 /** rubber safety surface under playground equipment: red-brown, green, blue (v) */
 const PADS = ["#b8604c", "#5f9c4c", "#557fb5"];
 const BASE = "#d9d3c4";
@@ -128,6 +130,10 @@ function grassTexture(): HTMLCanvasElement {
   return (grassTile = c);
 }
 
+/** construction sites (preset constructionSites): the pads, pits and haul roads of each site's plan (page/sites.ts) */
+let sites = false, siteSand: CanvasPattern | undefined;
+export function enableSites() { sites = true; }
+
 export function drawGround(
   ctx: CanvasRenderingContext2D, features: Feature[], [x0, y0, x1, y1]: number[], mpt: number,
   objects: Objects, ground: (x: number, y: number) => number, shadowDir: P2 = SHADOW_DIR, grass = false,
@@ -208,6 +214,47 @@ export function drawGround(
     path(f.r!); ctx.fillStyle = k === "playpad" ? PADS[f.v ?? 0] : water && k === "water" ? "#3786b5" : (k === "farm" || k === "meadow") && f.v !== undefined ? FIELD[f.v] ?? FILL_[k] : FILL_[k];
     if (k === "railyard" && styled) ctx.fillStyle = yardGravel ??= gravelPattern(mpt, "#c2bcb0", "#aaa499", "#d4cfc4"); // lighter than the beds
     ctx.fill("evenodd");
+    if (k === "construction" && sites) { // the site's plan (sites.ts): earth patches, pads, pits, haul roads; a fence round it
+      const plan = sitePlan(f);
+      ctx.save(); ctx.clip("evenodd");
+      // crisp sand, as AI repaints draw a site: warm tan, fine dark and light grains
+      ctx.fillStyle = siteSand ??= gravelPattern(mpt, "#d5bc95", "#b99c76", "#e7d6b7"); ctx.fill("evenodd");
+      for (const p of plan.pads) {
+        path([p.pts]); ctx.fillStyle = p.c; ctx.fill();
+      }
+      for (const l of plan.roads) {
+        stroke(l, 7, "rgba(178,158,122,0.55)");
+        for (const o of [-1.4, 1.4]) stroke(offset(l, o), 0.45, "rgba(120,100,72,0.30)"); // ruts
+      }
+      // excavations: what the camera sees of a pit `depth` deep is its far walls (sheet piles) and its floor, drawn
+      // where they show on the ground (sites.ts sunk); struts and walers at 40% depth, a red and white rail round it
+      for (const p of plan.pits) {
+        const D = p.depth, at = (q: P2[], d: number) => q.map((v) => sunk(v, d));
+        ctx.save(); path([p.rim]); ctx.clip();
+        path([p.rim]); ctx.fillStyle = "#6e4e36"; ctx.fill();
+        ctx.beginPath(); // the piles' folds, straight down the walls
+        for (let i = 0; i < 4; i++) {
+          const [ax, ay] = p.rim[i], [bx, by] = p.rim[(i + 1) % 4], L = Math.hypot(bx - ax, by - ay);
+          for (let t = 0; t < L; t += 0.7) { const q: P2 = [ax + ((bx - ax) * t) / L, ay + ((by - ay) * t) / L], e = sunk(q, D); ctx.moveTo(q[0], q[1]); ctx.lineTo(e[0], e[1]); }
+        }
+        ctx.lineWidth = 0.22; ctx.strokeStyle = "rgba(35,22,14,0.45)"; ctx.setLineDash([]); ctx.stroke();
+        path([at(p.rim, D)]); ctx.fillStyle = "#a98a66"; ctx.fill();                       // the floor: damp earth
+        path([at(p.slab, D)]); ctx.fillStyle = "#c9c6bf"; ctx.fill();                      // the base slab
+        ctx.lineWidth = 0.18; ctx.strokeStyle = "rgba(90,85,80,0.6)"; ctx.stroke();
+        path([at(p.rim, D * 0.4)]); ctx.lineWidth = 0.9; ctx.strokeStyle = "#3a2c1c"; ctx.stroke(); // walers
+        ctx.lineWidth = 0.55; ctx.strokeStyle = "#e3ad1c"; ctx.stroke();
+        for (const [a, b] of p.struts) {
+          const l = [sunk(a, D * 0.4), sunk(b, D * 0.4)];
+          stroke(l, 0.9, "#3a2c1c"); stroke(l, 0.55, "#e3ad1c");
+        }
+        ctx.restore();
+        line([...p.rim, p.rim[0]]); ctx.lineWidth = 0.35; ctx.strokeStyle = "#3a2c1c"; ctx.stroke();  // the rim
+        const rail = offset([...p.rim, p.rim[0]], -0.9); // the rim runs anticlockwise: outside is right
+        stroke(rail, 0.35, "#f4f1ea"); stroke(rail, 0.35, "#d6382c", [1, 1]);
+      }
+      ctx.restore();
+      for (const r of f.r!) { line([...r, r[0]]); ctx.lineWidth = 0.7; ctx.strokeStyle = "rgba(255,255,255,0.55)"; ctx.stroke(); ctx.lineWidth = 0.25; ctx.strokeStyle = "rgba(55,55,50,0.85)"; ctx.stroke(); }
+    }
     if (k === "farm" && f.v !== undefined) { // tramlines / furrows: faint parallel lines, own angle per field
       ctx.save(); ctx.clip("evenodd");
       const [bx0, by0, bx1, by1] = bounds(f.r!), cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2, R = Math.hypot(bx1 - bx0, by1 - by0) / 2;
@@ -245,7 +292,8 @@ export function drawGround(
       }
       ctx.restore();
     }
-    if (k === "pitch") { ctx.lineWidth = 0.25; ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.stroke(); }
+    if (k === "pitch" && f.v === 1) { ctx.save(); ctx.clip("evenodd"); pitchMarks(ctx, f.r![0]); ctx.restore(); }
+    else if (k === "pitch") { ctx.lineWidth = 0.25; ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.stroke(); }
     if (k === "vineyard") {   // vine rows ~2 m apart, up and down the slope (drawn north-south: most Stuttgart slopes face south)
       ctx.save(); ctx.clip("evenodd");
       const [bx0, by0, bx1, by1] = bounds(f.r!);
@@ -447,6 +495,7 @@ export function drawGround(
     const streets = rs.filter((f) => f.k === "street");
     const streetJs = layer === 0 ? js.filter((j) => CLASS[j[4]] === "street" && j[5] !== 0) : []; // pavements round street corners
     let shadow: HTMLCanvasElement | null = null;
+    let roadShape: HTMLCanvasElement | null = null; // this layer's asphalt as pixels (styled, ground level)
     if (!styled) {
       // pavements: both sides, or the sides OSM puts them on (p: bit 1 left, 2 right; 0 none)
       const sides = (f: Feature, w: number, c: string) => {
@@ -483,6 +532,7 @@ export function drawGround(
         sh.drawImage(canvases.asphalt, (SHADOW_DIR[0] * KERB_SHADOW.d) / mpt, (-SHADOW_DIR[1] * KERB_SHADOW.d) / mpt);
         sh.filter = "none"; sh.globalCompositeOperation = "destination-in"; sh.drawImage(canvases.asphalt, 0, 0);
         shadow = canvases.shadow;
+        roadShape = canvases.asphalt;
         ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(canvases.ink, 0, 0); ctx.drawImage(canvases.asphalt, 0, 0); ctx.restore();
       } else if (ra) for (const k of CLASS) filleted(ra, (g) => {
         for (const f of rs) if (f.k === k) stroke(f.l!, f.w! + 2 * g, ASPHALT_[k]);
@@ -532,13 +582,22 @@ export function drawGround(
       // styled (learned from AI repaints): each pass over all tracks of the layer, so parallel tracks share one
       // gravel bed with a dark edge only outside, and crossings stay clean; few, bold sleepers; rails as a dark
       // line under a white top, which reads zoomed in and out
+      // where track crosses or runs in a road, only the rails show on the asphalt: bed and sleepers go on a
+      // scratch canvas with the road shape cut out
+      const bed = roadShape && rl.length ? scratch("railbed") : null;
+      if (bed) { bed.setTransform(ctx.getTransform()); bed.lineCap = "round"; dc = bed; }
       if (layer > 0) for (const f of rl) { stroke(f.l!, 6, "#55565c"); stroke(f.l!, 5.4, "#cfcac0"); }
       for (const f of rl) stroke(f.l!, 5.3, "#706c65");
       const gravel = gravelPattern(mpt);
       for (const f of rl) { line(f.l!); dc.lineWidth = 4.7; dc.strokeStyle = gravel; dc.setLineDash([]); dc.stroke(); }
-      ctx.lineCap = "butt";
+      dc.lineCap = "butt";
       for (const f of rl) stroke(f.l!, 3.1, "#57504a", [0.45, 0.75]);
-      ctx.setLineDash([]);
+      dc.setLineDash([]);
+      if (bed && roadShape) {
+        bed.setTransform(1, 0, 0, 1, 0, 0); bed.globalCompositeOperation = "destination-out"; bed.drawImage(roadShape, 0, 0);
+        dc = ctx; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(canvases.railbed, 0, 0); ctx.restore();
+      }
+      ctx.lineCap = "butt";
       // rails at 0.25 m/px: a ~2 px bright top on a dark body showing ~1 px each side (like the ink round houses)
       for (const f of rl) for (const s of [-0.85, 0.85]) stroke(offset(f.l!, s), 0.95, "#26272b");
       for (const f of rl) for (const s of [-0.85, 0.85]) stroke(offset(f.l!, s), 0.45, "#ffffff");
@@ -616,6 +675,66 @@ function offset(l: P2[], d: number): P2[] {
     const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
     return [p[0] - (dy / L) * d, p[1] + (dx / L) * d];
   });
+}
+
+/** The smallest rectangle round a ring (one side on a hull edge): centre, unit long axis, length, width. */
+function fitRect(ring: P2[]) {
+  let best: { c: P2; u: P2; L: number; W: number } | null = null, bestA = Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length], d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (d < 1e-6) continue;
+    const ux = (b[0] - a[0]) / d, uy = (b[1] - a[1]) / d;
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const [x, y] of ring) { const pu = x * ux + y * uy, pv = -x * uy + y * ux; u0 = Math.min(u0, pu); u1 = Math.max(u1, pu); v0 = Math.min(v0, pv); v1 = Math.max(v1, pv); }
+    const A = (u1 - u0) * (v1 - v0);
+    if (A >= bestA) continue;
+    bestA = A;
+    const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2, c: P2 = [cu * ux - cv * uy, cu * uy + cv * ux];
+    best = u1 - u0 >= v1 - v0 ? { c, u: [ux, uy], L: u1 - u0, W: v1 - v0 } : { c, u: [-uy, ux], L: v1 - v0, W: u1 - u0 };
+  }
+  return best;
+}
+
+/**
+ * A football pitch marked out (preset pitchMarkings; ground.ts tags sport=soccer with v: 1), on its tightest
+ * rectangle: mowing stripes across it, then touchlines, halfway line, centre circle and spot, penalty and goal
+ * areas, penalty spots and arcs, goals behind the lines. Full-size measures (105 × 68 m), scaled down on small pitches.
+ */
+function pitchMarks(ctx: CanvasRenderingContext2D, ring: P2[]) {
+  const R = fitRect(ring);
+  if (!R || R.W < 12 || R.L < 18) return;
+  const inset = Math.min(2, R.W * 0.04), L = R.L / 2 - inset, W = R.W / 2 - inset; // lines a little inside the fence
+  const s = Math.min(1, (2 * L) / 100, (2 * W) / 64);
+  ctx.save();
+  ctx.translate(R.c[0], R.c[1]);
+  ctx.transform(R.u[0], R.u[1], -R.u[1], R.u[0], 0, 0); // x along the pitch, y across
+  // mowing stripes: bands across the pitch, ~1/14 of its length each
+  const n = Math.max(6, Math.round((2 * L) / 7) & ~1), band = (2 * L) / n;
+  ctx.fillStyle = "rgba(255,255,255,0.09)";
+  for (let i = 0; i < n; i += 2) ctx.fillRect(-L + i * band, -W - inset, band, 2 * (W + inset));
+  ctx.lineWidth = 0.3; ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.rect(-L, -W, 2 * L, 2 * W);
+  ctx.moveTo(0, -W); ctx.lineTo(0, W);
+  ctx.moveTo(9.15 * s, 0); ctx.arc(0, 0, 9.15 * s, 0, 2 * Math.PI);
+  for (const e of [-1, 1]) {
+    const x = e * L, pw = Math.min(20.16 * s, W - 1), gw = 9.16 * s, pd = 16.5 * s, gd = 5.5 * s, spot = 11 * s, r = 9.15 * s;
+    ctx.moveTo(x, -pw); ctx.lineTo(x - e * pd, -pw); ctx.lineTo(x - e * pd, pw); ctx.lineTo(x, pw);
+    ctx.moveTo(x, -gw); ctx.lineTo(x - e * gd, -gw); ctx.lineTo(x - e * gd, gw); ctx.lineTo(x, gw);
+    // the arc outside the penalty area, round the spot
+    const t = Math.acos(Math.min(1, (pd - spot) / r)), c = x - e * spot, a0 = e > 0 ? Math.PI - t : -t, a1 = e > 0 ? Math.PI + t : t;
+    ctx.moveTo(c + r * Math.cos(a0), r * Math.sin(a0)); ctx.arc(c, 0, r, a0, a1);
+  }
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.95)";
+  for (const [x, y] of [[0, 0], [-L + 11 * s, 0], [L - 11 * s, 0]]) { ctx.beginPath(); ctx.arc(x, y, 0.35, 0, 2 * Math.PI); ctx.fill(); }
+  // goals: a frame 7.32 m wide, its net 1.5 m behind the line
+  ctx.lineWidth = 0.35; ctx.strokeStyle = "rgba(250,250,250,0.95)";
+  for (const e of [-1, 1]) {
+    const x = e * L, g = 3.66 * s, d = e * Math.min(1.5, inset * 0.8);
+    ctx.beginPath(); ctx.moveTo(x, -g); ctx.lineTo(x + d, -g); ctx.lineTo(x + d, g); ctx.lineTo(x, g); ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function bounds(rings: P2[][]) {

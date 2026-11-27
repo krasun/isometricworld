@@ -388,14 +388,14 @@ export class Trains {
   }
 
   /**
-   * Every car now: `near(head)` picks the trains (by their front, ENU), then `car(key, centre, heading,
-   * grade, car, visible)` per car of each.
+   * Every car now: `near(p)` picks the trains (true for its front, middle or back, ENU: a long train is in view
+   * while any of it is), then `car(key, centre, heading, grade, car, visible)` per car of each.
    */
-  private each(near: (head: Vec3) => boolean, car: (key: string, c: Vec3, d: [number, number], g: number, car: Car, vis: boolean) => void, t = this.t) {
+  private each(near: (p: Vec3) => boolean, car: (key: string, c: Vec3, d: [number, number], g: number, car: Car, vis: boolean) => void, t = this.t) {
     this.services.forEach((sv, si) => sv.phase.forEach((_, ti) => {
       const { leg, s } = this.where(sv, ti, t);
-      const head = this.at(leg, s);
-      if (!near([head.e, head.n, head.u])) return;
+      const L = sv.cars[ti].reduce((a, c) => a + c.len + c.gap, 0);
+      if (![0, L / 2, L].some((d) => { const p = this.at(leg, s - d); return near([p.e, p.n, p.u]); })) return;
       let front = s;
       sv.cars[ti].forEach((c, ci) => {
         const p = this.at(leg, front), q = this.at(leg, front - c.len);

@@ -1,0 +1,3 @@
+This is a map around the passenger terminal of Stuttgart Airport: two big terminal halls under pale blue-grey banded roofs, a lower block with a glass skylight grid between them, the long gate pier on the left with its jet bridges.
+- KEEP, pixel for pixel exactly as they are: the terminal halls, the block between them, the gate pier and every jet bridge, with all their walls and roofs down to their foot.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the apron, the roads, car parks, lawns, all trees, cars and every other building, including the smaller buildings at the top and the bottom of the frame.

@@ -1,0 +1,3 @@
+This is a map of the Europaviertel in Stuttgart with the Milaneo (three linked blocks: low mall podiums with green roof gardens, oval glass skylight domes and white bars of flats and offices with green roofs around their edges).
+- KEEP, pixel for pixel exactly as they are: all three Milaneo blocks (roof gardens, skylights, the white bars with their walls and green roofs, the shop fronts down to their foot).
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: streets, crossings, pavements, squares, trees along the streets, rails and every other building, including the library cube and the office buildings and houses around.

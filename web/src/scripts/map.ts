@@ -30,7 +30,7 @@ interface World {
   layers: { photo: number; art: number };
   attributions: string[];
   /** content-hashed data files (absent in data exported before them: then the legacy names) */
-  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; "tiles-height"?: string; borders?: string; roads?: string; trains?: string; airport?: string; mine?: string; search?: string };
+  files?: { "tiles-map"?: string; "tiles-photo"?: string; "tiles-fg"?: string; "tiles-height"?: string; borders?: string; roads?: string; trains?: string; cranes?: string; airport?: string; mine?: string; search?: string };
   format?: string;
 }
 type Index = Record<number, Record<string, string>>; // zoom → "x_y" → content hash
@@ -138,6 +138,32 @@ function updateTransform() {
   ty = a.y * dpr - oy * k;
 }
 const toScreen = (x: number, y: number): [number, number] => [x * k + tx, y * k + ty];
+
+// zoom pill under the corner buttons (MapPage.astro styles it): + 100% −, where 100% is one map pixel per screen pixel
+// (full detail)
+const zoomUi = document.createElement("div");
+zoomUi.id = "zoom";
+zoomUi.innerHTML = `<button type="button" aria-label="Zoom in">+</button><span title="100% = full detail; above it the map is enlarged"></span><button type="button" aria-label="Zoom out">−</button>`;
+(document.getElementById("corner-buttons") ?? document.body).appendChild(zoomUi);
+const [zoomIn, zoomLabel, zoomOut] = zoomUi.children as unknown as [HTMLButtonElement, HTMLSpanElement, HTMLButtonElement];
+// steps on a ladder through 100%: 100% × √2ⁿ (… 50, 71, 100, 141, 200 …); the label goes to 100%
+const kGoal = () => k * viewer.viewport.getZoom(false) / viewer.viewport.getZoom(true); // where a running zoom ends
+const zoomTo = (target: number) => { viewer.viewport.zoomBy(target / kGoal()); viewer.viewport.applyConstraints(); };
+const rung = (dir: 1 | -1) => {
+  const n = Math.log(kGoal()) / Math.log(Math.SQRT2);
+  return Math.SQRT2 ** (dir > 0 ? Math.floor(n + 1e-3) + 1 : Math.ceil(n - 1e-3) - 1);
+};
+zoomIn.onclick = () => zoomTo(rung(1));
+zoomOut.onclick = () => zoomTo(rung(-1));
+zoomLabel.onclick = () => zoomTo(1);
+zoomLabel.style.cursor = "pointer";
+let zoomShown = "";
+function updateZoomUi() {
+  const pct = k * 100, txt = `${pct >= 10 ? Math.round(pct) : pct.toFixed(1)}%`;
+  if (txt === zoomShown) return;
+  zoomShown = txt; zoomLabel.textContent = txt;
+  zoomLabel.classList.toggle("over", pct > 105);
+}
 const globalToViewport = (x: number, y: number) => base().imageToViewportCoordinates(x - ox, y - oy);
 
 // ---- overlay: borders, labels, traffic ------------------------------------------------------
@@ -208,6 +234,12 @@ if (effects.clouds) import("./clouds.ts").then(({ Clouds: C }) => { clouds = new
 // finding streets and places (effects.search; search.ts)
 if (effects.search && files.search) Promise.all([import("./search.ts"), json<SearchItem[]>(files.search)]).then(([{ Search }, items]) => new Search(items, { go: goTo }));
 let lightAircraft: LightAircraft | null = null, airport: AirportTraffic | null = null, signs: Signs | null = null;
+/** tower cranes slewing on the construction sites (cranes.ts; the tiles draw their masts) */
+let cranes: import("./cranes.ts").Cranes | null = null;
+if (files.cranes) Promise.all([import("./cranes.ts"), json<number[][]>(files.cranes)]).then(([{ Cranes: C }, data]) => {
+  if (data.length) cranes = new C(data, world.enu2px);
+  Object.assign(window as object, { __cranes: cranes });
+});
 // the animations (their code and the roads, ~0.7 MB) wait until the first view's tiles are in
 let animationsRequested = false;
 function loadAnimations() {
@@ -315,6 +347,7 @@ function frame(t: number) {
   const w = Math.round(canvas.clientWidth * dpr), hgt = Math.round(canvas.clientHeight * dpr);
   if (canvas.width !== w || canvas.height !== hgt) { canvas.width = w; canvas.height = hgt; }
   updateTransform();
+  updateZoomUi();
   ctx.clearRect(0, 0, w, hgt);
   // film mode (pipeline/src/film.ts): the recorder hands out exactly one frame of sim time per capture
   const film = (window as { __film?: { dt: number } }).__film;
@@ -346,6 +379,7 @@ function frame(t: number) {
     pecking.draw(ctx, toScreen, px, [0, 0, w, hgt]);
   }
   if (clouds && !mine?.underground) { clouds.step(dt); clouds.draw(ctx, k, tx, ty, w, hgt, px); } // over the town, under the sky
+  if (cranes && !mine?.underground) { cranes.step(dt); cranes.draw(ctx, toScreen, [0, 0, w, hgt]); } // part of the sites: shown with traffic off too
   if (signs && !mine?.underground) { signs.step(dt); signs.draw(ctx, toScreen, [0, 0, w, hgt]); } // part of the buildings: shown with traffic off too
   if (above) { // sky above everything: parakeets or pigeons, light aircraft, then the airliner
     if (parrots) { parrots.step(dt); parrots.draw(ctx, toScreen, k / dpr, [0, 0, w, hgt]); }

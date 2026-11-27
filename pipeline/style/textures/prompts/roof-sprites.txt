@@ -1,0 +1,28 @@
+ref: style/textures/prompts/ref-camera.png
+ref: style/reference.png
+
+A SPRITE SHEET of ROOFTOP EQUIPMENT for the flat roofs of an isometric city map, drawn EXACTLY in the map's camera and style.
+Camera: the same as ref1.png (a render of the map): orthographic, NO perspective, tilted 45° down, every object seen from the same angle as the buildings in ref1.png; the sun from the upper left as in ref1.png. Style: the clean illustrated look of ref1.png and ref2.png: flat-shaded surfaces, each one flat colour, a thin dark outline along every edge, soft even daylight. Mostly light greys, galvanised metal and white, as rooftop equipment is.
+Scale: 16 pixels per metre (four times as large as in ref1.png), so small items keep their detail.
+
+Draw these objects, each one separate with clear empty space (at least 40 px) around it, arranged in a loose grid, every object WHOLE (nothing cut off by the image edge):
+1. a split air-conditioning outdoor unit (1 x 0.4 m, 0.8 m tall), round fan grille on its front
+2. a row of three such units on a low steel frame
+3. a large air-handling unit (6 x 2.5 m, 1.8 m tall), access doors along its side, a grille on top
+4. a rooftop chiller (5 x 2.2 m, 2 m tall) with four big round fans on top
+5. a square duct running 4 m along the roof on low supports, with one bend
+6. two mushroom ventilation cowls and one rotating turbine vent (each about 0.6 m)
+7. a domed acrylic skylight (1.5 x 1.5 m), milky white-blue
+8. a section of a long ridge skylight strip (6 m long, 1.6 m wide, gabled glass, metal frame)
+9. a smoke-vent hatch with its flaps open (1.5 x 1.5 m)
+10. a satellite dish on a small stand (1 m dish)
+11. a TV antenna mast (3 m tall) with two antennas
+12. a mobile phone mast: a 6 m lattice pole with three panel antennas and a small equipment cabinet at its foot
+13. a small stair housing / roof access hut (3 x 2.5 m, 2.5 m tall) with a door, flat roof
+14. a lift motor room (2.5 x 2.5 m, 2 m tall), plain plaster
+15. a steel exhaust stack (0.5 m wide, 3 m tall) with guy wires
+16. a roof hatch (1 x 1 m) and a short safety railing section (4 m)
+
+Every object casts only a small soft contact shadow directly beneath itself, nothing long.
+BACKGROUND: everything that is not an object is perfectly flat pure magenta #FF00FF: no shading, texture, shadows beyond the contact shadow, gradients, ground plane or outlines on it, and a sharp edge between each object and the magenta. No text, no labels, no numbers.
+Output: one 2048x1536 image.

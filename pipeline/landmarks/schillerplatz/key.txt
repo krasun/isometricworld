@@ -1,0 +1,3 @@
+This is a map of the Schillerplatz in Stuttgart's old town: the cobbled square with the Schiller statue, the Gothic Stiftskirche with its towers, the Altes Schloss with round corner towers and an arcaded courtyard, and the old gabled houses round the square (Fruchtkasten, Alte Kanzlei, Prinzenbau).
+- KEEP, pixel for pixel exactly as they are: the Schillerplatz with its paving and the statue, the Stiftskirche, the Altes Schloss with its courtyard, the Fruchtkasten, the Alte Kanzlei and the Prinzenbau, all their walls and roofs down to their foot.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the other streets and squares, trees outside the square, cars and every other building, including the modern blocks round the edges.

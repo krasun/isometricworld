@@ -1,0 +1,3 @@
+This is a map of Stuttgart's main station: the old stone station building with its tall square tower, and in front of it the wide flat concrete roof of the new underground station with its round white skylights in raised rings, partly still a building site.
+- KEEP, pixel for pixel exactly as they are: the stone station building with its tower, its main hall and its courtyards, all walls and roofs down to their foot; and the whole new station roof with all its round skylights and the building site on it, up to its edges.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the streets, the track field with its long platform roofs and the rails, the parks, trees, cars and every other building.

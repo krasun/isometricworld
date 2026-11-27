@@ -1,0 +1,3 @@
+This is a map of a wooded valley with a railway, a road viaduct and a few buildings. In the middle stands a tall office tower clad in blue glass with a flat grey roof.
+- KEEP, pixel for pixel exactly as it is: only the blue glass tower, all its glass walls and its flat roof with the small roof box, down to its foot.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the trees, lawns, streets, the car park, the long low hall, the courtyard building, the houses, the railway, the viaduct and every other building.

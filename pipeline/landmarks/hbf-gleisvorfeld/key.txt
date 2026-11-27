@@ -1,0 +1,3 @@
+This is a map of the end of the tracks at Stuttgart's main station: long dark platform roofs over the tracks, joining into wide roofs near the buffer stops, a white covered walkway across the ends of the platforms, and long low white temporary halls below it.
+- KEEP, pixel for pixel exactly as they are: every platform roof and canopy with the tracks between them, the buffer stops, the white walkway along its whole length, and the white temporary halls and site buildings below it.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the building site of the new station with its round skylights, the streets, the park, the trees, cars, every other building, and the open tracks beyond the last canopy.

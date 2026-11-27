@@ -1,0 +1,19 @@
+ref: style/textures/prompts/ref-camera.png
+ref: style/textures/construction-sprites.png
+
+A SPRITE SHEET of construction-site vehicles and containers, each one in FOUR DIRECTIONS, for an isometric city map. The objects, their colours, outline weight and style must match ref2.png EXACTLY (it is the existing sheet: same excavator, same truck, same containers); only the direction they face changes.
+Camera: the same as ref1.png and ref2.png: orthographic, NO perspective, tilted 45° down; the sun from the upper left in every drawing (shading does NOT rotate with the object).
+Scale: 8 pixels per metre, exactly as in ref2.png.
+
+One ROW per object, four drawings per row, the object turned 0°, 90°, 180° and 270° about its vertical axis (seen from above: facing lower right, lower left, upper left, upper right):
+1. the yellow tracked excavator (about 10 m long with its arm), arm stretched out in front, bucket on the ground
+2. the yellow wheel loader
+3. the orange-and-grey dump truck, its body empty
+4. the white concrete mixer truck
+5. the stack of two white site-office containers with the outside stair
+6. the blue site container
+7. the red shipping container
+
+Each drawing separate with clear empty space (at least 40 px) around it, every drawing WHOLE (nothing cut off by the image edge). Each casts only a small soft contact shadow directly beneath itself.
+BACKGROUND: everything that is not an object is perfectly flat pure magenta #FF00FF: no shading, texture, shadows beyond the contact shadow, gradients, ground plane or outlines on it, and a sharp edge between each object and the magenta. No text, no labels, no numbers.
+Output: one 2048x2048 image.

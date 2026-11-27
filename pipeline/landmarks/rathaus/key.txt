@@ -1,0 +1,3 @@
+This is a map round Stuttgart's town hall on the Marktplatz: a large pale travertine building with a grid of deep-set windows, its tall square clock tower with an orange clock, dark stone steps in front, and the open square paved in light beige with a field of fountain jets and benches.
+- KEEP, pixel for pixel exactly as they are: the town hall with its clock tower, its courtyards and the dark steps, all walls and roofs down to their foot; and the whole Marktplatz in front of it with its beige paving, the fountain jets and the benches, up to the houses round the square.
+- REPLACE everything else with one flat solid pure magenta colour #FF00FF: the streets round the square, trees, cars and every other building, including all the houses round the Marktplatz.

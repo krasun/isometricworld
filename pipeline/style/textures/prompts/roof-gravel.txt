@@ -1,0 +1,10 @@
+ref: style/textures/prompts/ref-camera.png
+
+A seamless top-down texture of a large flat FACTORY / WAREHOUSE ROOF covered with light grey ballast gravel, 1024x1024 px covering 32 x 32 m (3.2 cm per pixel).
+What it shows: fine pale-grey gravel (light warm grey, a few slightly darker and lighter tones mixed in, tiny pebbles barely visible at this scale); a few straight lines of concrete walkway slabs crossing it (about 0.6 m wide, light grey, one line along one axis, one along the other, meeting once); two or three small round roof drains with a darker ring; a few faint darker streaks where water collects near the drains; one or two straight raised expansion joints (thin light lines with a hairline shadow). Mostly calm gravel: about 85 % of the area is plain gravel.
+Rules for this texture:
+- Seen STRAIGHT FROM ABOVE (orthographic, top-down, no perspective, no horizon, no tilt), lit evenly by soft daylight with no cast shadows of its own beyond tiny contact shading.
+- It must TILE SEAMLESSLY: what leaves the right edge continues at the left edge, top continues at bottom. No border, no vignette, no frame, no text, no logos.
+- Style: the clean, slightly simplified illustrated look of the attached map render (ref1.png): flat clear colours, crisp but not noisy detail, readable when shrunk to a quarter of its size. No photographic noise or grain, no dark grunge.
+- Keep the overall brightness EVEN across the whole image (no large light or dark patches that would show as a repeating pattern when tiled).
+- Output exactly 1024x1024.
